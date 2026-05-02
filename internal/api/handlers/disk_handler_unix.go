@@ -1,3 +1,5 @@
+//go:build !windows
+
 package handlers
 
 import (
@@ -5,11 +7,10 @@ import (
 	"syscall"
 )
 
-// DiskStats handles GET /api/v1/disk-stats — returns actual disk space
+// DiskStats handles GET /api/v1/disk-stats — returns actual disk space.
 func DiskStats(w http.ResponseWriter, r *http.Request) {
 	var stat syscall.Statfs_t
 
-	// Get disk stats for the current directory
 	if err := syscall.Statfs(".", &stat); err != nil {
 		writeError(w, "failed to get disk stats", http.StatusInternalServerError)
 		return
