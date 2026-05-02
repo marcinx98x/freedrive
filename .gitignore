@@ -10,6 +10,7 @@ cmd/freedrive/data/
 *.pem
 .env
 .env.*
+!.env.example
 
 # Build outputs
 /freedrive

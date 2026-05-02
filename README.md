@@ -238,6 +238,19 @@ Default bootstrap admin (if first user is auto-created):
 
 Important: change defaults immediately in non-dev environments.
 
+### Run With Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+Open:
+
+- `http://localhost:8080`
+
+Runtime data is stored in the `freedrive-data` Docker volume. Update `.env` before first start to set a strong admin password and optional JWT secret.
+
 ---
 
 ## Production Install (systemd)
