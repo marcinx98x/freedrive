@@ -496,25 +496,50 @@
     async function loadBuildStars() {
       try {
         const res = await fetch('./stars.json', { cache: 'no-cache' });
-        if (!res.ok) return;
+        if (!res.ok) return null;
         const data = await res.json();
         const count = Number(data?.count);
+        if (!Number.isFinite(count)) return null;
+        setStarCount(formatStars(count));
+        if (starLinkEl) {
+          starLinkEl.setAttribute('title', `${count} GitHub stars`);
+        }
+        return count;
+      } catch {
+        setStarCount('Star');
+        return null;
+      }
+    }
+
+    async function loadLiveStars() {
+      try {
+        const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}`, {
+          headers: {
+            Accept: 'application/vnd.github+json'
+          }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const count = Number(data?.stargazers_count);
         if (!Number.isFinite(count)) return;
         setStarCount(formatStars(count));
         if (starLinkEl) {
           starLinkEl.setAttribute('title', `${count} GitHub stars`);
         }
       } catch {
-        setStarCount('Star');
+        // Keep default text when network is unavailable.
       }
     }
 
-    (function initStars() {
+    (async function initStars() {
       setStarCount('Star');
       if (starLinkEl) {
         starLinkEl.setAttribute('title', `GitHub stars for ${GITHUB_REPO}`);
       }
-      loadBuildStars();
+      const buildCount = await loadBuildStars();
+      if (!Number.isFinite(buildCount) || buildCount <= 0) {
+        await loadLiveStars();
+      }
     })();
   </script>
 </body>
