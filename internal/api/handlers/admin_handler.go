@@ -247,76 +247,91 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recipient := strings.TrimSpace(req.Email)
+	adminSettingsMu.RLock()
+	emailCfg, _ := adminSettings["email"].(map[string]interface{})
+	generalCfg, _ := adminSettings["general"].(map[string]interface{})
+	smtpServer := asString(emailCfg["smtp_server"])
+	smtpPort := asInt(emailCfg["smtp_port"], 0)
+	smtpUser := asString(emailCfg["smtp_user"])
+	smtpPass := asString(emailCfg["smtp_pass"])
+	fromAddress := asString(emailCfg["from_address"])
+	fromName := asString(emailCfg["from_name"])
+	useTLS := asBool(emailCfg["tls"], false)
+	siteURL := strings.TrimSpace(asString(generalCfg["site_url"]))
+	adminSettingsMu.RUnlock()
+
+	if strings.TrimSpace(req.SMTPServer) != "" {
+		smtpServer = strings.TrimSpace(req.SMTPServer)
+	}
+	if req.SMTPPort > 0 {
+		smtpPort = req.SMTPPort
+	}
+	if req.SMTPUser != "" || req.SMTPPass != "" {
+		smtpUser = req.SMTPUser
+		smtpPass = req.SMTPPass
+	}
+	if strings.TrimSpace(req.FromAddr) != "" {
+		fromAddress = strings.TrimSpace(req.FromAddr)
+	}
+	if strings.TrimSpace(req.FromName) != "" {
+		fromName = strings.TrimSpace(req.FromName)
+	}
+	useTLS = req.TLS
+
+	if siteURL == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		siteURL = fmt.Sprintf("%s://%s", scheme, r.Host)
+	}
+	siteURL = strings.TrimRight(siteURL, "/")
+	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(invite.Code))
+
+	emailSent := false
+	emailError := ""
 	if recipient != "" {
-		adminSettingsMu.RLock()
-		emailCfg, _ := adminSettings["email"].(map[string]interface{})
-		generalCfg, _ := adminSettings["general"].(map[string]interface{})
-		smtpServer := asString(emailCfg["smtp_server"])
-		smtpPort := asInt(emailCfg["smtp_port"], 0)
-		smtpUser := asString(emailCfg["smtp_user"])
-		smtpPass := asString(emailCfg["smtp_pass"])
-		fromAddress := asString(emailCfg["from_address"])
-		fromName := asString(emailCfg["from_name"])
-		useTLS := asBool(emailCfg["tls"], false)
-		siteURL := strings.TrimSpace(asString(generalCfg["site_url"]))
-		adminSettingsMu.RUnlock()
-
-		if strings.TrimSpace(req.SMTPServer) != "" {
-			smtpServer = strings.TrimSpace(req.SMTPServer)
-		}
-		if req.SMTPPort > 0 {
-			smtpPort = req.SMTPPort
-		}
-		if req.SMTPUser != "" || req.SMTPPass != "" {
-			smtpUser = req.SMTPUser
-			smtpPass = req.SMTPPass
-		}
-		if strings.TrimSpace(req.FromAddr) != "" {
-			fromAddress = strings.TrimSpace(req.FromAddr)
-		}
-		if strings.TrimSpace(req.FromName) != "" {
-			fromName = strings.TrimSpace(req.FromName)
-		}
-		useTLS = req.TLS
-
 		if smtpServer == "" || smtpPort == 0 || fromAddress == "" {
-			writeError(w, "smtp settings are incomplete: set server, port and from address in admin settings", http.StatusBadRequest)
-			return
-		}
+			emailError = "smtp settings are incomplete: set server, port and from address in admin settings"
+		} else {
+			displayName := chooseDisplayName("", recipient)
+			subject := "You're invited to FreeDrive"
+			message := strings.TrimSpace(req.Message)
 
-		if siteURL == "" {
-			scheme := "http"
-			if r.TLS != nil {
-				scheme = "https"
+			body := fmt.Sprintf(
+				"Hello %s,\n\nYou've been invited to join FreeDrive.\n\nInvite link:\n%s\n\nRole: %s\nQuota: %.1f GB\n",
+				displayName,
+				inviteURL,
+				strings.ToUpper(string(invite.Role)),
+				float64(invite.QuotaBytes)/(1024*1024*1024),
+			)
+			if message != "" {
+				body += fmt.Sprintf("\nMessage from admin:\n%s\n", message)
 			}
-			siteURL = fmt.Sprintf("%s://%s", scheme, r.Host)
-		}
-		siteURL = strings.TrimRight(siteURL, "/")
+			body += "\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
-		inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(invite.Code))
-		displayName := chooseDisplayName("", recipient)
-		subject := "You're invited to FreeDrive"
-		message := strings.TrimSpace(req.Message)
-
-		body := fmt.Sprintf(
-			"Hello %s,\n\nYou've been invited to join FreeDrive.\n\nInvite link:\n%s\n\nRole: %s\nQuota: %.1f GB\n",
-			displayName,
-			inviteURL,
-			strings.ToUpper(string(invite.Role)),
-			float64(invite.QuotaBytes)/(1024*1024*1024),
-		)
-		if message != "" {
-			body += fmt.Sprintf("\nMessage from admin:\n%s\n", message)
-		}
-		body += "\nIf the link does not open automatically, copy and paste it into your browser.\n"
-
-		if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
-			writeError(w, "failed to send invite email: "+err.Error(), http.StatusInternalServerError)
-			return
+			if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
+				emailError = "failed to send invite email: " + err.Error()
+			} else {
+				emailSent = true
+			}
 		}
 	}
 
-	writeJSON(w, http.StatusCreated, invite)
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":          invite.ID,
+		"code":        invite.Code,
+		"created_by":  invite.CreatedBy,
+		"role":        invite.Role,
+		"quota_bytes": invite.QuotaBytes,
+		"max_uses":    invite.MaxUses,
+		"used_count":  invite.UsedCount,
+		"expires_at":  invite.ExpiresAt,
+		"created_at":  invite.CreatedAt,
+		"invite_url":  inviteURL,
+		"email_sent":  emailSent,
+		"email_error": emailError,
+	})
 }
 
 // ResendInvite handles POST /api/v1/admin/invites/resend

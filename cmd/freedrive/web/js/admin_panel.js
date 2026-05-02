@@ -1883,7 +1883,16 @@ const AdminPanel = (() => {
                         saveLocalState();
                         
                         // Transform the modal to show the link
-                        const link = `${window.location.origin}?invite=${inviteCode}`;
+                        const link = invite?.invite_url || `${window.location.origin}?invite=${inviteCode}`;
+                        const emailSent = Boolean(invite?.email_sent);
+                        const emailError = String(invite?.email_error || '').trim();
+                        if (emailSent) {
+                            Components.toast(`Invite email sent to ${email}`, 'success');
+                        } else if (emailError) {
+                            Components.toast(`Invite link created, but email was not sent: ${emailError}`, 'warning', { duration: 8000 });
+                        } else {
+                            Components.toast('Invite link created', 'success');
+                        }
                         
                         const mdBody = document.querySelector('.modal-body');
                         if (mdBody) {
@@ -1893,7 +1902,11 @@ const AdminPanel = (() => {
                                         <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
                                     </div>
                                     <h3 class="invite-success-title">Invite Created!</h3>
-                                    <p class="invite-success-text">Invitation sent to <strong>${esc(email)}</strong>. You can also copy the direct invite link below.</p>
+                                    <p class="invite-success-text">${
+                                        emailSent
+                                            ? `Invitation sent to <strong>${esc(email)}</strong>. You can also copy the direct invite link below.`
+                                            : `Invite link created for <strong>${esc(email)}</strong>, but the email was not sent.${emailError ? `<br><span class="admin-muted">${esc(emailError)}</span>` : ''}`
+                                    }</p>
                                     
                                     <div class="invite-link-box">
                                         <input type="text" readonly class="invite-link-field" value="${link}" id="invite-link-field">
@@ -2570,13 +2583,19 @@ const AdminPanel = (() => {
                     state.settingsSavedUntil = Date.now() + 3000;
                     saveLocalState();
                     try {
-                        await fetch('/api/v1/admin/settings', {
+                        const res = await fetch('/api/v1/admin/settings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
                             body: JSON.stringify(state.settings),
                         });
+                        if (!res.ok) {
+                            const data = await res.json().catch(() => ({}));
+                            throw new Error(data.error || `Settings backend save failed (${res.status})`);
+                        }
                     } catch (e) {
+                        Components.toast(e?.message || 'Settings backend save failed', 'error');
                         console.warn('Settings backend save failed, using localStorage only', e);
+                        return;
                     }
                     Components.toast('Settings saved', 'success', { duration: 3000 });
                     renderSection();
