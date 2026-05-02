@@ -837,7 +837,8 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 	var payload []byte
 	var err error
 
-	// Auto-detect MailerSend
+	// Auto-detect Provider
+	isZepto := false
 	if strings.Contains(apiUrl, "mailersend") {
 		if !strings.Contains(apiUrl, "/v1/email") {
 			apiUrl = "https://api.mailersend.com/v1/email"
@@ -850,9 +851,23 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 			"text":    body,
 		}
 		payload, err = json.Marshal(reqBody)
-		if err != nil {
-			return err
+	} else if strings.Contains(apiUrl, "zeptomail") {
+		isZepto = true
+		if !strings.Contains(apiUrl, "/v1.1/email") {
+			apiUrl = "https://api.zeptomail.com/v1.1/email"
 		}
+
+		reqBody := map[string]interface{}{
+			"from": map[string]string{"address": fromAddress, "name": fromName},
+			"to": []map[string]interface{}{
+				{
+					"email_address": map[string]string{"address": toAddress, "name": toAddress},
+				},
+			},
+			"subject":  subject,
+			"textbody": body,
+		}
+		payload, err = json.Marshal(reqBody)
 	} else {
 		// Generic JSON payload
 		reqBody := map[string]string{
@@ -863,9 +878,10 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 			"body":       body,
 		}
 		payload, err = json.Marshal(reqBody)
-		if err != nil {
-			return err
-		}
+	}
+
+	if err != nil {
+		return err
 	}
 
 	req, err := http.NewRequest("POST", apiUrl, bytes.NewBuffer(payload))
@@ -875,7 +891,17 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 
 	req.Header.Set("Content-Type", "application/json")
 	if apiToken != "" {
-		req.Header.Set("Authorization", "Bearer "+apiToken)
+		if isZepto {
+			if !strings.HasPrefix(apiToken, "Zoho-enczapikey ") {
+				apiToken = "Zoho-enczapikey " + apiToken
+			}
+			req.Header.Set("Authorization", apiToken)
+		} else {
+			if !strings.HasPrefix(apiToken, "Bearer ") {
+				apiToken = "Bearer " + apiToken
+			}
+			req.Header.Set("Authorization", apiToken)
+		}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
