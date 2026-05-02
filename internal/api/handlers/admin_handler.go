@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -635,6 +636,10 @@ func (h *AdminHandler) TestEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendSMTPEmail(smtpServer string, smtpPort int, smtpUser, smtpPass, fromAddress, fromName, toAddress, subject, body string, useTLS bool) error {
+	if smtpPort == 443 || strings.HasPrefix(smtpServer, "https://") || strings.HasPrefix(smtpServer, "http://") || smtpServer == "api.mailersend.com" {
+		return sendHTTPEmail(smtpServer, smtpPass, fromAddress, fromName, toAddress, subject, body)
+	}
+
 	fromHeader := fromAddress
 	if strings.TrimSpace(fromName) != "" {
 		fromHeader = fmt.Sprintf("%s <%s>", fromName, fromAddress)
@@ -822,4 +827,68 @@ func formatBytes(n int64) string {
 	}
 	gb := mb / 1024
 	return fmt.Sprintf("%.2f GB", gb)
+}
+
+func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, body string) error {
+	if !strings.HasPrefix(apiUrl, "http") {
+		apiUrl = "https://" + apiUrl
+	}
+
+	var payload []byte
+	var err error
+
+	// Auto-detect MailerSend
+	if strings.Contains(apiUrl, "mailersend") {
+		if !strings.Contains(apiUrl, "/v1/email") {
+			apiUrl = "https://api.mailersend.com/v1/email"
+		}
+		
+		reqBody := map[string]interface{}{
+			"from":    map[string]string{"email": fromAddress, "name": fromName},
+			"to":      []map[string]string{{"email": toAddress}},
+			"subject": subject,
+			"text":    body,
+		}
+		payload, err = json.Marshal(reqBody)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Generic JSON payload
+		reqBody := map[string]string{
+			"from_email": fromAddress,
+			"from_name":  fromName,
+			"to_email":   toAddress,
+			"subject":    subject,
+			"body":       body,
+		}
+		payload, err = json.Marshal(reqBody)
+		if err != nil {
+			return err
+		}
+	}
+
+	req, err := http.NewRequest("POST", apiUrl, bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+apiToken)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
