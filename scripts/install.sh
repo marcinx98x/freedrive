@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${EUID}" -eq 0 ]]; then
-  echo "Please run this script as a normal user with sudo access (not as root)."
-  exit 1
-fi
+
 
 REPO="${FREEDRIVE_REPO:-abdullaabdullazade/freedrive}"
 RELEASE_BASE_URL="https://github.com/${REPO}/releases/latest/download"

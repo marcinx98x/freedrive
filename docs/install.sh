@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${EUID}" -eq 0 ]]; then
-  echo "Please run this as a normal user with sudo access (not root)."
-  exit 1
-fi
+
 
 REPO="${FREEDRIVE_REPO:-abdullaabdullazade/freedrive}"
 RAW_INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh"
