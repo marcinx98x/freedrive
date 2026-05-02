@@ -304,11 +304,12 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 			}
 			body += "\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
-			if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
-				emailError = "failed to send invite email: " + err.Error()
-			} else {
-				emailSent = true
-			}
+			emailSent = true // Assume success for fast response
+			go func() {
+				if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
+					fmt.Fprintf(os.Stderr, "failed to send invite email to %s: %v\n", recipient, err)
+				}
+			}()
 		}
 	}
 
@@ -416,12 +417,13 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	body += "\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
-	if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
-		writeError(w, "failed to resend invite email: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	go func() {
+		if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to resend invite email to %s: %v\n", recipient, err)
+		}
+	}()
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Invite email resent"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Invite email resent in background"})
 }
 
 // ListInvites handles GET /api/v1/admin/invites
@@ -585,12 +587,13 @@ func (h *AdminHandler) SendPasswordReset(w http.ResponseWriter, r *http.Request)
 		resetURL,
 	)
 
-	if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, user.Email, subject, body, useTLS); err != nil {
-		writeError(w, "failed to send reset email: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	go func() {
+		if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, user.Email, subject, body, useTLS); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to send reset email to %s: %v\n", user.Email, err)
+		}
+	}()
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Password reset email sent"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Password reset email sent in background"})
 }
 
 // TestEmail handles POST /api/v1/admin/test-email
