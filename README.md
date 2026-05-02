@@ -252,10 +252,20 @@ chmod +x scripts/install.sh
 What it does:
 
 - Prompts for admin credentials
-- Builds binary from source
+- Downloads the latest release binary
 - Installs binary to `/opt/freedrive/freedrive`
 - Writes env file at `/etc/freedrive/freedrive.env`
 - Creates/starts `freedrive.service`
+
+To update an existing systemd installation to the latest release:
+
+```bash
+curl -fsSL https://abdullaabdullazade.github.io/freedrive/update.sh -o update.sh
+chmod +x update.sh
+./update.sh
+```
+
+The updater verifies the release checksum, keeps your existing data and `/etc/freedrive/freedrive.env`, backs up the current binary to `/opt/freedrive/freedrive.bak`, installs the new binary, and restarts `freedrive.service`.
 
 Operational commands:
 

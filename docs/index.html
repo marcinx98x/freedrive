@@ -332,10 +332,13 @@
           <div class="term term-dev">
             <div class="term-bar">
               <div class="dots"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-              <span class="term-t">Development</span>
+              <span class="term-t">Update Existing Install</span>
+              <button class="cp" onclick="copyUpdateCmd()" id="cp-update">Copy</button>
             </div>
-            <pre><code><span class="cmd">go</span> <span class="arg">run</span> <span class="path">./cmd/freedrive</span>
-<span class="c"># → http://localhost:8080</span></code></pre>
+            <pre><code><span class="cmd">curl</span> <span class="arg">-fsSL</span> <span class="url">https://abdullaabdullazade.github.io/freedrive/update.sh</span> \
+  <span class="arg">-o</span> <span class="path">update.sh</span>
+<span class="cmd">chmod</span> <span class="arg">+x</span> <span class="path">update.sh</span>
+<span class="cmd">./update.sh</span></code></pre>
           </div>
         </div>
       </div>
@@ -386,6 +389,11 @@
     function copyCmd() {
       navigator.clipboard.writeText(`curl -fsSL https://abdullaabdullazade.github.io/freedrive/install.sh -o install.sh\nchmod +x install.sh\n./install.sh`).then(() => {
         const b = document.getElementById('cp'); b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy', 2000);
+      });
+    }
+    function copyUpdateCmd() {
+      navigator.clipboard.writeText(`curl -fsSL https://abdullaabdullazade.github.io/freedrive/update.sh -o update.sh\nchmod +x update.sh\n./update.sh`).then(() => {
+        const b = document.getElementById('cp-update'); b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy', 2000);
       });
     }
     const revealOnView = new IntersectionObserver(
