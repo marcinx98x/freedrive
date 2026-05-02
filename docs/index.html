@@ -206,6 +206,9 @@
         <h2>See the Actual FreeDrive Interface</h2>
         <p>Real product screens from the running app, including user workspace and admin settings.</p>
       </div>
+      <div class="preview-video anim">
+        <video src="./screenshots/intro.mp4" autoplay muted loop playsinline controls></video>
+      </div>
       <div class="preview-gallery anim">
         <figure class="preview-shot">
           <div class="preview-top">
@@ -406,7 +409,7 @@
       { threshold: .08 }
     );
 
-    document.querySelectorAll('.adv-card,.sec-head,.preview-gallery,.preview-shot,.security-card,.inst-grid,.cta-box,.why-section').forEach(el => {
+    document.querySelectorAll('.adv-card,.sec-head,.preview-video,.preview-gallery,.preview-shot,.security-card,.inst-grid,.cta-box,.why-section').forEach(el => {
       el.classList.add('anim');
       revealOnView.observe(el);
     });
