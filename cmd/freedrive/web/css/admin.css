@@ -429,44 +429,6 @@
     transform: translateX(-50%) translateY(-4px);
 }
 
-/* Dark mode adjustments based on class .dark-theme */
-body.dark-mode .gd-card {
-    background-color: #28292c;
-    border-color: #3c4043;
-}
-body.dark-mode .gd-storage-hero-title,
-body.dark-mode .gd-meter-used,
-body.dark-mode .gd-card-title-area h3,
-body.dark-mode .gd-cleanup-item,
-body.dark-mode .gd-clean-table td {
-    color: #e8eaed;
-}
-body.dark-mode .gd-meter-track,
-body.dark-mode .gd-mini-bar {
-    background-color: #313335;
-}
-body.dark-mode .gd-clean-table th,
-body.dark-mode .gd-clean-table td {
-    border-color: #3c4043;
-}
-body.dark-mode .gd-cleanup-item {
-    border-color: #3c4043;
-}
-body.dark-mode .gd-cleanup-item:hover,
-body.dark-mode .gd-clean-table tbody tr:hover {
-    background-color: #303134;
-}
-body.dark-mode .gd-btn-outline {
-    border-color: #5f6368;
-    color: #8ab4f8;
-}
-body.dark-mode .gd-btn-outline:hover {
-    background-color: #3c4043;
-}
-body.dark-mode .gd-card-icon-wrap[style*="#E8F0FE"] { background-color: rgba(26,115,232,0.2) !important; color: #8ab4f8 !important; }
-body.dark-mode .gd-card-icon-wrap[style*="#CEEAD6"] { background-color: rgba(24,128,56,0.2) !important; color: #81c995 !important; }
-body.dark-mode .gd-card-icon-wrap[style*="#FCE8E6"] { background-color: rgba(217,48,37,0.2) !important; color: #f28b82 !important; }
-
 /* Dashboard Widgets Support */
 .gd-overview-grid {
     display: grid;
@@ -960,24 +922,6 @@ body.dark-mode .gd-card-icon-wrap[style*="#FCE8E6"] { background-color: rgba(217
 .gd-settings-pane .admin-form-group label { display: block; font-weight: 500; margin-bottom: 8px; color: var(--text, #202124); }
 .gd-settings-pane .admin-subtext { font-size: 12px; color: #5F6368; display: block; margin-top: 4px; }
 
-/* Dark mode overwrites for new elements */
-body.dark-mode .gd-overview-card { background-color: #28292c; }
-body.dark-mode .gd-search-bar { background-color: #313335; }
-body.dark-mode .gd-search-bar:focus-within { background-color: #28292c; }
-body.dark-mode .gd-search-bar input { color: #e8eaed; }
-body.dark-mode .gd-filter-chip { background-color: #28292c; border-color: #3c4043; color: #e8eaed; }
-body.dark-mode .gd-filter-chip.active { background-color: rgba(138,180,248,0.2); color: #8ab4f8; border-color: transparent; }
-body.dark-mode .gd-drawer { background-color: #28292c; }
-body.dark-mode .gd-drawer-header h3, body.dark-mode .gd-profile-info h2 { color: #e8eaed; }
-body.dark-mode .gd-divider { background-color: #3c4043; }
-body.dark-mode .gd-input, body.dark-mode .gd-settings-pane .admin-input { border-color: #5f6368; color: #e8eaed; }
-body.dark-mode .gd-tab-btn { color: #9aa0a6; }
-body.dark-mode .gd-tab-btn:hover { color: #e8eaed; background-color: #313335; }
-body.dark-mode .gd-tab-btn.active { color: #8ab4f8; border-bottom-color: #8ab4f8; }
-body.dark-mode .gd-popup-menu { background-color: #28292c; border-color: #3c4043; }
-body.dark-mode .gd-popup-menu button { color: #e8eaed; }
-body.dark-mode .gd-popup-menu button:hover { background-color: #313335; }
-
 /* Sidebar Overrides for Admin Panel to match Google Drive perfectly */
 .app.admin-mode .sidebar {
     background-color: var(--bg-primary, #ffffff) !important;
@@ -1177,29 +1121,6 @@ body.dark-mode .gd-popup-menu button:hover { background-color: #313335; }
 
 .app.admin-mode .topbar .topbar-actions {
     margin-left: auto !important;
-}
-
-body.dark-mode .app.admin-mode .sidebar {
-    background-color: #1a1d21 !important;
-}
-body.dark-mode .app.admin-mode .sidebar .admin-nav-item {
-    color: #e3e3e3 !important;
-}
-body.dark-mode .app.admin-mode .sidebar .admin-nav-item svg {
-    color: #c4c7c5 !important;
-}
-body.dark-mode .app.admin-mode .sidebar .admin-nav-item:hover {
-    background-color: #282a2f !important;
-}
-body.dark-mode .app.admin-mode .sidebar .admin-nav-item.active {
-    background-color: #004a77 !important;
-    color: #c2e7ff !important;
-}
-body.dark-mode .app.admin-mode .sidebar .admin-nav-item.active svg {
-    color: #c2e7ff !important;
-}
-body.dark-mode .app.admin-mode .logo-text {
-    color: #e3e3e3 !important;
 }
 
 /* Fix huge inputs in Activity and Settings forms */
@@ -1509,23 +1430,6 @@ body.dark-mode .app.admin-mode .logo-text {
 .danger-outline-btn:hover { background-color: rgba(217, 48, 37, 0.06); }
 .danger-outline-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ── Dark mode: settings-specific ── */
-body.dark-mode .settings-action-bar {
-    background: #28292c;
-    border-color: #3c4043;
-}
-body.dark-mode .live-toggle { color: #e8eaed; }
-body.dark-mode .types-chip-wrap h4 { color: #9aa0a6; }
-body.dark-mode .admin-chip { background-color: rgba(138, 180, 248, 0.2); color: #8ab4f8; }
-body.dark-mode .logo-upload-box { border-color: #5f6368; color: #9aa0a6; }
-body.dark-mode .logo-upload-box:hover { border-color: #8ab4f8; background-color: #313335; color: #8ab4f8; }
-body.dark-mode .backup-progress { background-color: #313335; }
-body.dark-mode .admin-table th { border-color: #3c4043; color: #9aa0a6; }
-body.dark-mode .admin-table td { border-color: #3c4043; color: #e8eaed; }
-body.dark-mode .admin-table tbody tr:hover td { background-color: #303134; }
-body.dark-mode .danger-outline-btn { border-color: #f28b82; color: #f28b82; }
-body.dark-mode .danger-outline-btn:hover { background-color: rgba(242, 139, 130, 0.08); }
-
 /* ── Activity Table ── */
 .activity-time-cell {
     color: #5F6368;
@@ -1628,7 +1532,3 @@ body.dark-mode .danger-outline-btn:hover { background-color: rgba(242, 139, 130,
     background: var(--border-light, #DADCE0);
 }
 
-/* Dark mode for activity */
-body.dark-mode .activity-detail-row { background: #28292c; }
-body.dark-mode .activity-detail-grid { color: #9aa0a6; }
-body.dark-mode .activity-live-label { color: #e8eaed; }

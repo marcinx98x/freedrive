@@ -43,14 +43,6 @@ const App = (() => {
         if (ur) ur.textContent = user.role;
     }
 
-    function applyTheme(theme) {
-        const t = theme || 'system';
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const dark = t === 'dark' || (t === 'system' && prefersDark);
-        document.body.classList.toggle('dark-mode', dark);
-        document.body.dataset.fdTheme = t;
-    }
-
     function openDriveSettings() {
         const user = API.getUser() || {};
         const prefs = getUserPrefs();
@@ -601,7 +593,6 @@ const App = (() => {
         }
 
         const prefs = getUserPrefs();
-        applyTheme(prefs.theme || 'system');
         if (!window.location.hash && prefs.startPage) {
             window.location.hash = prefs.startPage;
         }

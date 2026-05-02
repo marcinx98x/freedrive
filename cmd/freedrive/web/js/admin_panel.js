@@ -36,7 +36,7 @@ const AdminPanel = (() => {
             history: [],
         },
         appearance: {
-            theme: 'dark',
+            theme: 'light',
             accent: '#7C5CFC',
             login_title: 'Sign in',
             login_subtitle: 'to continue to FreeDrive',
