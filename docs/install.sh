@@ -4,7 +4,7 @@ set -euo pipefail
 
 
 REPO="${FREEDRIVE_REPO:-abdullaabdullazade/freedrive}"
-RAW_INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh"
+RAW_INSTALL_URL="https://raw.githubusercontent.com/${REPO}/master/scripts/install.sh"
 TMP_SCRIPT="$(mktemp /tmp/freedrive-install-XXXXXX.sh)"
 
 cleanup() {
