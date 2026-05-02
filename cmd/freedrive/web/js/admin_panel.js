@@ -1850,6 +1850,12 @@ const AdminPanel = (() => {
                         Components.toast('Valid e-mail is required', 'error');
                         return;
                     }
+                    const actionBtn = Array.from(document.querySelectorAll('.modal-footer .btn'))
+                        .find((b) => b.textContent === 'Generate Link');
+                    if (actionBtn) {
+                        actionBtn.disabled = true;
+                        actionBtn.textContent = 'Generating...';
+                    }
                     try {
                         const eCfg = state.settingsDraft?.email || {};
                         const invite = await API.admin.createInvite({
@@ -1909,7 +1915,7 @@ const AdminPanel = (() => {
                                     }</p>
                                     
                                     <div class="invite-link-box">
-                                        <input type="text" readonly class="invite-link-field" value="${link}" id="invite-link-field">
+                                        <input type="text" readonly class="invite-link-field" value="${esc(link)}" id="invite-link-field">
                                         <button class="btn btn-primary invite-copy-btn" id="copy-invite-link">Copy Link</button>
                                     </div>
                                 </div>
@@ -1927,11 +1933,15 @@ const AdminPanel = (() => {
                             // Hide the original action buttons except close
                             const footerBtns = document.querySelectorAll('.modal-footer .btn');
                             footerBtns.forEach(b => {
-                                if (b.textContent === 'Generate Link') b.style.display = 'none';
+                                if (b.textContent === 'Generating...' || b.textContent === 'Generate Link') b.style.display = 'none';
                                 if (b.textContent === 'Close') { b.classList.add('btn-primary'); b.classList.remove('btn-secondary'); b.textContent = 'Done'; }
                             });
                         }
                     } catch (err) {
+                        if (actionBtn) {
+                            actionBtn.disabled = false;
+                            actionBtn.textContent = 'Generate Link';
+                        }
                         Components.toast(err.message || 'Failed to send invite', 'error');
                     }
                 },

@@ -278,14 +278,7 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	useTLS = req.TLS
 
-	if siteURL == "" {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		siteURL = fmt.Sprintf("%s://%s", scheme, r.Host)
-	}
-	siteURL = strings.TrimRight(siteURL, "/")
+	siteURL = siteBaseURL(siteURL, r)
 	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(invite.Code))
 
 	emailSent := false
@@ -398,14 +391,7 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if siteURL == "" {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		siteURL = fmt.Sprintf("%s://%s", scheme, r.Host)
-	}
-	siteURL = strings.TrimRight(siteURL, "/")
+	siteURL = siteBaseURL(siteURL, r)
 
 	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(code))
 	role := strings.TrimSpace(req.Role)
@@ -587,14 +573,7 @@ func (h *AdminHandler) SendPasswordReset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if siteURL == "" {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		siteURL = fmt.Sprintf("%s://%s", scheme, r.Host)
-	}
-	siteURL = strings.TrimRight(siteURL, "/")
+	siteURL = siteBaseURL(siteURL, r)
 
 	token := createPasswordResetToken(user.Email)
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s&email=%s", siteURL, token, url.QueryEscape(user.Email))
@@ -776,6 +755,21 @@ func asString(v interface{}) string {
 	default:
 		return ""
 	}
+}
+
+func siteBaseURL(raw string, r *http.Request) string {
+	raw = strings.TrimSpace(raw)
+	if raw != "" {
+		if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+			return strings.TrimRight(fmt.Sprintf("%s://%s", u.Scheme, u.Host), "/")
+		}
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return strings.TrimRight(fmt.Sprintf("%s://%s", scheme, r.Host), "/")
 }
 
 func asInt(v interface{}, fallback int) int {
