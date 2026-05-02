@@ -21,6 +21,5 @@ temp
 *.out
 *.test
 .DS_Store
-Thumbs.db
 .idea
 .vscode
