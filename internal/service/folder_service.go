@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/abdullaxows/freedrive/internal/domain"
-	"github.com/abdullaxows/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
 )
 
 // FolderService handles folder business logic.

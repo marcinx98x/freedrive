@@ -1,4 +1,4 @@
-module github.com/abdullaxows/freedrive
+module github.com/abdullaabdullazade/freedrive
 
 go 1.25.8
 

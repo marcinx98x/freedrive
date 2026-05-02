@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/abdullaxows/freedrive/internal/domain"
-	"github.com/abdullaxows/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )

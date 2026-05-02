@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/abdullaxows/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
 )
 
 // UserRepository defines data access for users.

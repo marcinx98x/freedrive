@@ -3,8 +3,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/abdullaxows/freedrive/internal/api/middleware"
-	"github.com/abdullaxows/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
 )
 
 // UserHandler handles user-specific endpoints.

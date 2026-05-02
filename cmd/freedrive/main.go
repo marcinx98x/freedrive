@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abdullaxows/freedrive/internal/api"
-	"github.com/abdullaxows/freedrive/internal/config"
-	"github.com/abdullaxows/freedrive/internal/repository/sqlite"
-	"github.com/abdullaxows/freedrive/internal/service"
-	"github.com/abdullaxows/freedrive/internal/storage"
+	"github.com/abdullaabdullazade/freedrive/internal/api"
+	"github.com/abdullaabdullazade/freedrive/internal/config"
+	"github.com/abdullaabdullazade/freedrive/internal/repository/sqlite"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
+	"github.com/abdullaabdullazade/freedrive/internal/storage"
 )
 
 //go:embed all:web

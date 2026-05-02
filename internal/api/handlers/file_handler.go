@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/abdullaxows/freedrive/internal/api/middleware"
-	"github.com/abdullaxows/freedrive/internal/domain"
-	"github.com/abdullaxows/freedrive/internal/repository"
-	"github.com/abdullaxows/freedrive/internal/service"
-	"github.com/abdullaxows/freedrive/internal/storage"
+	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
+	"github.com/abdullaabdullazade/freedrive/internal/storage"
 	"github.com/go-chi/chi/v5"
 )
 

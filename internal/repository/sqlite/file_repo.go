@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abdullaxows/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/google/uuid"
 )
 

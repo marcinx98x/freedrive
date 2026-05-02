@@ -5,11 +5,11 @@ import (
 	"io/fs"
 	"net/http"
 
-	"github.com/abdullaxows/freedrive/internal/api/handlers"
-	"github.com/abdullaxows/freedrive/internal/api/middleware"
-	"github.com/abdullaxows/freedrive/internal/repository"
-	"github.com/abdullaxows/freedrive/internal/service"
-	"github.com/abdullaxows/freedrive/internal/storage"
+	"github.com/abdullaabdullazade/freedrive/internal/api/handlers"
+	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
+	"github.com/abdullaabdullazade/freedrive/internal/storage"
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 )

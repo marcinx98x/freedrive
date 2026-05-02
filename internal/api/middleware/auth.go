@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/abdullaxows/freedrive/internal/domain"
-	"github.com/abdullaxows/freedrive/internal/service"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
 )
 
 type contextKey string

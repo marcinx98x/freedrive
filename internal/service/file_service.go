@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/abdullaxows/freedrive/internal/domain"
-	"github.com/abdullaxows/freedrive/internal/repository"
-	"github.com/abdullaxows/freedrive/internal/storage"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/storage"
 )
 
 // FileService handles file business logic.

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/abdullaxows/freedrive/internal/service"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
 )
 
 // AuthHandler handles authentication endpoints.

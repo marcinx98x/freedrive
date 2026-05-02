@@ -6,7 +6,7 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-REPO_URL="${FREEDRIVE_REPO_URL:-https://github.com/abdullaxows/freedrive.git}"
+REPO_URL="${FREEDRIVE_REPO_URL:-https://github.com/abdullaabdullazade/freedrive.git}"
 TMP_DIR="/tmp/freedrive-src-$$"
 
 if ! command -v git >/dev/null 2>&1; then
