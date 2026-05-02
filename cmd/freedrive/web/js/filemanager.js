@@ -1968,7 +1968,7 @@ const FileManager = (() => {
 
         shareDraft.forEach((d) => {
             const row = {
-                id: crypto.randomUUID(),
+                id: Components.uuid(),
                 item_id: shareTarget.data.id,
                 item_type: shareTarget.type,
                 item_name: shareTarget.data.name,
@@ -1994,7 +1994,7 @@ const FileManager = (() => {
 
     function createNotification(text, createdAt = new Date().toISOString(), read = false, actor = '') {
         meta.notifications.unshift({
-            id: crypto.randomUUID(),
+            id: Components.uuid(),
             text,
             created_at: createdAt,
             read,
@@ -2123,7 +2123,7 @@ const FileManager = (() => {
     function addFileActivity(fileId, actionStr, filename, when = new Date().toISOString()) {
         if (!meta.file_activity[fileId]) meta.file_activity[fileId] = [];
         meta.file_activity[fileId].unshift({
-            id: crypto.randomUUID(),
+            id: Components.uuid(),
             text: `${currentUserLabel()} ${actionStr} ${filename}`, // backward compat
             action: actionStr,
             filename: filename,
@@ -2155,7 +2155,7 @@ const FileManager = (() => {
             const payload = findSelectedPayload(id);
             if (!payload) return;
             meta.shares.push({
-                id: crypto.randomUUID(),
+                id: Components.uuid(),
                 item_id: id,
                 item_type: payload.type,
                 item_name: payload.data.name,

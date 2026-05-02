@@ -1871,7 +1871,7 @@ const AdminPanel = (() => {
                             throw new Error('Invite code could not be generated');
                         }
                         state.invites.push({
-                            id: crypto.randomUUID(),
+                            id: Components.uuid(),
                             email,
                             role,
                             quota,
