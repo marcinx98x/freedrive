@@ -43,6 +43,14 @@ const App = (() => {
         if (ur) ur.textContent = user.role;
     }
 
+    function applyTheme(theme) {
+        const t = theme || 'system';
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const dark = t === 'dark' || (t === 'system' && prefersDark);
+        document.body.classList.toggle('dark-mode', dark);
+        document.body.dataset.fdTheme = t;
+    }
+
     function openDriveSettings() {
         const user = API.getUser() || {};
         const prefs = getUserPrefs();
@@ -261,6 +269,14 @@ const App = (() => {
         document.getElementById('sidebar-toggle')?.addEventListener('click', (e) => {
             e.stopPropagation();
             sidebar?.classList.toggle('open');
+        });
+
+        sidebar?.addEventListener('click', (e) => {
+            if (!window.matchMedia('(max-width: 1050px)').matches) return;
+            const target = e.target;
+            if (!target) return;
+            if (!target.closest('.nav-item, .context-item')) return;
+            sidebar.classList.remove('open');
         });
 
         document.getElementById('topbar-settings')?.addEventListener('click', () => {
@@ -593,6 +609,7 @@ const App = (() => {
         }
 
         const prefs = getUserPrefs();
+        applyTheme(prefs.theme || 'system');
         if (!window.location.hash && prefs.startPage) {
             window.location.hash = prefs.startPage;
         }

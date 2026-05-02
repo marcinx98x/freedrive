@@ -811,7 +811,12 @@ img { display: block; max-width: 100%; }
   transform: none;
   opacity: 1;
 }
-.file-card .file-actions { opacity: 1; }
+.file-card .file-actions {
+  opacity: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 /* ── Empty / Loading states ── */
 .empty-state {
