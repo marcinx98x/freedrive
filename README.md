@@ -8,6 +8,7 @@
   <strong>Self-hosted cloud storage with a familiar Drive-like UX.</strong><br/>
   Single Go binary, embedded SQLite, disk-backed storage, admin panel, and modern web UI.
 </p>
+<p align="center"><strong>Licensed under MIT</strong></p>
 
 <p align="center">
   <a href="https://abdullaabdullazade.github.io/freedrive/"><img src="https://img.shields.io/badge/Website-freedrive-blue?style=flat-square" alt="Website"/></a>

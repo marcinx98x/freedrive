@@ -21,6 +21,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Fetch GitHub stars once (build-time cache)
+        env:
+          REPO: abdullaabdullazade/freedrive
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          API_URL="https://api.github.com/repos/${REPO}"
+          STARS="$(curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}" "${API_URL}" | jq -r '.stargazers_count // 0')"
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > docs/stars.json <<JSON
+          {
+            "repo": "${REPO}",
+            "count": ${STARS},
+            "fetched_at": "${NOW}"
+          }
+          JSON
+
       - name: Deploy docs to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
