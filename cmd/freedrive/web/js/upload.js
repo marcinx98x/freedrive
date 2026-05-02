@@ -2,6 +2,7 @@ const Upload = (() => {
     const queue = [];
     let active = 0;
     const MAX_CONCURRENT = 3;
+    let insecureUploadNoticeShown = false;
 
     function init() {
         document.getElementById('upload-minimize')?.addEventListener('click', () => {
@@ -142,19 +143,32 @@ const Upload = (() => {
         const statusEl = itemEl.querySelector('.upload-item-status');
 
         try {
-            const key = await CryptoModule.generateKey();
-            const originalBuffer = await file.arrayBuffer();
-            const { ciphertext, iv } = await CryptoModule.encryptFile(originalBuffer, key);
+            const cryptoModule = window.CryptoModule;
+            const canEncrypt = Boolean(cryptoModule?.canEncrypt?.() && cryptoModule?.generateKey);
 
             statusEl.textContent = 'Uploading...';
 
-            const encryptedBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
             const formData = new FormData();
-            formData.append('file', encryptedBlob, file.name);
             formData.append('name', file.name);
             formData.append('mime_type', file.type || 'application/octet-stream');
             formData.append('original_size', String(file.size));
-            formData.append('iv', CryptoModule.uint8ToBase64(iv));
+
+            let key = null;
+            if (canEncrypt) {
+                statusEl.textContent = 'Encrypting...';
+                key = await cryptoModule.generateKey();
+                const originalBuffer = await file.arrayBuffer();
+                const { ciphertext, iv } = await cryptoModule.encryptFile(originalBuffer, key);
+                const encryptedBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
+                formData.append('file', encryptedBlob, file.name);
+                formData.append('iv', cryptoModule.uint8ToBase64(iv));
+            } else {
+                if (!insecureUploadNoticeShown) {
+                    insecureUploadNoticeShown = true;
+                    Components.toast('HTTPS is not enabled, so files will be uploaded without browser encryption.', 'info', { duration: 7000 });
+                }
+                formData.append('file', file, file.name);
+            }
 
             const currentFolder = jobFolderId || FileManager.getCurrentFolder?.();
             if (currentFolder) formData.append('folder_id', currentFolder);
@@ -164,7 +178,7 @@ const Upload = (() => {
                 statusEl.textContent = `${pct}%`;
             });
 
-            await CryptoModule.storeKey(result.id, key);
+            if (key) await cryptoModule.storeKey(result.id, key);
             progressFill.style.width = '100%';
             statusEl.textContent = 'Done';
             statusEl.style.color = 'var(--fd-green)';
@@ -174,7 +188,7 @@ const Upload = (() => {
                 onAction: async () => {
                     try {
                         await API.files.delete(result.id);
-                        await CryptoModule.deleteKey(result.id);
+                        if (cryptoModule?.deleteKey) await cryptoModule.deleteKey(result.id);
                         FileManager.refresh();
                     } catch {
                         Components.toast('Undo failed', 'error');

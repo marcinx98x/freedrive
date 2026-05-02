@@ -3,10 +3,29 @@
 // Zero-Knowledge AES-GCM-256
 // ========================================
 
-const CryptoModule = (() => {
+var CryptoModule = window.CryptoModule = (() => {
     const DB_NAME = 'freedrive_keys';
     const STORE_NAME = 'encryption_keys';
     const ALGO = { name: 'AES-GCM', length: 256 };
+
+    function getSubtleCrypto() {
+        const subtle = window.crypto?.subtle;
+        if (!subtle) {
+            throw new Error('Browser encryption requires HTTPS or localhost. Open FreeDrive over HTTPS, or use http://localhost:8080.');
+        }
+        return subtle;
+    }
+
+    function getCrypto() {
+        if (!window.crypto?.getRandomValues) {
+            throw new Error('Browser encryption is not available in this browser.');
+        }
+        return window.crypto;
+    }
+
+    function canEncrypt() {
+        return Boolean(window.crypto?.subtle && window.crypto?.getRandomValues);
+    }
 
     // Open IndexedDB for key storage
     function openDB() {
@@ -25,7 +44,7 @@ const CryptoModule = (() => {
 
     // Generate a new AES-GCM-256 key
     async function generateKey() {
-        return await crypto.subtle.generateKey(
+        return await getSubtleCrypto().generateKey(
             ALGO,
             true, // extractable
             ['encrypt', 'decrypt']
@@ -34,14 +53,14 @@ const CryptoModule = (() => {
 
     // Export key to base64url string
     async function exportKey(key) {
-        const raw = await crypto.subtle.exportKey('raw', key);
+        const raw = await getSubtleCrypto().exportKey('raw', key);
         return arrayBufferToBase64Url(raw);
     }
 
     // Import key from base64url string
     async function importKey(base64url) {
         const raw = base64UrlToArrayBuffer(base64url);
-        return await crypto.subtle.importKey(
+        return await getSubtleCrypto().importKey(
             'raw',
             raw,
             ALGO,
@@ -52,8 +71,8 @@ const CryptoModule = (() => {
 
     // Encrypt a file (ArrayBuffer)
     async function encryptFile(data, key) {
-        const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV
-        const ciphertext = await crypto.subtle.encrypt(
+        const iv = getCrypto().getRandomValues(new Uint8Array(12)); // 96-bit IV
+        const ciphertext = await getSubtleCrypto().encrypt(
             { name: 'AES-GCM', iv },
             key,
             data
@@ -63,7 +82,7 @@ const CryptoModule = (() => {
 
     // Decrypt a file (ArrayBuffer)
     async function decryptFile(ciphertext, key, iv) {
-        return await crypto.subtle.decrypt(
+        return await getSubtleCrypto().decrypt(
             { name: 'AES-GCM', iv },
             key,
             ciphertext
@@ -150,6 +169,7 @@ const CryptoModule = (() => {
 
     return {
         generateKey,
+        canEncrypt,
         exportKey,
         importKey,
         encryptFile,

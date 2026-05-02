@@ -275,6 +275,8 @@ sudo systemctl restart freedrive
 sudo journalctl -u freedrive -f
 ```
 
+Browser encryption note: uploads use WebCrypto when the browser allows it. Use `http://localhost:8080` or HTTPS for encrypted uploads; on plain HTTP server addresses, FreeDrive warns first and uploads without browser-side encryption.
+
 Note: current systemd template runs service as `root`. For hardened production setups, consider a dedicated system user and tighter filesystem permissions.
 
 ---

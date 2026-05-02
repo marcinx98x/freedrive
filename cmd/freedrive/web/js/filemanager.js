@@ -20,6 +20,7 @@ const FileManager = (() => {
     let shareTarget = null;
     let editorState = null;
     let dragPayload = null;
+    let insecureUploadNoticeShown = false;
     const folderStatsCache = new Map();
     const folderStatsPending = new Map();
     const zipCrcTable = (() => {
@@ -2798,11 +2799,14 @@ const FileManager = (() => {
 
     async function decryptFileBlob(file) {
         const { blob, iv, mime } = await API.downloadBlob(file.id);
-        const key = await CryptoModule.getKey(file.id);
+        const cryptoModule = window.CryptoModule;
+        if (!cryptoModule?.getKey || !cryptoModule?.decryptFile || !iv) return blob;
+
+        const key = await cryptoModule.getKey(file.id);
         if (!key || !iv) return blob;
 
         const encrypted = await blob.arrayBuffer();
-        const plain = await CryptoModule.decryptFile(encrypted, key, CryptoModule.base64ToUint8(iv));
+        const plain = await cryptoModule.decryptFile(encrypted, key, cryptoModule.base64ToUint8(iv));
         return new Blob([plain], { type: mime || file.mime_type || blob.type });
     }
 
@@ -3110,21 +3114,33 @@ const FileManager = (() => {
     }
 
     async function uploadEncryptedBlob(blob, fileName, mimeType, folderId) {
-        const key = await CryptoModule.generateKey();
-        const data = await blob.arrayBuffer();
-        const { ciphertext, iv } = await CryptoModule.encryptFile(data, key);
+        const cryptoModule = window.CryptoModule;
+        const canEncrypt = Boolean(cryptoModule?.canEncrypt?.() && cryptoModule?.generateKey);
 
-        const encryptedBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
         const form = new FormData();
-        form.append('file', encryptedBlob, fileName);
         form.append('name', fileName);
         form.append('mime_type', mimeType || blob.type || 'application/octet-stream');
         form.append('original_size', String(blob.size));
-        form.append('iv', CryptoModule.uint8ToBase64(iv));
+
+        let key = null;
+        if (canEncrypt) {
+            key = await cryptoModule.generateKey();
+            const data = await blob.arrayBuffer();
+            const { ciphertext, iv } = await cryptoModule.encryptFile(data, key);
+            const encryptedBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
+            form.append('file', encryptedBlob, fileName);
+            form.append('iv', cryptoModule.uint8ToBase64(iv));
+        } else {
+            if (!insecureUploadNoticeShown) {
+                insecureUploadNoticeShown = true;
+                Components.toast('HTTPS is not enabled, so files will be uploaded without browser encryption.', 'info', { duration: 7000 });
+            }
+            form.append('file', blob, fileName);
+        }
         if (folderId) form.append('folder_id', folderId);
 
         const result = await API.uploadFile(form);
-        await CryptoModule.storeKey(result.id, key);
+        if (key) await cryptoModule.storeKey(result.id, key);
         addFileActivity(result.id, 'uploaded', result.name);
         createNotification('File uploaded successfully', new Date().toISOString(), true, currentUserLabel());
         return result;
@@ -3133,21 +3149,32 @@ const FileManager = (() => {
     async function saveBlobToExistingFile(file, blob, mimeType, newName) {
         const oldName = file.name;
         const nameToUse = newName || file.name;
+        const cryptoModule = window.CryptoModule;
+        const canEncrypt = Boolean(cryptoModule?.canEncrypt?.() && cryptoModule?.generateKey);
 
-        const key = (await CryptoModule.getKey(file.id)) || (await CryptoModule.generateKey());
-        const plain = await blob.arrayBuffer();
-        const { ciphertext, iv } = await CryptoModule.encryptFile(plain, key);
-
+        let key = null;
         const form = new FormData();
-        form.append('file', new Blob([ciphertext], { type: 'application/octet-stream' }), nameToUse);
         form.append('name', nameToUse);
         form.append('mime_type', mimeType || file.mime_type || blob.type || 'application/octet-stream');
         form.append('original_size', String(blob.size));
-        form.append('iv', CryptoModule.uint8ToBase64(iv));
+
+        if (canEncrypt) {
+            key = (await cryptoModule.getKey(file.id)) || (await cryptoModule.generateKey());
+            const plain = await blob.arrayBuffer();
+            const { ciphertext, iv } = await cryptoModule.encryptFile(plain, key);
+            form.append('file', new Blob([ciphertext], { type: 'application/octet-stream' }), nameToUse);
+            form.append('iv', cryptoModule.uint8ToBase64(iv));
+        } else {
+            if (!insecureUploadNoticeShown) {
+                insecureUploadNoticeShown = true;
+                Components.toast('HTTPS is not enabled, so this file will be saved without browser encryption.', 'info', { duration: 7000 });
+            }
+            form.append('file', blob, nameToUse);
+        }
 
         try {
             await API.files.updateContent(file.id, form);
-            await CryptoModule.storeKey(file.id, key);
+            if (key) await cryptoModule.storeKey(file.id, key);
             if (nameToUse !== oldName) {
                 await API.files.update(file.id, { name: nameToUse });
             }
