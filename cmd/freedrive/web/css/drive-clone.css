@@ -1411,6 +1411,14 @@ body {
     padding: 0 8px 12px !important;
   }
 
+  .app:not(.admin-mode) .file-grid.grid-view .file-card {
+    margin-bottom: 12px !important;
+  }
+
+  .app:not(.admin-mode) .file-grid.grid-view .file-card:last-child {
+    margin-bottom: 0 !important;
+  }
+
   .app:not(.admin-mode) .file-list-header {
     display: none !important;
   }
