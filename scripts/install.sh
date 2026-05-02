@@ -29,18 +29,22 @@ if [[ "$(uname -m)" != "x86_64" && "$(uname -m)" != "amd64" ]]; then
   exit 1
 fi
 
-read -rp "Admin email: " ADMIN_EMAIL
-if [[ -z "${ADMIN_EMAIL}" ]]; then
-  echo "Admin email is required."
-  exit 1
-fi
+ADMIN_EMAIL=""
+while [[ -z "${ADMIN_EMAIL}" ]]; do
+  read -rp "Admin email: " ADMIN_EMAIL || exit 1
+  if [[ -z "${ADMIN_EMAIL}" ]]; then
+    echo "Admin email is required. Please enter a valid email."
+  fi
+done
 
-read -rsp "Admin password: " ADMIN_PASSWORD
-echo
-if [[ -z "${ADMIN_PASSWORD}" ]]; then
-  echo "Admin password is required."
-  exit 1
-fi
+ADMIN_PASSWORD=""
+while [[ -z "${ADMIN_PASSWORD}" ]]; do
+  read -rsp "Admin password: " ADMIN_PASSWORD || exit 1
+  echo
+  if [[ -z "${ADMIN_PASSWORD}" ]]; then
+    echo "Admin password is required. Please enter a valid password."
+  fi
+done
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is required."
