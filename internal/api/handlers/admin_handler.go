@@ -636,7 +636,7 @@ func (h *AdminHandler) TestEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendSMTPEmail(smtpServer string, smtpPort int, smtpUser, smtpPass, fromAddress, fromName, toAddress, subject, body string, useTLS bool) error {
-	if smtpPort == 443 || strings.HasPrefix(smtpServer, "https://") || strings.HasPrefix(smtpServer, "http://") || smtpServer == "api.mailersend.com" {
+	if smtpPort == 443 || strings.HasPrefix(smtpServer, "https://") || strings.HasPrefix(smtpServer, "http://") || strings.Contains(smtpServer, "api.mailersend.com") || strings.Contains(smtpServer, "api.zeptomail.") {
 		return sendHTTPEmail(smtpServer, smtpPass, fromAddress, fromName, toAddress, subject, body)
 	}
 
