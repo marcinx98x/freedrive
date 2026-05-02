@@ -6,12 +6,31 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="${FREEDRIVE_REPO:-abdullaabdullazade/freedrive}"
+RELEASE_BASE_URL="https://github.com/${REPO}/releases/latest/download"
 APP_DIR="/opt/freedrive"
 BIN_PATH="$APP_DIR/freedrive"
 DATA_DIR="/var/lib/freedrive"
 ENV_FILE="/etc/freedrive/freedrive.env"
 SERVICE_FILE="/etc/systemd/system/freedrive.service"
+TMP_DIR="$(mktemp -d)"
+TMP_BIN="${TMP_DIR}/freedrive-linux-amd64"
+TMP_SUMS="${TMP_DIR}/checksums.txt"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "This installer supports Linux only."
+  exit 1
+fi
+
+if [[ "$(uname -m)" != "x86_64" && "$(uname -m)" != "amd64" ]]; then
+  echo "This installer currently supports amd64 only."
+  exit 1
+fi
 
 read -rp "Admin email: " ADMIN_EMAIL
 if [[ -z "${ADMIN_EMAIL}" ]]; then
@@ -26,20 +45,37 @@ if [[ -z "${ADMIN_PASSWORD}" ]]; then
   exit 1
 fi
 
-if ! command -v go >/dev/null 2>&1; then
-  echo "Go is not installed. Install Go first, then rerun."
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required."
+  exit 1
+fi
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "sha256sum is required."
   exit 1
 fi
 
-echo "Building FreeDrive..."
-cd "$ROOT_DIR"
-go mod download
-go build -o /tmp/freedrive ./cmd/freedrive
+echo "Downloading FreeDrive release binary..."
+curl -fsSL "${RELEASE_BASE_URL}/freedrive-linux-amd64" -o "$TMP_BIN"
+curl -fsSL "${RELEASE_BASE_URL}/checksums.txt" -o "$TMP_SUMS"
+
+EXPECTED_SHA="$(awk '/freedrive-linux-amd64$/ {print $1; exit}' "$TMP_SUMS" | sed 's/^sha256://')"
+if [[ -z "${EXPECTED_SHA}" ]]; then
+  echo "Could not find checksum for freedrive-linux-amd64 in checksums.txt"
+  exit 1
+fi
+
+ACTUAL_SHA="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
+if [[ "${EXPECTED_SHA}" != "${ACTUAL_SHA}" ]]; then
+  echo "Checksum verification failed."
+  echo "Expected: ${EXPECTED_SHA}"
+  echo "Actual:   ${ACTUAL_SHA}"
+  exit 1
+fi
+echo "Checksum verified."
 
 echo "Installing files..."
 sudo mkdir -p "$APP_DIR" "$DATA_DIR" /etc/freedrive
-sudo install -m 0755 /tmp/freedrive "$BIN_PATH"
-sudo rm -f /tmp/freedrive
+sudo install -m 0755 "$TMP_BIN" "$BIN_PATH"
 
 JWT_SECRET="$(openssl rand -hex 32)"
 

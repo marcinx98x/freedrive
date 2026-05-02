@@ -6,37 +6,21 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-REPO_URL="${FREEDRIVE_REPO_URL:-https://github.com/abdullaabdullazade/freedrive.git}"
-TMP_DIR="/tmp/freedrive-src-$$"
+REPO="${FREEDRIVE_REPO:-abdullaabdullazade/freedrive}"
+RAW_INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh"
+TMP_SCRIPT="$(mktemp /tmp/freedrive-install-XXXXXX.sh)"
 
-if ! command -v git >/dev/null 2>&1; then
-  echo "git is required."
-  exit 1
-fi
-if ! command -v go >/dev/null 2>&1; then
-  echo "go is required. Install Go first, then rerun."
-  exit 1
-fi
+cleanup() {
+  rm -f "$TMP_SCRIPT"
+}
+trap cleanup EXIT
 
-read -rp "Admin email: " ADMIN_EMAIL
-if [[ -z "${ADMIN_EMAIL}" ]]; then
-  echo "Admin email is required."
-  exit 1
-fi
-read -rsp "Admin password: " ADMIN_PASSWORD
-echo
-if [[ -z "${ADMIN_PASSWORD}" ]]; then
-  echo "Admin password is required."
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required."
   exit 1
 fi
 
-echo "Cloning FreeDrive source..."
-git clone --depth 1 "$REPO_URL" "$TMP_DIR"
-
-chmod +x "$TMP_DIR/scripts/install.sh"
-FREEDRIVE_ADMIN_EMAIL="$ADMIN_EMAIL" FREEDRIVE_ADMIN_PASSWORD="$ADMIN_PASSWORD" bash "$TMP_DIR/scripts/install.sh" <<INPUT
-$ADMIN_EMAIL
-$ADMIN_PASSWORD
-INPUT
-
-rm -rf "$TMP_DIR"
+echo "Downloading installer from ${RAW_INSTALL_URL} ..."
+curl -fsSL "$RAW_INSTALL_URL" -o "$TMP_SCRIPT"
+chmod +x "$TMP_SCRIPT"
+exec bash "$TMP_SCRIPT"
