@@ -1,0 +1,218 @@
+package sqlite
+
+import (
+	"database/sql"
+	"fmt"
+)
+
+// runMigrations creates or updates the database schema.
+func runMigrations(db *sql.DB) error {
+	// Create migrations tracking table
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		return fmt.Errorf("create migrations table: %w", err)
+	}
+
+	migrations := []struct {
+		version int
+		sql     string
+	}{
+		{1, migrationV1},
+		{2, migrationV2},
+	}
+
+	for _, m := range migrations {
+		var exists int
+		err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = ?", m.version).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("check migration %d: %w", m.version, err)
+		}
+		if exists > 0 {
+			continue
+		}
+
+		if _, err := db.Exec(m.sql); err != nil {
+			return fmt.Errorf("run migration %d: %w", m.version, err)
+		}
+
+		if _, err := db.Exec("INSERT INTO schema_migrations (version) VALUES (?)", m.version); err != nil {
+			return fmt.Errorf("record migration %d: %w", m.version, err)
+		}
+	}
+
+	return nil
+}
+
+const migrationV1 = `
+-- ═══════════════════════════════════════
+-- USERS & AUTH
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    email         TEXT NOT NULL UNIQUE,
+    username      TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin','user','guest')),
+    quota_bytes   INTEGER NOT NULL DEFAULT 10737418240,
+    used_bytes    INTEGER NOT NULL DEFAULT 0,
+    avatar_url    TEXT DEFAULT '',
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS invite_links (
+    id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    code       TEXT NOT NULL UNIQUE,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    role       TEXT NOT NULL DEFAULT 'user',
+    max_uses   INTEGER DEFAULT 1,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    expires_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ═══════════════════════════════════════
+-- FOLDERS
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS folders (
+    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    name        TEXT NOT NULL,
+    parent_id   TEXT REFERENCES folders(id) ON DELETE CASCADE,
+    owner_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    color       TEXT DEFAULT '',
+    is_starred  BOOLEAN NOT NULL DEFAULT 0,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(parent_id, name, owner_id)
+);
+
+-- ═══════════════════════════════════════
+-- FILES & VERSIONING
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS files (
+    id                TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    name              TEXT NOT NULL,
+    mime_type         TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size              INTEGER NOT NULL,
+    encrypted_size    INTEGER NOT NULL,
+    folder_id         TEXT REFERENCES folders(id) ON DELETE SET NULL,
+    owner_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blob_path         TEXT NOT NULL,
+    iv                TEXT NOT NULL,
+    version           INTEGER NOT NULL DEFAULT 1,
+    is_starred        BOOLEAN NOT NULL DEFAULT 0,
+    is_trashed        BOOLEAN NOT NULL DEFAULT 0,
+    trashed_at        DATETIME,
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accessed_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS file_versions (
+    id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    file_id      TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL,
+    size         INTEGER NOT NULL,
+    blob_path    TEXT NOT NULL,
+    iv           TEXT NOT NULL,
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by   TEXT NOT NULL REFERENCES users(id),
+    UNIQUE(file_id, version)
+);
+
+-- ═══════════════════════════════════════
+-- SHARING
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS share_links (
+    id             TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    file_id        TEXT REFERENCES files(id) ON DELETE CASCADE,
+    folder_id      TEXT REFERENCES folders(id) ON DELETE CASCADE,
+    created_by     TEXT NOT NULL REFERENCES users(id),
+    token          TEXT NOT NULL UNIQUE,
+    permission     TEXT NOT NULL DEFAULT 'read' CHECK(permission IN ('read','write','upload')),
+    password_hash  TEXT DEFAULT '',
+    expires_at     DATETIME,
+    max_downloads  INTEGER,
+    download_count INTEGER NOT NULL DEFAULT 0,
+    is_active      BOOLEAN NOT NULL DEFAULT 1,
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (file_id IS NOT NULL OR folder_id IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS user_shares (
+    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    file_id     TEXT REFERENCES files(id) ON DELETE CASCADE,
+    folder_id   TEXT REFERENCES folders(id) ON DELETE CASCADE,
+    shared_by   TEXT NOT NULL REFERENCES users(id),
+    shared_with TEXT NOT NULL REFERENCES users(id),
+    permission  TEXT NOT NULL DEFAULT 'read' CHECK(permission IN ('read','write','upload')),
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (file_id IS NOT NULL OR folder_id IS NOT NULL)
+);
+
+-- ═══════════════════════════════════════
+-- COLLABORATION
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS comments (
+    id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    file_id    TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    content    TEXT NOT NULL,
+    parent_id  TEXT REFERENCES comments(id) ON DELETE CASCADE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    action      TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id   TEXT NOT NULL,
+    target_name TEXT DEFAULT '',
+    metadata    TEXT DEFAULT '',
+    ip_address  TEXT DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type        TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    target_id   TEXT DEFAULT '',
+    target_type TEXT DEFAULT '',
+    is_read     BOOLEAN NOT NULL DEFAULT 0,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ═══════════════════════════════════════
+-- INDEXES
+-- ═══════════════════════════════════════
+CREATE INDEX IF NOT EXISTS idx_files_owner ON files(owner_id);
+CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
+CREATE INDEX IF NOT EXISTS idx_files_trashed ON files(is_trashed, trashed_at);
+CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
+CREATE INDEX IF NOT EXISTS idx_folders_owner ON folders(owner_id);
+CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_share_links_token ON share_links(token);
+CREATE INDEX IF NOT EXISTS idx_file_versions_file ON file_versions(file_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+`
+
+const migrationV2 = `
+ALTER TABLE invite_links ADD COLUMN quota_bytes INTEGER NOT NULL DEFAULT 10737418240;
+`

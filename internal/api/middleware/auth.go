@@ -1,0 +1,79 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"github.com/abdullaxows/freedrive/internal/domain"
+	"github.com/abdullaxows/freedrive/internal/service"
+)
+
+type contextKey string
+
+const (
+	UserIDKey   contextKey = "user_id"
+	UserRoleKey contextKey = "user_role"
+	UserEmailKey contextKey = "user_email"
+	UsernameKey  contextKey = "username"
+)
+
+// Auth returns middleware that validates JWT tokens.
+func Auth(authService *service.AuthService) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			if header == "" {
+				http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+				return
+			}
+
+			parts := strings.SplitN(header, " ", 2)
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
+				return
+			}
+
+			claims, err := authService.ValidateAccessToken(parts[1])
+			if err != nil {
+				http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+			ctx = context.WithValue(ctx, UserRoleKey, claims.Role)
+			ctx = context.WithValue(ctx, UserEmailKey, claims.Email)
+			ctx = context.WithValue(ctx, UsernameKey, claims.Username)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireAdmin returns middleware that restricts access to admin users.
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, ok := r.Context().Value(UserRoleKey).(domain.Role)
+		if !ok || role != domain.RoleAdmin {
+			http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// GetUserID extracts the user ID from the request context.
+func GetUserID(ctx context.Context) string {
+	if v, ok := ctx.Value(UserIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// GetUserRole extracts the user role from the request context.
+func GetUserRole(ctx context.Context) domain.Role {
+	if v, ok := ctx.Value(UserRoleKey).(domain.Role); ok {
+		return v
+	}
+	return ""
+}

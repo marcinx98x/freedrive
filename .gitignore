@@ -1,0 +1,33 @@
+# Local runtime data and secrets
+data/
+cmd/freedrive/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+.env
+.env.*
+
+# Build outputs
+/freedrive
+/freedrive.exe
+bin/
+dist/
+build/
+*.exe
+*.out
+*.test
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

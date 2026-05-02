@@ -1,0 +1,397 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/abdullaxows/freedrive/internal/domain"
+	"github.com/google/uuid"
+)
+
+// FileRepo implements repository.FileRepository with SQLite.
+type FileRepo struct {
+	writer *sql.DB
+	reader *sql.DB
+}
+
+// NewFileRepo creates a new file repository.
+func NewFileRepo(db *DB) *FileRepo {
+	return &FileRepo{writer: db.Writer, reader: db.Reader}
+}
+
+func (r *FileRepo) Create(ctx context.Context, file *domain.File) error {
+	if file.ID == "" {
+		file.ID = uuid.New().String()
+	}
+	now := time.Now()
+	file.CreatedAt = now
+	file.UpdatedAt = now
+	file.AccessedAt = now
+
+	_, err := r.writer.ExecContext(ctx,
+		`INSERT INTO files (id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version, is_starred, is_trashed, created_at, updated_at, accessed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		file.ID, file.Name, file.MimeType, file.Size, file.EncryptedSize,
+		file.FolderID, file.OwnerID, file.BlobPath, file.IV, file.Version,
+		file.IsStarred, file.IsTrashed, file.CreatedAt, file.UpdatedAt, file.AccessedAt,
+	)
+	return err
+}
+
+func (r *FileRepo) GetByID(ctx context.Context, id string) (*domain.File, error) {
+	f := &domain.File{}
+	err := r.reader.QueryRowContext(ctx,
+		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+		 FROM files WHERE id = ?`, id,
+	).Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+		&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+		&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return f, err
+}
+
+func (r *FileRepo) Update(ctx context.Context, file *domain.File) error {
+	file.UpdatedAt = time.Now()
+	_, err := r.writer.ExecContext(ctx,
+		`UPDATE files SET name=?, mime_type=?, size=?, encrypted_size=?, folder_id=?, blob_path=?, iv=?,
+		        version=?, is_starred=?, is_trashed=?, trashed_at=?, updated_at=?, accessed_at=?
+		 WHERE id=?`,
+		file.Name, file.MimeType, file.Size, file.EncryptedSize, file.FolderID,
+		file.BlobPath, file.IV, file.Version, file.IsStarred, file.IsTrashed,
+		file.TrashedAt, file.UpdatedAt, file.AccessedAt, file.ID,
+	)
+	return err
+}
+
+func (r *FileRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.writer.ExecContext(ctx, "DELETE FROM files WHERE id = ?", id)
+	return err
+}
+
+func (r *FileRepo) List(ctx context.Context, opts domain.FileListOptions) ([]domain.File, int, error) {
+	var conditions []string
+	var args []interface{}
+
+	conditions = append(conditions, "owner_id = ?")
+	args = append(args, opts.OwnerID)
+
+	if opts.FolderID != nil {
+		conditions = append(conditions, "folder_id = ?")
+		args = append(args, *opts.FolderID)
+	}
+
+	conditions = append(conditions, "is_trashed = ?")
+	args = append(args, opts.Trashed)
+
+	if opts.Starred {
+		conditions = append(conditions, "is_starred = 1")
+	}
+
+	if opts.MimeType != "" {
+		conditions = append(conditions, "mime_type LIKE ?")
+		args = append(args, opts.MimeType+"%")
+	}
+
+	if opts.Search != "" {
+		conditions = append(conditions, "name LIKE ?")
+		args = append(args, "%"+opts.Search+"%")
+	}
+
+	where := strings.Join(conditions, " AND ")
+
+	// Count total
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM files WHERE %s", where)
+	if err := r.reader.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// Sort
+	sortBy := "created_at"
+	if opts.SortBy != "" {
+		allowed := map[string]bool{"name": true, "size": true, "created_at": true, "updated_at": true, "accessed_at": true}
+		if allowed[opts.SortBy] {
+			sortBy = opts.SortBy
+		}
+	}
+	sortDir := "DESC"
+	if opts.SortDir == "asc" {
+		sortDir = "ASC"
+	}
+
+	// Pagination
+	page := opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := opts.PageSize
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 50
+	}
+	offset := (page - 1) * pageSize
+
+	query := fmt.Sprintf(
+		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+		 FROM files WHERE %s ORDER BY %s %s LIMIT ? OFFSET ?`,
+		where, sortBy, sortDir,
+	)
+	args = append(args, pageSize, offset)
+
+	rows, err := r.reader.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			return nil, 0, err
+		}
+		files = append(files, f)
+	}
+	return files, total, nil
+}
+
+func (r *FileRepo) GetByFolderID(ctx context.Context, folderID *string, ownerID string) ([]domain.File, error) {
+	var rows *sql.Rows
+	var err error
+
+	if folderID == nil {
+		rows, err = r.reader.QueryContext(ctx,
+			`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+			 FROM files WHERE folder_id IS NULL AND owner_id = ? AND is_trashed = 0 ORDER BY name`, ownerID)
+	} else {
+		rows, err = r.reader.QueryContext(ctx,
+			`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+			 FROM files WHERE folder_id = ? AND owner_id = ? AND is_trashed = 0 ORDER BY name`, *folderID, ownerID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+func (r *FileRepo) MoveToTrash(ctx context.Context, id string) error {
+	now := time.Now()
+	_, err := r.writer.ExecContext(ctx,
+		"UPDATE files SET is_trashed = 1, trashed_at = ?, updated_at = ? WHERE id = ?", now, now, id)
+	return err
+}
+
+func (r *FileRepo) RestoreFromTrash(ctx context.Context, id string) error {
+	now := time.Now()
+	_, err := r.writer.ExecContext(ctx,
+		"UPDATE files SET is_trashed = 0, trashed_at = NULL, updated_at = ? WHERE id = ?", now, id)
+	return err
+}
+
+func (r *FileRepo) GetTrashedFiles(ctx context.Context, ownerID string) ([]domain.File, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+		 FROM files WHERE owner_id = ? AND is_trashed = 1 ORDER BY trashed_at DESC`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+func (r *FileRepo) GetSharedWithMe(ctx context.Context, userID string) ([]domain.File, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT f.id, f.name, f.mime_type, f.size, f.encrypted_size, f.folder_id, f.owner_id, f.blob_path, f.iv, f.version,
+		        f.is_starred, f.is_trashed, f.trashed_at, f.created_at, f.updated_at, f.accessed_at
+		 FROM files f
+		 INNER JOIN user_shares s ON f.id = s.file_id
+		 WHERE s.shared_with = ? AND f.is_trashed = 0 ORDER BY s.created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+func (r *FileRepo) GetSharedByMe(ctx context.Context, userID string) ([]domain.File, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT DISTINCT f.id, f.name, f.mime_type, f.size, f.encrypted_size, f.folder_id, f.owner_id, f.blob_path, f.iv, f.version,
+		        f.is_starred, f.is_trashed, f.trashed_at, f.created_at, f.updated_at, f.accessed_at
+		 FROM files f
+		 INNER JOIN user_shares s ON f.id = s.file_id
+		 WHERE s.shared_by = ? AND f.is_trashed = 0 ORDER BY f.created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+func (r *FileRepo) PurgeOldTrashed(ctx context.Context, days int) ([]domain.File, error) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, blob_path, owner_id, encrypted_size FROM files WHERE is_trashed = 1 AND trashed_at < ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.BlobPath, &f.OwnerID, &f.EncryptedSize); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+
+	if len(files) > 0 {
+		_, err = r.writer.ExecContext(ctx,
+			"DELETE FROM files WHERE is_trashed = 1 AND trashed_at < ?", cutoff)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
+func (r *FileRepo) CountByOwner(ctx context.Context, ownerID string) (int, error) {
+	var count int
+	err := r.reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM files WHERE owner_id = ?", ownerID).Scan(&count)
+	return count, err
+}
+
+// --- Versioning ---
+
+func (r *FileRepo) CreateVersion(ctx context.Context, version *domain.FileVersion) error {
+	if version.ID == "" {
+		version.ID = uuid.New().String()
+	}
+	version.CreatedAt = time.Now()
+
+	_, err := r.writer.ExecContext(ctx,
+		`INSERT INTO file_versions (id, file_id, version, size, blob_path, iv, created_at, created_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		version.ID, version.FileID, version.Version, version.Size,
+		version.BlobPath, version.IV, version.CreatedAt, version.CreatedBy,
+	)
+	return err
+}
+
+func (r *FileRepo) GetVersions(ctx context.Context, fileID string) ([]domain.FileVersion, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, file_id, version, size, blob_path, iv, created_at, created_by
+		 FROM file_versions WHERE file_id = ? ORDER BY version DESC`, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var versions []domain.FileVersion
+	for rows.Next() {
+		var v domain.FileVersion
+		if err := rows.Scan(&v.ID, &v.FileID, &v.Version, &v.Size, &v.BlobPath, &v.IV, &v.CreatedAt, &v.CreatedBy); err != nil {
+			return nil, err
+		}
+		versions = append(versions, v)
+	}
+	return versions, nil
+}
+
+func (r *FileRepo) GetVersion(ctx context.Context, fileID string, version int) (*domain.FileVersion, error) {
+	v := &domain.FileVersion{}
+	err := r.reader.QueryRowContext(ctx,
+		`SELECT id, file_id, version, size, blob_path, iv, created_at, created_by
+		 FROM file_versions WHERE file_id = ? AND version = ?`, fileID, version,
+	).Scan(&v.ID, &v.FileID, &v.Version, &v.Size, &v.BlobPath, &v.IV, &v.CreatedAt, &v.CreatedBy)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return v, err
+}
+
+func (r *FileRepo) DeleteOldVersions(ctx context.Context, fileID string, keepCount int) ([]domain.FileVersion, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, blob_path FROM file_versions WHERE file_id = ?
+		 ORDER BY version DESC LIMIT -1 OFFSET ?`, fileID, keepCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var old []domain.FileVersion
+	for rows.Next() {
+		var v domain.FileVersion
+		if err := rows.Scan(&v.ID, &v.BlobPath); err != nil {
+			return nil, err
+		}
+		old = append(old, v)
+	}
+
+	if len(old) > 0 {
+		_, err = r.writer.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM file_versions WHERE file_id = ? AND id NOT IN (
+				SELECT id FROM file_versions WHERE file_id = ? ORDER BY version DESC LIMIT %d
+			)`, keepCount), fileID, fileID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return old, nil
+}

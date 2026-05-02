@@ -1,0 +1,862 @@
+/* =====================================================
+   FreeDrive — Google Drive Motion System
+   ===================================================== */
+
+/* --------------------------------------------------
+   Base easing tokens
+   -------------------------------------------------- */
+:root {
+  --md-easing-standard:  cubic-bezier(0.2, 0, 0, 1);
+  --md-easing-decel:     cubic-bezier(0, 0, 0, 1);
+  --md-easing-accel:     cubic-bezier(0.3, 0, 1, 1);
+  --md-easing-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
+  --md-dur-short:  150ms;
+  --md-dur-medium: 250ms;
+  --md-dur-long:   400ms;
+}
+
+/* =====================================================
+   1. APP BOOT — smooth fade-in
+   ===================================================== */
+@keyframes fd-app-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+#app:not(.hidden) {
+  animation: fd-app-enter 220ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   2. FILE LIST — staggered entrance
+   ===================================================== */
+@keyframes fd-item-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.file-row,
+.file-card {
+  animation: fd-item-enter 220ms var(--md-easing-decel) both;
+}
+
+/* stagger: JS adds --fd-i (0, 1, 2 …) via style attr */
+.file-row[style*="--fd-i"],
+.file-card[style*="--fd-i"] {
+  animation-delay: calc(var(--fd-i, 0) * 22ms);
+}
+
+/* =====================================================
+   3. FILE ROW — hover / selected
+   ===================================================== */
+.file-row {
+  transition:
+    background 160ms var(--md-easing-standard),
+    box-shadow 160ms var(--md-easing-standard);
+  will-change: background;
+}
+
+.file-row:hover {
+  background: #f1f3f4 !important;
+}
+
+.file-row.selected {
+  background: #e8f0fe !important;
+}
+
+/* =====================================================
+   4. FILE CARD — hover lift
+   ===================================================== */
+.file-card {
+  transition:
+    border-color  180ms var(--md-easing-standard),
+    box-shadow    180ms var(--md-easing-standard),
+    transform     180ms var(--md-easing-standard);
+  will-change: transform, box-shadow;
+}
+
+.file-card:hover {
+  transform: translateY(-2px) !important;
+  box-shadow:
+    0 1px 3px 0   rgba(60,64,67,.30),
+    0 4px 8px 3px rgba(60,64,67,.15) !important;
+}
+
+.file-card:active {
+  transform: translateY(0) !important;
+  transition-duration: 80ms;
+}
+
+.file-card.selected {
+  border-color: #1a73e8 !important;
+  box-shadow: 0 0 0 1px #1a73e8 !important;
+}
+
+/* =====================================================
+   5. FILE ACTIONS — reveal on hover
+   ===================================================== */
+.file-actions {
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity  160ms var(--md-easing-standard),
+    transform 160ms var(--md-easing-standard);
+}
+
+.file-row:hover .file-actions,
+.file-row.selected .file-actions,
+.file-card:hover .file-actions,
+.file-card.selected .file-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* file checkbox */
+.file-checkbox {
+  opacity: 0;
+  transition: opacity 140ms var(--md-easing-standard);
+}
+
+.file-row:hover .file-checkbox,
+.file-row.selected .file-checkbox {
+  opacity: 1;
+}
+
+/* =====================================================
+   6. NAV ITEMS
+   ===================================================== */
+.nav-item {
+  transition:
+    background 160ms var(--md-easing-standard),
+    color      160ms var(--md-easing-standard);
+  position: relative;
+  overflow: hidden;
+}
+
+/* =====================================================
+   7. RIPPLE EFFECT (Material Design)
+   ===================================================== */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple-wave {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  background: rgba(0,0,0,.12);
+  animation: fd-ripple 500ms var(--md-easing-standard) forwards;
+  pointer-events: none;
+}
+
+@keyframes fd-ripple {
+  to {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* CSS-only ripple fallback for buttons */
+.btn-primary.ripple .ripple-wave,
+.upload-btn .ripple-wave {
+  background: rgba(255,255,255,.25);
+}
+
+/* =====================================================
+   8. BUTTONS
+   ===================================================== */
+.btn {
+  transition:
+    background  180ms var(--md-easing-standard),
+    box-shadow  180ms var(--md-easing-standard),
+    border-color 180ms var(--md-easing-standard),
+    transform   100ms var(--md-easing-standard);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-icon {
+  transition:
+    background 160ms var(--md-easing-standard),
+    color      160ms var(--md-easing-standard),
+    transform  100ms var(--md-easing-standard);
+}
+
+.btn-icon:hover {
+  background: #f1f3f4 !important;
+}
+
+.btn-icon:active {
+  transform: scale(0.92);
+}
+
+/* =====================================================
+   9. NEW / FAB BUTTON
+   ===================================================== */
+.upload-btn {
+  transition:
+    box-shadow 200ms var(--md-easing-standard),
+    background 180ms var(--md-easing-standard),
+    transform  120ms var(--md-easing-standard);
+}
+
+.upload-btn:hover {
+  box-shadow:
+    0 1px 3px 0   rgba(60,64,67,.30),
+    0 4px 8px 3px rgba(60,64,67,.15) !important;
+  transform: translateY(-1px);
+}
+
+.upload-btn:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 1px 2px rgba(60,64,67,.20) !important;
+}
+
+/* =====================================================
+   10. NEW DROPDOWN
+   ===================================================== */
+.new-dropdown {
+  transform-origin: top left;
+  transition:
+    opacity   160ms var(--md-easing-standard),
+    transform 200ms var(--md-easing-decel);
+}
+
+.new-dropdown.hidden {
+  opacity: 0;
+  transform: scaleY(0.85) translateY(-6px);
+  pointer-events: none;
+  display: block !important;
+  visibility: hidden;
+}
+
+.new-dropdown:not(.hidden) {
+  opacity: 1;
+  transform: scaleY(1) translateY(0);
+  visibility: visible;
+}
+
+/* =====================================================
+   11. CONTEXT MENU
+   ===================================================== */
+.context-menu {
+  transform-origin: top left;
+  transition:
+    opacity   140ms var(--md-easing-standard),
+    transform 180ms var(--md-easing-decel);
+}
+
+.context-menu.hidden {
+  opacity: 0;
+  transform: scale(0.9) translateY(-4px);
+  pointer-events: none;
+  display: block !important;
+  visibility: hidden;
+}
+
+.context-menu:not(.hidden) {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  visibility: visible;
+}
+
+.context-item {
+  transition: background 120ms var(--md-easing-standard);
+}
+
+/* =====================================================
+   12. MD3 CHIP DROPDOWN
+   ===================================================== */
+.md3-chip-menu {
+  transform-origin: top left;
+  transition:
+    opacity   140ms var(--md-easing-standard),
+    transform 200ms var(--md-easing-decel),
+    box-shadow 200ms;
+}
+
+.md3-chip-menu.hidden {
+  opacity: 0;
+  transform: scaleY(0.88) translateY(-8px);
+  pointer-events: none;
+  display: block !important;
+  visibility: hidden;
+}
+
+.md3-chip-menu:not(.hidden) {
+  opacity: 1;
+  transform: scaleY(1) translateY(0);
+  visibility: visible;
+}
+
+/* =====================================================
+   13. MODAL — scale-in entrance
+   ===================================================== */
+@keyframes fd-modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fd-modal-overlay-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Override display:none so the animation can run */
+.modal-overlay.hidden {
+  display: flex !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+.modal-overlay:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  animation: fd-modal-overlay-enter 180ms var(--md-easing-standard) both;
+}
+
+.modal-overlay:not(.hidden) .modal {
+  animation: fd-modal-enter 220ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   14. DETAILS PANEL — slide from right
+   ===================================================== */
+.details-panel {
+  transition:
+    transform 280ms cubic-bezier(0.2, 0, 0, 1),
+    opacity   220ms ease-out,
+    box-shadow 280ms ease-out,
+    visibility 0ms 280ms;
+}
+
+/* Override display:none so transition can run */
+.details-panel.hidden {
+  display: flex !important;
+  transform: translateX(100%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  box-shadow: none !important;
+  transition:
+    transform 220ms cubic-bezier(0.4, 0, 1, 1),
+    opacity   160ms ease-in,
+    box-shadow 220ms ease-in,
+    visibility 0ms 220ms !important;
+}
+
+.details-panel:not(.hidden) {
+  transform: translateX(0) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.08) !important;
+}
+
+/* =====================================================
+   15. NOTIFICATIONS PANEL — floating popover
+   ===================================================== */
+.notifications-panel {
+  transition:
+    transform 240ms var(--md-easing-spring),
+    opacity   200ms var(--md-easing-standard),
+    visibility 0ms 240ms;
+}
+
+.notifications-panel.hidden {
+  display: flex !important;
+  transform: scale(0.9) translateY(-10px) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transition:
+    transform 220ms var(--md-easing-accel),
+    opacity   180ms var(--md-easing-standard),
+    visibility 0ms 220ms !important;
+}
+
+.notifications-panel:not(.hidden) {
+  transform: scale(1) translateY(0) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* =====================================================
+   16. SELECTION BAR — slide down from top
+   ===================================================== */
+@keyframes fd-selbar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.selection-bar.hidden {
+  display: flex !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transform: translateY(-8px) !important;
+}
+
+.selection-bar:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  animation: fd-selbar-enter 200ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   17. TOAST NOTIFICATIONS — slide up
+   ===================================================== */
+@keyframes fd-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.toast {
+  animation: fd-toast-enter 240ms var(--md-easing-decel) both;
+  transition:
+    opacity   200ms var(--md-easing-standard),
+    transform 200ms var(--md-easing-accel);
+}
+
+.toast.toast-hide {
+  opacity: 0 !important;
+  transform: translateY(8px) scale(0.96) !important;
+}
+
+/* =====================================================
+   18. UPLOAD PROGRESS PANEL — slide up from bottom
+   ===================================================== */
+@keyframes fd-upload-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.upload-progress.hidden {
+  display: block !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transform: translateY(100%) !important;
+}
+
+.upload-progress:not(.hidden) {
+  display: block !important;
+  visibility: visible !important;
+  animation: fd-upload-panel-enter 280ms var(--md-easing-decel) both;
+}
+
+/* upload progress bar fill */
+.upload-item-bar-fill {
+  transition: width 300ms var(--md-easing-standard);
+}
+
+/* =====================================================
+   19. SEARCH BOX — expand / focus
+   ===================================================== */
+.search-box {
+  transition:
+    box-shadow 200ms var(--md-easing-standard),
+    background 180ms var(--md-easing-standard);
+}
+
+.search-box:focus-within {
+  box-shadow:
+    0 1px 3px 0   rgba(60,64,67,.30),
+    0 4px 8px 3px rgba(60,64,67,.15) !important;
+  background: #fff !important;
+}
+
+/* =====================================================
+   20. SEARCH FILTER PANEL — dropdown
+   ===================================================== */
+.search-filter-panel {
+  transform-origin: top center;
+  transition:
+    opacity   160ms var(--md-easing-standard),
+    transform 200ms var(--md-easing-decel);
+}
+
+.search-filter-panel.hidden {
+  opacity: 0;
+  transform: scaleY(0.9) translateY(-6px);
+  pointer-events: none;
+  display: block !important;
+  visibility: hidden;
+}
+
+.search-filter-panel:not(.hidden) {
+  opacity: 1;
+  transform: scaleY(1) translateY(0);
+  visibility: visible;
+}
+
+/* =====================================================
+   21. DRAG & DROP OVERLAY
+   ===================================================== */
+@keyframes fd-drop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.drop-overlay.hidden {
+  display: flex !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+.drop-overlay:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  animation: fd-drop-enter 160ms var(--md-easing-standard) both;
+}
+
+.drop-overlay .drop-content {
+  transition: transform 200ms var(--md-easing-spring);
+}
+
+.drop-overlay:not(.hidden) .drop-content {
+  animation: fd-item-enter 240ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   22. SKELETON / SHIMMER LOADING
+   ===================================================== */
+@keyframes fd-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #f1f3f4 25%,
+    #e8eaed 50%,
+    #f1f3f4 75%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: fd-shimmer 1.4s ease-in-out infinite !important;
+  border-radius: 4px;
+  color: transparent !important;
+}
+
+/* =====================================================
+   23. LOADING SPINNER
+   ===================================================== */
+@keyframes fd-spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  border: 3px solid #dadce0;
+  border-top-color: #1a73e8;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  animation: fd-spin 0.7s linear infinite;
+}
+
+.btn-loader {
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: fd-spin 0.7s linear infinite;
+}
+
+/* =====================================================
+   24. BREADCRUMB — items fade in
+   ===================================================== */
+@keyframes fd-crumb-enter {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.breadcrumb-item {
+  animation: fd-crumb-enter 180ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   25. HELP / SETTINGS DROPDOWN
+   ===================================================== */
+.help-dropdown {
+  transform-origin: top right;
+  transition:
+    opacity   140ms var(--md-easing-standard),
+    transform 180ms var(--md-easing-decel);
+}
+
+.help-dropdown.hidden {
+  opacity: 0;
+  transform: scale(0.9) translateY(-4px);
+  pointer-events: none;
+  display: block !important;
+  visibility: hidden;
+}
+
+.help-dropdown:not(.hidden) {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  visibility: visible;
+}
+
+/* =====================================================
+   26. NOTIFICATION BADGE — pop in
+   ===================================================== */
+@keyframes fd-badge-pop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+.badge:not(.hidden) {
+  animation: fd-badge-pop 300ms var(--md-easing-spring) both;
+}
+
+/* =====================================================
+   27. AUTH SCREEN — entrance
+   ===================================================== */
+@keyframes fd-auth-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.auth-container {
+  animation: fd-auth-enter 320ms var(--md-easing-decel) 60ms both;
+}
+
+/* =====================================================
+   28. STORAGE BAR FILL
+   ===================================================== */
+.storage-bar-fill {
+  transition: width 600ms var(--md-easing-decel);
+}
+
+/* =====================================================
+   29. EMPTY STATE — fade-up
+   ===================================================== */
+.empty-state:not(.hidden) {
+  animation: fd-item-enter 280ms var(--md-easing-decel) 80ms both;
+}
+
+/* =====================================================
+   30. EDITOR OVERLAY — full-screen enter
+   ===================================================== */
+@keyframes fd-editor-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.editor-overlay.hidden {
+  display: flex !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+.editor-overlay:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  animation: fd-editor-enter 260ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   31. AUDIO MINI PLAYER — slide up
+   ===================================================== */
+@keyframes fd-audioplayer-enter {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.audio-mini-player.hidden {
+  display: flex !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transform: translateY(20px) !important;
+}
+
+.audio-mini-player:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  animation: fd-audioplayer-enter 240ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   32. DETAILS PANEL TAB SWITCH
+   ===================================================== */
+@keyframes fd-tab-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.tab-body:not(.hidden) {
+  animation: fd-tab-enter 180ms var(--md-easing-decel) both;
+}
+
+/* tab underline */
+.tab-btn {
+  position: relative;
+  transition: color 160ms var(--md-easing-standard);
+}
+
+.tab-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0; right: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: #1a73e8;
+  transform: scaleX(0);
+  transition: transform 200ms var(--md-easing-decel);
+}
+
+.tab-btn.active::after {
+  transform: scaleX(1);
+}
+
+/* =====================================================
+   33. NOTIFICATION ITEM ENTER
+   ===================================================== */
+@keyframes fd-notif-enter {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.notification-item {
+  animation: fd-notif-enter 220ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   34. SORT ARROW ROTATE
+   ===================================================== */
+.sort-arrow {
+  display: inline-block;
+  transition: transform 200ms var(--md-easing-standard), opacity 200ms;
+  opacity: 0.5;
+}
+
+.sort-col.sorted-asc  .sort-arrow { transform: rotate(0deg);   opacity: 1; }
+.sort-col.sorted-desc .sort-arrow { transform: rotate(180deg); opacity: 1; }
+
+/* =====================================================
+   35. SHARE SUGGESTIONS DROPDOWN
+   ===================================================== */
+.share-suggestions:not(.hidden) {
+  animation: fd-item-enter 180ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   36. HOME PAGE SECTIONS — stagger
+   ===================================================== */
+@keyframes fd-section-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.gd-home-section {
+  animation: fd-section-enter 260ms var(--md-easing-decel) both;
+}
+
+.gd-home-section:nth-child(1) { animation-delay:  30ms; }
+.gd-home-section:nth-child(2) { animation-delay:  80ms; }
+.gd-home-section:nth-child(3) { animation-delay: 130ms; }
+.gd-home-section:nth-child(4) { animation-delay: 180ms; }
+
+/* =====================================================
+   37. FOLDER DRAG-OVER HIGHLIGHT
+   ===================================================== */
+.folder-drop-target {
+  transition:
+    background 160ms var(--md-easing-standard),
+    box-shadow 160ms var(--md-easing-standard);
+}
+
+/* =====================================================
+   38. ACTIVITY LOG ITEMS
+   ===================================================== */
+.activity-item {
+  animation: fd-item-enter 220ms var(--md-easing-decel) both;
+}
+
+/* =====================================================
+   UTILITIES
+   ===================================================== */
+
+/* Global interactive transitions */
+.file-row,
+.file-card,
+.btn,
+.btn-icon,
+.nav-item,
+.context-item,
+.notification-item {
+  /* allow custom animation-delay from JS --fd-i */
+  will-change: auto;
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}

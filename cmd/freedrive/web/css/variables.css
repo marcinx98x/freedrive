@@ -1,0 +1,42 @@
+:root {
+  --blue: #1a73e8;
+  --blue-hover: #1557b0;
+  --blue-light: #e8f0fe;
+  --active-nav-bg: var(--blue-light);
+  --active-nav-text: #1a73e8;
+  --hover-row: #f0f4f9;
+  --selected-row: rgba(66, 133, 244, 0.1);
+  --border: #e0e0e0;
+  --gray-text: #5f6368;
+  --dark-text: #202124;
+  --sidebar-w: 256px;
+  --topbar-h: 64px;
+  --red: #d93025;
+  --green: #34a853;
+  --yellow: #f9ab00;
+
+  /* fd-* aliases for JS-generated HTML */
+  --fd-accent: var(--blue);
+  --fd-accent-dark: var(--blue-hover);
+  --fd-accent-soft: var(--blue-light);
+  --fd-bg: #fff;
+  --fd-bg-soft: #f8f9fa;
+  --fd-bg-elev: #fff;
+  --fd-bg-elev-2: #f1f3f4;
+  --fd-border: var(--border);
+  --fd-text: var(--dark-text);
+  --fd-text-muted: var(--gray-text);
+  --fd-green: var(--green);
+  --fd-yellow: var(--yellow);
+  --fd-red: var(--red);
+  --fd-blue: var(--blue);
+  --fd-shadow-sm: 0 1px 2px rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15);
+  --fd-shadow: 0 1px 3px rgba(60,64,67,.3),0 4px 8px 3px rgba(60,64,67,.15);
+  --fd-shadow-lg: 0 6px 10px 4px rgba(60,64,67,.15),0 2px 3px rgba(60,64,67,.3);
+  --fd-radius: 8px;
+  --fd-radius-sm: 4px;
+  --fd-radius-pill: 24px;
+  --fd-row-h: 36px;
+  --fd-sidebar-w: var(--sidebar-w);
+  --fd-topbar-h: var(--topbar-h);
+}
