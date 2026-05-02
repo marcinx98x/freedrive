@@ -841,7 +841,7 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 	isZepto := false
 	if strings.Contains(apiUrl, "mailersend") {
 		if !strings.Contains(apiUrl, "/v1/email") {
-			apiUrl = "https://api.mailersend.com/v1/email"
+			apiUrl = strings.TrimRight(apiUrl, "/") + "/v1/email"
 		}
 		
 		reqBody := map[string]interface{}{
@@ -854,7 +854,7 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 	} else if strings.Contains(apiUrl, "zeptomail") {
 		isZepto = true
 		if !strings.Contains(apiUrl, "/v1.1/email") {
-			apiUrl = "https://api.zeptomail.com/v1.1/email"
+			apiUrl = strings.TrimRight(apiUrl, "/") + "/v1.1/email"
 		}
 
 		reqBody := map[string]interface{}{
@@ -890,6 +890,7 @@ func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 	if apiToken != "" {
 		if isZepto {
 			if !strings.HasPrefix(apiToken, "Zoho-enczapikey ") {
