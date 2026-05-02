@@ -176,6 +176,27 @@ const Components = (() => {
         return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
     }
 
+    async function copyText(text) {
+        const value = String(text || '');
+        if (navigator.clipboard?.writeText && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+            return;
+        }
+
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.top = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (!ok) throw new Error('Copy failed');
+    }
+
     function closeOnEscape() {
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
@@ -210,5 +231,6 @@ const Components = (() => {
         escapeHtml,
         initials,
         uuid,
+        copyText,
     };
 })();

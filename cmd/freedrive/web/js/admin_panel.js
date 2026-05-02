@@ -1826,6 +1826,7 @@ const AdminPanel = (() => {
                                 <span class="invite-row-meta">${esc((p.role || 'user').toUpperCase())} • ${esc(String(p.quota || 10))} GB</span>
                             </div>
                             <div class="invite-row-actions">
+                                <button class="link-btn invite-action-btn" data-invite-action="copy" data-idx="${idx}">Copy Link</button>
                                 <button class="link-btn invite-action-btn" data-invite-action="resend" data-idx="${idx}">Resend</button>
                                 <button class="link-btn danger invite-action-btn" data-invite-action="cancel" data-idx="${idx}">Cancel</button>
                             </div>
@@ -1923,10 +1924,12 @@ const AdminPanel = (() => {
                             
                             // Bind the copy button
                             document.getElementById('copy-invite-link').addEventListener('click', () => {
-                                navigator.clipboard.writeText(link).then(() => {
+                                Components.copyText(link).then(() => {
                                     Components.toast('Link copied to clipboard!', 'success');
                                     document.getElementById('copy-invite-link').textContent = 'Copied!';
                                     setTimeout(() => document.getElementById('copy-invite-link').textContent = 'Copy Link', 2000);
+                                }).catch(() => {
+                                    Components.toast('Copy failed. Select the link and copy it manually.', 'error');
                                 });
                             });
                             
@@ -1958,7 +1961,19 @@ const AdminPanel = (() => {
                     const pendingList = state.invites.filter((x) => x.status === 'pending');
                     const row = pendingList[idx];
                     if (!row) return;
-                    if (btn.getAttribute('data-invite-action') === 'resend') {
+                    const inviteAction = btn.getAttribute('data-invite-action');
+                    if (inviteAction === 'copy') {
+                        const link = `${window.location.origin}?invite=${encodeURIComponent(row.code || '')}`;
+                        Components.copyText(link).then(() => {
+                            Components.toast('Invite link copied', 'success');
+                            btn.textContent = 'Copied!';
+                            setTimeout(() => { btn.textContent = 'Copy Link'; }, 1600);
+                        }).catch(() => {
+                            Components.toast('Copy failed. Open the invite and select the link manually.', 'error');
+                        });
+                        return;
+                    }
+                    if (inviteAction === 'resend') {
                         const eCfg = state.settingsDraft?.email || {};
                         API.admin.resendInvite({
                             email: row.email,
