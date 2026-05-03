@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500" role="img" aria-labelledby="title desc">
+  <title id="title">FreeDrive Star History</title>
+  <desc id="desc">GitHub stars for abdullaabdullazade/freedrive from May 2 to May 3, 2026.</desc>
+  <rect width="800" height="500" rx="14" fill="#ffffff"/>
+  <text x="400" y="38" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#111827">Star History</text>
+  <text x="400" y="465" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" fill="#6b7280">abdullaabdullazade/freedrive - updated May 3, 2026</text>
+
+  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" fill="#6b7280">
+    <line x1="80" y1="400" x2="740" y2="400" stroke="#111827" stroke-width="2"/>
+    <line x1="80" y1="70" x2="80" y2="400" stroke="#111827" stroke-width="2"/>
+
+    <g stroke="#e5e7eb" stroke-width="1">
+      <line x1="80" y1="334" x2="740" y2="334"/>
+      <line x1="80" y1="268" x2="740" y2="268"/>
+      <line x1="80" y1="202" x2="740" y2="202"/>
+      <line x1="80" y1="136" x2="740" y2="136"/>
+      <line x1="80" y1="70" x2="740" y2="70"/>
+    </g>
+
+    <text x="65" y="404" text-anchor="end">0</text>
+    <text x="65" y="338" text-anchor="end">3</text>
+    <text x="65" y="272" text-anchor="end">6</text>
+    <text x="65" y="206" text-anchor="end">9</text>
+    <text x="65" y="140" text-anchor="end">12</text>
+    <text x="65" y="74" text-anchor="end">15</text>
+
+    <text x="80" y="423" text-anchor="middle">May 2</text>
+    <text x="367" y="423" text-anchor="middle">Midnight</text>
+    <text x="740" y="423" text-anchor="middle">May 3</text>
+    <text x="20" y="235" text-anchor="middle" transform="rotate(-90 20 235)">GitHub Stars</text>
+  </g>
+
+  <polyline
+    points="80,378 111,356 111.1,334 145.1,312 166.7,290 172.2,268 197.1,246 214.9,224 250.9,202 262.3,180 271.9,158 367.4,136 629.7,114 733.6,92 740,70"
+    fill="none"
+    stroke="#ef4444"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+
+  <g fill="#ef4444" stroke="#ffffff" stroke-width="2">
+    <circle cx="80" cy="378" r="5"/>
+    <circle cx="111" cy="356" r="5"/>
+    <circle cx="111.1" cy="334" r="5"/>
+    <circle cx="145.1" cy="312" r="5"/>
+    <circle cx="166.7" cy="290" r="5"/>
+    <circle cx="172.2" cy="268" r="5"/>
+    <circle cx="197.1" cy="246" r="5"/>
+    <circle cx="214.9" cy="224" r="5"/>
+    <circle cx="250.9" cy="202" r="5"/>
+    <circle cx="262.3" cy="180" r="5"/>
+    <circle cx="271.9" cy="158" r="5"/>
+    <circle cx="367.4" cy="136" r="5"/>
+    <circle cx="629.7" cy="114" r="5"/>
+    <circle cx="733.6" cy="92" r="5"/>
+    <circle cx="740" cy="70" r="5"/>
+  </g>
+
+  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">
+    <rect x="104" y="86" width="238" height="34" rx="8" fill="#ffffff" stroke="#d1d5db"/>
+    <circle cx="123" cy="103" r="5" fill="#ef4444"/>
+    <text x="137" y="108" fill="#111827">abdullaabdullazade/freedrive</text>
+  </g>
+</svg>
