@@ -35,7 +35,7 @@
 - [Project Structure](#project-structure)
 - [Deployment Options](#deployment-options)
 - [Operations](#operations)
-- [GitHub History](#github-history)
+- [Star History](#star-history)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [License](#license)
@@ -446,24 +446,9 @@ curl -s http://localhost:8080/api/v1/health
 
 ---
 
-## GitHub History
+## Star History
 
-<a href="https://star-history.com/#abdullaabdullazade/freedrive&Date">
-  <picture>
-    <source
-      media="(prefers-color-scheme: dark)"
-      srcset="https://api.star-history.com/svg?repos=abdullaabdullazade/freedrive&type=Date&theme=dark"
-    />
-    <source
-      media="(prefers-color-scheme: light)"
-      srcset="https://api.star-history.com/svg?repos=abdullaabdullazade/freedrive&type=Date"
-    />
-    <img
-      alt="Star History Chart"
-      src="https://api.star-history.com/svg?repos=abdullaabdullazade/freedrive&type=Date"
-    />
-  </picture>
-</a>
+[![Star History Chart](https://api.star-history.com/svg?repos=abdullaabdullazade/freedrive&type=Date)](https://star-history.com/#abdullaabdullazade/freedrive&Date)
 
 ---
 
