@@ -16,6 +16,25 @@ a { text-decoration: none; color: inherit; }
 button { cursor: pointer; font-family: inherit; border: none; }
 input, select, textarea { font-family: inherit; }
 img { display: block; max-width: 100%; }
+
+/* Prevent accidental selections while clicking/double-clicking UI controls. */
+button,
+[role='button'],
+.btn,
+.btn-icon,
+.context-item,
+img,
+svg {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+img,
+svg {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
 .hidden { display: none !important; }
 
 /* ── Auth Screen ── */
