@@ -448,7 +448,7 @@ curl -s http://localhost:8080/api/v1/health
 
 ## Star History
 
-[![Star History Chart](docs/star-history.svg)](https://star-history.com/#abdullaabdullazade/freedrive&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=abdullaabdullazade/freedrive&type=Date&legend=top-left)](https://www.star-history.com/?repos=abdullaabdullazade%2Ffreedrive&type=date&legend=top-left)
 
 ---
 
