@@ -251,7 +251,7 @@ docker run -d \
   ghcr.io/abdullaabdullazade/freedrive:latest
 ```
 
-If Docker Hub publishing is configured in repository secrets, the same tags are also available as `docker.io/<DOCKERHUB_USERNAME>/freedrive:<tag>`.
+Docker Hub image tags are published as `docker.io/metalninjasabdulla/freedrive:<tag>`.
 
 ### Run With Docker Compose
 
