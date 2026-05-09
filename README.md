@@ -238,6 +238,21 @@ Default bootstrap admin (if first user is auto-created):
 
 Important: change defaults immediately in non-dev environments.
 
+### Run Published Docker Image
+
+```bash
+docker pull ghcr.io/abdullaabdullazade/freedrive:latest
+docker run -d \
+  --name freedrive \
+  -p 8080:8080 \
+  -e FREEDRIVE_ADMIN_EMAIL=admin@freedrive.local \
+  -e FREEDRIVE_ADMIN_PASSWORD=change-me-now \
+  -v freedrive-data:/app/data \
+  ghcr.io/abdullaabdullazade/freedrive:latest
+```
+
+If Docker Hub publishing is configured in repository secrets, the same tags are also available as `docker.io/<DOCKERHUB_USERNAME>/freedrive:<tag>`.
+
 ### Run With Docker Compose
 
 ```bash
