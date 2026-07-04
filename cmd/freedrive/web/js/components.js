@@ -90,6 +90,18 @@ const Components = (() => {
                 { text: 'Cancel', action: () => resolve(false) },
                 { text: confirmText, class: confirmText === 'Delete' ? 'btn-danger' : 'btn-primary', action: () => resolve(true) },
             ]);
+            const onKey = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    document.removeEventListener('keydown', onKey, true);
+                    hideModal();
+                    resolve(true);
+                } else if (e.key === 'Escape') {
+                    document.removeEventListener('keydown', onKey, true);
+                }
+            };
+            document.addEventListener('keydown', onKey, true);
         });
     }
 

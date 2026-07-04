@@ -124,6 +124,32 @@ func (r *FolderRepo) GetBreadcrumb(ctx context.Context, id string) ([]domain.Bre
 	return crumbs, nil
 }
 
+func (r *FolderRepo) GetDescendantIDs(ctx context.Context, folderID string) ([]string, error) {
+	rows, err := r.reader.QueryContext(ctx, `
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM folders WHERE id = ?
+			UNION ALL
+			SELECT f.id FROM folders f
+			INNER JOIN descendants d ON f.parent_id = d.id
+		)
+		SELECT id FROM descendants
+	`, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 func (r *FolderRepo) IsDescendant(ctx context.Context, folderID, potentialParentID string) (bool, error) {
 	var count int
 	err := r.reader.QueryRowContext(ctx, `

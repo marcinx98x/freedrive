@@ -366,6 +366,44 @@ func (r *FileRepo) GetVersion(ctx context.Context, fileID string, version int) (
 	return v, err
 }
 
+// DeleteByFolderIDs deletes all files in the given folder IDs and returns their blob paths for storage cleanup.
+func (r *FileRepo) DeleteByFolderIDs(ctx context.Context, folderIDs []string) ([]string, error) {
+	if len(folderIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(folderIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+
+	args := make([]any, len(folderIDs))
+	for i, id := range folderIDs {
+		args[i] = id
+	}
+
+	rows, err := r.reader.QueryContext(ctx,
+		"SELECT blob_path FROM files WHERE folder_id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var blobPaths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		blobPaths = append(blobPaths, p)
+	}
+	rows.Close()
+
+	_, err = r.writer.ExecContext(ctx,
+		"DELETE FROM files WHERE folder_id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	return blobPaths, nil
+}
+
 func (r *FileRepo) DeleteOldVersions(ctx context.Context, fileID string, keepCount int) ([]domain.FileVersion, error) {
 	rows, err := r.reader.QueryContext(ctx,
 		`SELECT id, blob_path FROM file_versions WHERE file_id = ?

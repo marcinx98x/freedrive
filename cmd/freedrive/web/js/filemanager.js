@@ -2199,9 +2199,10 @@ const FileManager = (() => {
     }
 
     async function bulkDelete() {
+        const ids = Array.from(selectedItems);
+        if (!ids.length) return;
         const ok = await Components.confirm('Move selected to Trash?', 'Selected items will be moved to Trash.', 'Move');
         if (!ok) return;
-        const ids = Array.from(selectedItems);
         for (const id of ids) {
             const payload = findSelectedPayload(id);
             if (!payload) continue;
@@ -4796,6 +4797,10 @@ const FileManager = (() => {
             e.preventDefault();
             selectAllVisible();
         }
+        if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            selectAllVisible();
+        }
 
         // --- Delete / Backspace ---
         if (e.key === 'Delete' && selectedItems.size) {
@@ -4843,8 +4848,8 @@ const FileManager = (() => {
             renameSelected();
         }
 
-        // --- Enter — open selected ---
-        if (e.key === 'Enter' && selectedPrimary) {
+        // --- Enter — open selected (skip when modal is open) ---
+        if (e.key === 'Enter' && selectedPrimary && document.getElementById('modal-overlay')?.classList.contains('hidden')) {
             e.preventDefault();
             if (selectedPrimary.type === 'folder') {
                 loadFolder(selectedPrimary.data.id);
