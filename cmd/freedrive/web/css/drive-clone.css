@@ -94,7 +94,7 @@ body {
   margin: 0 !important;
   border-radius: 999px !important;
   height: 40px !important;
-  padding: 0 16px !important;
+  padding: 0 16px 0 24px !important;
   font-size: 14px !important;
   font-weight: 500 !important;
   color: #3c4043 !important;
@@ -119,6 +119,59 @@ body {
 
 .app:not(.admin-mode) .nav-item.active .material-icons-outlined {
   color: #1a73e8 !important;
+}
+
+.app:not(.admin-mode) .nav-drive-row {
+  display: flex !important;
+  align-items: center !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  margin-bottom: 4px !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+}
+
+.app:not(.admin-mode) .nav-drive-row:hover {
+  background: #eceff3 !important;
+}
+
+.app:not(.admin-mode) .nav-drive-row:has(.nav-drive-link.active) {
+  background: #c2e7ff !important;
+  color: #001d35 !important;
+}
+
+.app:not(.admin-mode) .nav-drive-link {
+  height: 40px !important;
+  padding: 0 16px 0 4px !important;
+  background: transparent !important;
+}
+
+.app:not(.admin-mode) .nav-drive-row:has(.nav-drive-link.active) .nav-drive-link {
+  color: #001d35 !important;
+}
+
+.app:not(.admin-mode) .nav-tree-folder .nav-tree-chevron {
+  margin-left: 0;
+}
+
+.app:not(.admin-mode) .nav-tree-folder {
+  border-radius: 999px !important;
+  min-height: 34px !important;
+}
+
+.app:not(.admin-mode) .nav-tree-folder:hover {
+  background: #eceff3 !important;
+}
+
+.app:not(.admin-mode) .nav-tree-folder.active {
+  background: #c2e7ff !important;
+  color: #001d35 !important;
+}
+
+.app:not(.admin-mode) .nav-tree-folder-link {
+  font-family: "Roboto", Arial, sans-serif !important;
+  font-size: 13px !important;
+  height: 34px !important;
 }
 
 .app:not(.admin-mode) .admin-nav-item {
@@ -1108,6 +1161,11 @@ body {
 
 .app:not(.admin-mode) .file-grid {
   padding: 0 8px 12px !important;
+}
+
+.app:not(.admin-mode) .file-grid.grid-view {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 250px));
+  justify-content: start;
 }
 
 .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row {

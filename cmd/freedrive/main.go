@@ -51,12 +51,14 @@ func main() {
 	userRepo := sqlite.NewUserRepo(db)
 	fileRepo := sqlite.NewFileRepo(db)
 	folderRepo := sqlite.NewFolderRepo(db)
+	computerRepo := sqlite.NewComputerRepo(db)
 	activityRepo := sqlite.NewActivityRepo(db)
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.JWTSecret)
 	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo)
-	folderService := service.NewFolderService(folderRepo, fileRepo, activityRepo, diskStorage)
+	computerService := service.NewComputerService(computerRepo, folderRepo)
+	folderService := service.NewFolderService(folderRepo, fileRepo, activityRepo, computerRepo)
 
 	// Create admin user if no users exist
 	if err := authService.EnsureAdmin(context.Background(), cfg.AdminEmail, cfg.AdminPassword); err != nil {
@@ -79,6 +81,7 @@ func main() {
 		authService,
 		fileService,
 		folderService,
+		computerService,
 		fileRepo,
 		userRepo,
 		activityRepo,

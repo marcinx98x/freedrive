@@ -6,7 +6,6 @@ import (
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
-	"github.com/abdullaabdullazade/freedrive/internal/storage"
 )
 
 // FolderService handles folder business logic.
@@ -14,16 +13,16 @@ type FolderService struct {
 	folderRepo   repository.FolderRepository
 	fileRepo     repository.FileRepository
 	activityRepo repository.ActivityRepository
-	storage      *storage.DiskStorage
+	computerRepo repository.ComputerRepository
 }
 
 // NewFolderService creates a new folder service.
-func NewFolderService(folderRepo repository.FolderRepository, fileRepo repository.FileRepository, activityRepo repository.ActivityRepository, store *storage.DiskStorage) *FolderService {
+func NewFolderService(folderRepo repository.FolderRepository, fileRepo repository.FileRepository, activityRepo repository.ActivityRepository, computerRepo repository.ComputerRepository) *FolderService {
 	return &FolderService{
 		folderRepo:   folderRepo,
 		fileRepo:     fileRepo,
 		activityRepo: activityRepo,
-		storage:      store,
+		computerRepo: computerRepo,
 	}
 }
 
@@ -98,6 +97,31 @@ func (s *FolderService) Move(ctx context.Context, folderID, ownerID string, newP
 		return fmt.Errorf("folder not found")
 	}
 
+	isComputerRoot, err := s.computerRepo.IsComputerRoot(ctx, folderID)
+	if err != nil {
+		return err
+	}
+	if isComputerRoot {
+		return fmt.Errorf("cannot move a registered computer folder")
+	}
+
+	sourceInComputer, err := s.computerRepo.IsInComputerTree(ctx, folderID)
+	if err != nil {
+		return err
+	}
+
+	var destInComputer bool
+	if newParentID != nil {
+		destInComputer, err = s.computerRepo.IsInComputerTree(ctx, *newParentID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if sourceInComputer != destInComputer {
+		return fmt.Errorf("cannot move items between My Drive and Computers")
+	}
+
 	// Prevent moving folder into its own descendant
 	if newParentID != nil {
 		isDesc, err := s.folderRepo.IsDescendant(ctx, folderID, *newParentID)
@@ -113,7 +137,7 @@ func (s *FolderService) Move(ctx context.Context, folderID, ownerID string, newP
 	return s.folderRepo.Update(ctx, folder)
 }
 
-// Delete deletes a folder and all its contents including files.
+// Delete deletes a folder and all its contents.
 func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) error {
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
@@ -123,26 +147,9 @@ func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) er
 		return fmt.Errorf("folder not found")
 	}
 
-	// Collect all descendant folder IDs (including this folder) so we can delete their files.
-	descendantIDs, err := s.folderRepo.GetDescendantIDs(ctx, folderID)
-	if err != nil {
-		return err
-	}
-
-	// Delete all files in the subtree and get blob paths for storage cleanup.
-	blobPaths, err := s.fileRepo.DeleteByFolderIDs(ctx, descendantIDs)
-	if err != nil {
-		return err
-	}
-
-	// Delete the folder (cascades to child folders via FK ON DELETE CASCADE).
+	// Cascade delete handled by foreign key ON DELETE CASCADE
 	if err := s.folderRepo.Delete(ctx, folderID); err != nil {
 		return err
-	}
-
-	// Clean up blobs after successful DB delete.
-	for _, p := range blobPaths {
-		_ = s.storage.Delete(p)
 	}
 
 	_ = s.activityRepo.Create(ctx, &domain.ActivityLog{

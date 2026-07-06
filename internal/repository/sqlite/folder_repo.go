@@ -70,7 +70,10 @@ func (r *FolderRepo) GetChildren(ctx context.Context, parentID *string, ownerID 
 	if parentID == nil {
 		rows, err = r.reader.QueryContext(ctx,
 			`SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
-			 FROM folders WHERE parent_id IS NULL AND owner_id = ? ORDER BY name`, ownerID)
+			 FROM folders
+			 WHERE parent_id IS NULL AND owner_id = ?
+			   AND id NOT IN (SELECT root_folder_id FROM computers WHERE owner_id = ?)
+			 ORDER BY name`, ownerID, ownerID)
 	} else {
 		rows, err = r.reader.QueryContext(ctx,
 			`SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
@@ -122,32 +125,6 @@ func (r *FolderRepo) GetBreadcrumb(ctx context.Context, id string) ([]domain.Bre
 		crumbs[i], crumbs[j] = crumbs[j], crumbs[i]
 	}
 	return crumbs, nil
-}
-
-func (r *FolderRepo) GetDescendantIDs(ctx context.Context, folderID string) ([]string, error) {
-	rows, err := r.reader.QueryContext(ctx, `
-		WITH RECURSIVE descendants AS (
-			SELECT id FROM folders WHERE id = ?
-			UNION ALL
-			SELECT f.id FROM folders f
-			INNER JOIN descendants d ON f.parent_id = d.id
-		)
-		SELECT id FROM descendants
-	`, folderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
 }
 
 func (r *FolderRepo) IsDescendant(ctx context.Context, folderID, potentialParentID string) (bool, error) {

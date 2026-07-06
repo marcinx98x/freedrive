@@ -7,9 +7,12 @@ const FileManager = (() => {
     let currentView = localStorage.getItem('fd_view') || 'grid';
     let selectedItems = new Set();
     let selectedPrimary = null;
+    let selectionAnchor = null;
     let contextTarget = null;
     let allFiles = [];
     let allFolders = [];
+    let registeredComputers = [];
+    let currentComputerContext = null;
     let filteredFiles = [];
     let filteredFolders = [];
     let sortBy = 'modified';
@@ -555,6 +558,111 @@ const FileManager = (() => {
         el.innerHTML = `<span class="breadcrumb-item">${esc(text)}</span>`;
     }
 
+    function syncPageActions() {
+        document.querySelector('.new-btn-wrap')?.classList.remove('hidden');
+    }
+
+    function folderNavHash(folderId) {
+        if (currentPage === 'computers') return `#/computers/${folderId}`;
+        return `#/files/${folderId}`;
+    }
+
+    function canAcceptUploads() {
+        return !(currentPage === 'computers' && !currentFolderId);
+    }
+
+    async function ensureComputersLoaded() {
+        if (registeredComputers.length) return registeredComputers;
+        try {
+            const data = await API.computers.list();
+            registeredComputers = Array.isArray(data.computers) ? data.computers : [];
+        } catch {
+            registeredComputers = [];
+        }
+        return registeredComputers;
+    }
+
+    function findComputerByRootFolderId(folderId) {
+        return registeredComputers.find((c) => c.root_folder_id === folderId) || null;
+    }
+
+    async function ensureComputerContext(folderId) {
+        await ensureComputersLoaded();
+        if (!folderId) {
+            currentComputerContext = null;
+            return null;
+        }
+
+        let comp = findComputerByRootFolderId(folderId);
+        if (!comp) {
+            try {
+                const data = await API.folders.breadcrumb(folderId);
+                const crumbs = data.breadcrumb || [];
+                if (crumbs.length) comp = findComputerByRootFolderId(crumbs[0].id);
+            } catch {
+                comp = null;
+            }
+        }
+        currentComputerContext = comp;
+        return comp;
+    }
+
+    async function updateComputerBreadcrumb(folderId) {
+        const el = document.getElementById('breadcrumb');
+        if (!el) return;
+
+        let html = '<a href="#/computers" class="breadcrumb-item">Computers</a>';
+        if (!folderId) {
+            el.innerHTML = html;
+            return;
+        }
+
+        const comp = await ensureComputerContext(folderId);
+        if (!comp) {
+            el.innerHTML = html;
+            return;
+        }
+
+        try {
+            const data = await API.folders.breadcrumb(folderId);
+            const crumbs = data.breadcrumb || [];
+            const subCrumbs = crumbs[0]?.id === comp.root_folder_id ? crumbs.slice(1) : crumbs;
+
+            html += '<span class="breadcrumb-sep">›</span>';
+            if (!subCrumbs.length) {
+                html += `<span class="breadcrumb-item">${esc(comp.name)}</span>`;
+            } else {
+                html += `<a href="#/computers/${comp.root_folder_id}" class="breadcrumb-item">${esc(comp.name)}</a>`;
+                subCrumbs.forEach((c, idx) => {
+                    html += '<span class="breadcrumb-sep">›</span>';
+                    if (idx === subCrumbs.length - 1) {
+                        html += `<span class="breadcrumb-item">${esc(c.name)}</span>`;
+                    } else {
+                        html += `<a href="#/computers/${c.id}" class="breadcrumb-item">${esc(c.name)}</a>`;
+                    }
+                });
+            }
+            el.innerHTML = html;
+        } catch {
+            el.innerHTML = html;
+        }
+    }
+
+    function renderComputersEmptyState() {
+        const grid = document.getElementById('file-grid');
+        const empty = document.getElementById('empty-state');
+        const header = document.getElementById('file-list-header');
+
+        grid.innerHTML = '';
+        grid.classList.add('hidden');
+        header?.classList.add('hidden');
+        empty?.classList.remove('hidden');
+        document.getElementById('empty-title').textContent = 'Computers coming soon';
+        document.getElementById('empty-desc').textContent =
+            'Backing up and syncing files from your computer will be available in a future update.';
+        updateSelectionUI();
+    }
+
     async function updateBreadcrumb(folderId) {
         const el = document.getElementById('breadcrumb');
         if (!el) return;
@@ -585,9 +693,11 @@ const FileManager = (() => {
     async function loadFolder(folderId) {
         currentPage = 'files';
         currentFolderId = folderId || null;
+        currentComputerContext = null;
         clearSelection();
         showFilesView();
         showLoading(true);
+        syncPageActions();
 
         try {
             const data = folderId ? await API.folders.get(folderId) : await API.folders.root();
@@ -605,11 +715,45 @@ const FileManager = (() => {
             renderItems(filteredFolders, filteredFiles);
             await updateBreadcrumb(folderId || null);
             await updateStorageInfo();
+            syncTrashActionLabels();
         } catch (err) {
             Components.toast(`Failed to load files: ${err.message}`, 'error');
         } finally {
             showLoading(false);
         }
+    }
+
+    async function loadComputers() {
+        currentPage = 'computers';
+        currentFolderId = null;
+        currentComputerContext = null;
+        clearSelection();
+        showFilesView();
+        showLoading(true);
+        syncPageActions();
+        setBreadcrumbText('Computers');
+
+        try {
+            registeredComputers = [];
+            allFolders = [];
+            allFiles = [];
+            filteredFolders = [];
+            filteredFiles = [];
+            renderComputersEmptyState();
+            await updateStorageInfo();
+            syncTrashActionLabels();
+        } catch (err) {
+            Components.toast(`Failed to load computers: ${err.message}`, 'error');
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    async function loadComputerFolder() {
+        if (window.location.hash !== '#/computers') {
+            window.location.hash = '#/computers';
+        }
+        return loadComputers();
     }
 
     async function loadHome() {
@@ -812,6 +956,7 @@ const FileManager = (() => {
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles, { isTrash: true });
             setBreadcrumbText('Trash');
+            syncTrashActionLabels();
         } catch {
             Components.toast('Failed to load trash', 'error');
         } finally {
@@ -944,12 +1089,17 @@ const FileManager = (() => {
     }
 
     async function createFolder() {
+        if (!canAcceptUploads()) {
+            Components.toast('Connect a computer to add folders here', 'info');
+            return;
+        }
         const name = await Components.prompt('New folder', '', 'Folder name');
         if (!name || !name.trim()) return;
         try {
             await API.folders.create(name.trim(), currentFolderId || null);
             Components.toast('Folder created', 'success');
             refresh();
+            if (currentPage === 'files') SidebarTree.refresh(currentFolderId || null);
         } catch (err) {
             Components.toast(err.message, 'error');
         }
@@ -1205,6 +1355,10 @@ const FileManager = (() => {
             grid.classList.add('hidden');
             empty.classList.remove('hidden');
             header.classList.add('hidden');
+            if (currentPage === 'computers' && !currentFolderId) {
+                renderComputersEmptyState();
+                return;
+            }
             document.getElementById('empty-title').textContent = isTrash ? 'Trash is empty' : 'No files found';
             document.getElementById('empty-desc').textContent = isTrash
                 ? 'Items in Trash are deleted after 30 days.'
@@ -1360,7 +1514,7 @@ const FileManager = (() => {
             // Recent page should open items with a single click.
             if (currentPage === 'recent') {
                 if (type === 'folder' || type === 'suggested-folder') {
-                    window.location.hash = `#/files/${item.id}`;
+                    window.location.hash = folderNavHash(item.id);
                 } else {
                     openFile(item);
                 }
@@ -1371,7 +1525,7 @@ const FileManager = (() => {
             // Open files and folders on single tap in mobile/tablet widths.
             if (window.matchMedia('(max-width: 820px)').matches) {
                 if (type === 'folder' || type === 'suggested-folder') {
-                    window.location.hash = `#/files/${item.id}`;
+                    window.location.hash = folderNavHash(item.id);
                 } else {
                     openFile(item);
                 }
@@ -1383,7 +1537,7 @@ const FileManager = (() => {
 
         container.addEventListener('dblclick', () => {
             if (type === 'folder') {
-                window.location.hash = `#/files/${item.id}`;
+                window.location.hash = folderNavHash(item.id);
                 return;
             }
             openFile(item);
@@ -1465,9 +1619,154 @@ const FileManager = (() => {
         document.querySelectorAll('.folder-drop-target').forEach((el) => el.classList.remove('folder-drop-target'));
     }
 
+    const TrashCopy = {
+        deleteForever: 'Delete forever',
+        deleteForeverTitle: 'Delete forever?',
+        deleteForeverButton: 'Delete forever',
+        deleteForeverToast: 'Deleted forever',
+        moveToTrash: 'Move to trash',
+        moveToTrashTitle: 'Move to trash?',
+        moveToTrashButton: 'Move to trash',
+        movedToTrashToast: 'Moved to trash',
+        restore: 'Restore',
+        singleDeleteBody(name) {
+            return `"${name}" will be deleted forever.`;
+        },
+        bulkDeleteBody(count) {
+            return count === 1 ? '1 item will be deleted forever.' : `${count} items will be deleted forever.`;
+        },
+        singleMoveBody(name) {
+            return `"${name}" will be moved to trash.`;
+        },
+        bulkMoveBody() {
+            return 'Selected items will be moved to trash.';
+        },
+        restoredToast(count) {
+            return count === 1 ? 'Restored' : `${count} items restored`;
+        },
+    };
+
+    function inTrashView() {
+        return currentPage === 'trash';
+    }
+
+    function isTrashMode(target) {
+        return Boolean(target?.isTrash) || inTrashView();
+    }
+
+    function setElementHidden(el, hidden) {
+        if (!el) return;
+        if (hidden) {
+            el.setAttribute('hidden', '');
+        } else {
+            el.removeAttribute('hidden');
+        }
+    }
+
+    function setActionLabel(el, label) {
+        if (!el) return;
+        el.title = label;
+        el.setAttribute('aria-label', label);
+    }
+
+    function syncTrashActionLabels(target = contextTarget) {
+        const trashMode = isTrashMode(target);
+
+        setActionLabel(
+            document.getElementById('bulk-delete'),
+            trashMode ? TrashCopy.deleteForever : 'Delete',
+        );
+        setActionLabel(document.getElementById('bulk-restore'), TrashCopy.restore);
+
+        setElementHidden(document.getElementById('bulk-share'), trashMode);
+        setElementHidden(document.getElementById('bulk-move'), trashMode);
+        setElementHidden(document.getElementById('bulk-restore'), !trashMode);
+
+        const detailsDeleteBtn = document.getElementById('details-delete-btn');
+        if (detailsDeleteBtn) {
+            const label = trashMode ? TrashCopy.deleteForever : 'Delete';
+            detailsDeleteBtn.title = trashMode ? TrashCopy.deleteForever : TrashCopy.moveToTrash;
+            detailsDeleteBtn.setAttribute('aria-label', label);
+            const textNode = detailsDeleteBtn.lastChild;
+            if (textNode?.nodeType === Node.TEXT_NODE) {
+                textNode.textContent = label;
+            }
+        }
+
+        configureContextMenu(target);
+    }
+
+    let contextMenuOrder = null;
+
+    function captureContextMenuOrder(menu) {
+        if (contextMenuOrder) return;
+        contextMenuOrder = Array.from(menu.children);
+    }
+
+    function restoreContextMenuOrder(menu) {
+        if (!contextMenuOrder) return;
+        contextMenuOrder.forEach((child) => menu.appendChild(child));
+    }
+
+    function configureContextMenu(target = contextTarget) {
+        const menu = document.getElementById('context-menu');
+        if (!menu) return;
+
+        captureContextMenuOrder(menu);
+        restoreContextMenuOrder(menu);
+
+        const actionMap = {};
+        menu.querySelectorAll('.context-item[data-action]').forEach((item) => {
+            actionMap[item.dataset.action] = item;
+            item.style.display = '';
+        });
+        menu.querySelectorAll('.context-divider').forEach((divider) => {
+            divider.style.display = '';
+        });
+
+        const inTrash = isTrashMode(target);
+        const allowed = inTrash
+            ? new Set(['open', 'restore', 'info', 'download', 'delete'])
+            : null;
+
+        Object.entries(actionMap).forEach(([action, item]) => {
+            const show = !inTrash || allowed.has(action);
+            setElementHidden(item, !show);
+            item.style.display = show ? '' : 'none';
+        });
+
+        if (actionMap.delete) {
+            actionMap.delete.textContent = inTrash ? TrashCopy.deleteForever : TrashCopy.moveToTrash;
+            setActionLabel(actionMap.delete, actionMap.delete.textContent);
+        }
+        if (actionMap.restore) {
+            actionMap.restore.textContent = TrashCopy.restore;
+            setActionLabel(actionMap.restore, TrashCopy.restore);
+        }
+
+        if (inTrash) {
+            ['open', 'restore', 'download', 'info', 'delete'].forEach((action) => {
+                if (actionMap[action]) menu.appendChild(actionMap[action]);
+            });
+            menu.querySelectorAll('.context-divider').forEach((divider) => {
+                divider.style.display = 'none';
+            });
+        } else {
+            const dividers = Array.from(menu.querySelectorAll('.context-divider'));
+            dividers.forEach((divider) => {
+                let prev = divider.previousElementSibling;
+                let next = divider.nextElementSibling;
+                while (prev && prev.style.display === 'none') prev = prev.previousElementSibling;
+                while (next && next.style.display === 'none') next = next.nextElementSibling;
+                divider.style.display = prev && next ? '' : 'none';
+            });
+        }
+    }
+
     function showContextMenu(x, y) {
         const menu = document.getElementById('context-menu');
         if (!menu) return;
+        configureContextMenu();
         menu.style.left = `${Math.min(x, window.innerWidth - 250)}px`;
         menu.style.top = `${Math.min(y, window.innerHeight - 320)}px`;
         menu.classList.remove('hidden');
@@ -1486,10 +1785,52 @@ const FileManager = (() => {
     function clearSelection() {
         selectedItems.clear();
         selectedPrimary = null;
+        selectionAnchor = null;
         syncSelectionStyles();
     }
 
+    function getVisibleItemPayloads() {
+        const isTrash = currentPage === 'trash';
+        const items = [];
+        filteredFolders.forEach((f) => items.push({ id: f.id, type: 'folder', data: f, isTrash }));
+        filteredFiles.forEach((f) => items.push({ id: f.id, type: 'file', data: f, isTrash }));
+        return items;
+    }
+
+    function selectRange(anchorId, targetId) {
+        const items = getVisibleItemPayloads();
+        const anchorIdx = items.findIndex((x) => x.id === anchorId);
+        const targetIdx = items.findIndex((x) => x.id === targetId);
+        if (anchorIdx < 0 || targetIdx < 0) return;
+
+        const start = Math.min(anchorIdx, targetIdx);
+        const end = Math.max(anchorIdx, targetIdx);
+        selectedItems.clear();
+        for (let i = start; i <= end; i++) {
+            selectedItems.add(items[i].id);
+        }
+        selectedPrimary = items[targetIdx];
+    }
+
     function selectSingle(id, payload, el, event) {
+        if (event?.shiftKey) {
+            if (!selectionAnchor) {
+                selectionAnchor = id;
+                selectedItems.clear();
+                selectedItems.add(id);
+                selectedPrimary = payload;
+            } else {
+                selectRange(selectionAnchor, id);
+            }
+            syncSelectionStyles();
+            if (selectedItems.size === 1) {
+                openDetailsPanel(payload);
+            } else {
+                hideDetailsPanel();
+            }
+            return;
+        }
+
         const preserve = event && (event.ctrlKey || event.metaKey);
         if (preserve) {
             const now = !selectedItems.has(id);
@@ -1500,6 +1841,7 @@ const FileManager = (() => {
         selectedItems.clear();
         selectedItems.add(id);
         selectedPrimary = payload;
+        selectionAnchor = id;
         syncSelectionStyles();
         openDetailsPanel(payload);
     }
@@ -1539,6 +1881,7 @@ const FileManager = (() => {
         }
 
         count.textContent = `${selectedItems.size} ${selectedItems.size === 1 ? 'item' : 'items'} selected`;
+        syncTrashActionLabels();
         bar.classList.remove('hidden');
     }
 
@@ -1582,6 +1925,11 @@ const FileManager = (() => {
                 return;
             case 'download':
                 await downloadPayloadAsZip({ type, data });
+                return;
+            case 'restore':
+                await API.files.restore(data.id);
+                Components.toast(TrashCopy.restoredToast(1), 'success');
+                refresh();
                 return;
             case 'delete':
                 await moveToTrash(type, data, isTrash);
@@ -1709,12 +2057,16 @@ const FileManager = (() => {
     }
 
     async function moveToTrash(type, data, isTrash) {
-        if (isTrash && type === 'file') {
-            const ok = await Components.confirm('Delete permanently?', `${data.name} will be removed forever.`, 'Delete permanently');
+        if (isTrashMode({ isTrash }) && type === 'file') {
+            const ok = await Components.confirm(
+                TrashCopy.deleteForeverTitle,
+                TrashCopy.singleDeleteBody(data.name),
+                TrashCopy.deleteForeverButton,
+            );
             if (!ok) return;
             await API.files.permanentDelete(data.id);
             await CryptoModule.deleteKey(data.id);
-            Components.toast('Deleted permanently', 'success');
+            Components.toast(TrashCopy.deleteForeverToast, 'success');
             refresh();
             return;
         }
@@ -1722,12 +2074,16 @@ const FileManager = (() => {
         if (type === 'file') {
             await API.files.delete(data.id);
         } else {
-            const ok = await Components.confirm('Move folder to trash?', `${data.name} and its items will be moved to Trash.`, 'Move');
+            const ok = await Components.confirm(
+                TrashCopy.moveToTrashTitle,
+                TrashCopy.singleMoveBody(data.name),
+                TrashCopy.moveToTrashButton,
+            );
             if (!ok) return;
             await API.folders.delete(data.id);
         }
 
-        Components.toast('Moved to Trash', 'success', {
+        Components.toast(TrashCopy.movedToTrashToast, 'success', {
             actionText: 'Undo',
             onAction: async () => {
                 try {
@@ -2201,7 +2557,30 @@ const FileManager = (() => {
     async function bulkDelete() {
         const ids = Array.from(selectedItems);
         if (!ids.length) return;
-        const ok = await Components.confirm('Move selected to Trash?', 'Selected items will be moved to Trash.', 'Move');
+
+        if (inTrashView()) {
+            const count = ids.length;
+            const ok = await Components.confirm(
+                TrashCopy.deleteForeverTitle,
+                TrashCopy.bulkDeleteBody(count),
+                TrashCopy.deleteForeverButton,
+            );
+            if (!ok) return;
+            for (const id of ids) {
+                await API.files.permanentDelete(id);
+                await CryptoModule.deleteKey(id);
+            }
+            clearSelection();
+            Components.toast(TrashCopy.deleteForeverToast, 'success');
+            refresh();
+            return;
+        }
+
+        const ok = await Components.confirm(
+            TrashCopy.moveToTrashTitle,
+            TrashCopy.bulkMoveBody(),
+            TrashCopy.moveToTrashButton,
+        );
         if (!ok) return;
         for (const id of ids) {
             const payload = findSelectedPayload(id);
@@ -2213,7 +2592,19 @@ const FileManager = (() => {
             }
         }
         clearSelection();
-        Components.toast('Moved to Trash', 'success');
+        Components.toast(TrashCopy.movedToTrashToast, 'success');
+        refresh();
+        if (currentPage === 'files') SidebarTree.refresh(currentFolderId || null);
+    }
+
+    async function bulkRestore() {
+        const ids = Array.from(selectedItems);
+        if (!ids.length) return;
+        for (const id of ids) {
+            await API.files.restore(id);
+        }
+        clearSelection();
+        Components.toast(TrashCopy.restoredToast(ids.length), 'success');
         refresh();
     }
 
@@ -2331,9 +2722,15 @@ const FileManager = (() => {
 
         // hide delete/rename for read-only shared items
         const isOwned = !data.shared_by_name;
-        document.getElementById('details-rename-btn')?.style.setProperty('display', isOwned ? '' : 'none');
+        const isTrash = isTrashMode(payload);
+        const detailsShareBtn = document.getElementById('details-share-btn');
+        const detailsShareBtn2 = document.getElementById('details-share-btn2');
+        document.getElementById('details-rename-btn')?.style.setProperty('display', isOwned && !isTrash ? '' : 'none');
         document.getElementById('details-delete-btn')?.style.setProperty('display', isOwned ? '' : 'none');
         if (!isOwned) nameInput.setAttribute('readonly', '');
+        if (detailsShareBtn) detailsShareBtn.style.setProperty('display', isTrash ? 'none' : '');
+        if (detailsShareBtn2) detailsShareBtn2.style.setProperty('display', isTrash ? 'none' : '');
+        syncTrashActionLabels(payload);
 
         // hide download for folders
         document.getElementById('details-download-btn')?.style.setProperty('display', type === 'folder' ? 'none' : '');
@@ -2531,7 +2928,14 @@ const FileManager = (() => {
     }
 
     function buildLocationLabel(folderId) {
-        if (!folderId) return 'My Drive';
+        if (!folderId) return currentPage === 'computers' ? 'Computers' : 'My Drive';
+        if (currentComputerContext) {
+            const folder = allFolders.find((f) => f.id === folderId);
+            if (folder) return `Computers > ${currentComputerContext.name} > ${folder.name}`;
+            if (folderId === currentComputerContext.root_folder_id) {
+                return `Computers > ${currentComputerContext.name}`;
+            }
+        }
         const folder = allFolders.find((f) => f.id === folderId);
         if (!folder) return 'My Drive';
         return `My Drive > ${folder.name}`;
@@ -3094,12 +3498,18 @@ const FileManager = (() => {
     }
 
     async function createQuickFile(name, mimeType, textContent) {
+        if (!canAcceptUploads()) {
+            Components.toast('Connect a computer to add files here', 'info');
+            return;
+        }
         const blob = new Blob([textContent || ''], { type: mimeType || 'text/plain' });
         try {
             const created = await uploadEncryptedBlob(blob, name, mimeType, currentFolderId);
             Components.toast('File created', 'success');
-            if (currentPage !== 'files' && currentPage !== 'home') {
-                window.location.hash = currentFolderId ? `#/files/${currentFolderId}` : '#/files';
+            if (currentPage !== 'files' && currentPage !== 'home' && currentPage !== 'computers') {
+                window.location.hash = currentFolderId
+                    ? (currentPage === 'computers' ? `#/computers/${currentFolderId}` : `#/files/${currentFolderId}`)
+                    : '#/files';
                 return;
             }
             refresh();
@@ -4677,7 +5087,7 @@ const FileManager = (() => {
                 title: 'Actions',
                 items: [
                     ['Enter', 'Open selected item'],
-                    ['Del / Backspace', 'Move to trash'],
+                    ['Del / Backspace', inTrashView() ? 'Delete forever' : 'Move to trash'],
                     ['s', 'Toggle star'],
                     ['.', 'Share selected'],
                     ['d', 'Download selected'],
@@ -4793,11 +5203,12 @@ const FileManager = (() => {
         }
 
         // --- Select all ---
-        if (e.key.toLowerCase() === 'a' && !(e.ctrlKey || e.metaKey)) {
+        if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             selectAllVisible();
+            return;
         }
-        if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
+        if (e.key.toLowerCase() === 'a' && !e.ctrlKey && !e.metaKey && !e.altKey) {
             e.preventDefault();
             selectAllVisible();
         }
@@ -4848,8 +5259,8 @@ const FileManager = (() => {
             renameSelected();
         }
 
-        // --- Enter — open selected (skip when modal is open) ---
-        if (e.key === 'Enter' && selectedPrimary && document.getElementById('modal-overlay')?.classList.contains('hidden')) {
+        // --- Enter — open selected ---
+        if (e.key === 'Enter' && selectedPrimary) {
             e.preventDefault();
             if (selectedPrimary.type === 'folder') {
                 loadFolder(selectedPrimary.data.id);
@@ -4899,13 +5310,14 @@ const FileManager = (() => {
     }
 
     function selectAllVisible() {
-        const ids = [];
-        filteredFolders.forEach((f) => ids.push({ id: f.id, type: 'folder', data: f }));
-        filteredFiles.forEach((f) => ids.push({ id: f.id, type: 'file', data: f }));
+        const items = getVisibleItemPayloads();
 
         selectedItems.clear();
-        ids.forEach((x) => selectedItems.add(x.id));
-        if (ids[0]) selectedPrimary = ids[0];
+        items.forEach((x) => selectedItems.add(x.id));
+        if (items[0]) {
+            selectedPrimary = items[0];
+            selectionAnchor = items[0].id;
+        }
         syncSelectionStyles();
     }
 
@@ -4989,7 +5401,7 @@ const FileManager = (() => {
             return AdminPanel.load(section);
         }
         if (h === '#/home') return loadHome();
-        if (h === '#/computers') return loadFolder(null);
+        if (h === '#/computers' || h.startsWith('#/computers/')) return loadComputers();
         if (h === '#/recent') return loadRecent();
         if (h === '#/starred') return loadStarred();
         if (h === '#/shared-with') return loadSharedWithMe();
@@ -5052,6 +5464,8 @@ const FileManager = (() => {
         createFolder,
         createQuickFile,
         loadFolder,
+        loadComputers,
+        loadComputerFolder,
         loadHome,
         loadRecent,
         loadStarred,
@@ -5067,6 +5481,7 @@ const FileManager = (() => {
         bulkDownload,
         bulkMove,
         bulkDelete,
+        bulkRestore,
         showLargestFiles,
         hideDetailsPanel,
         shareSelectedItem,
@@ -5081,6 +5496,7 @@ const FileManager = (() => {
         showShortcuts,
         handleShortcut,
         hasSelection,
+        canAcceptUploads,
         afterUpload,
         updateStorageInfo,
         openFileById,

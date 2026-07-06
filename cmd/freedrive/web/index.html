@@ -92,7 +92,13 @@
 
             <nav class="sidebar-nav">
                 <a href="#/home" class="nav-item" data-page="home" id="nav-home"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Home</a>
-                <a href="#/files" class="nav-item active" data-page="files" id="nav-files"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>My Drive</a>
+                <div class="nav-drive-group" id="nav-drive-group">
+                    <div class="nav-drive-row" id="nav-files-row">
+                        <button type="button" class="nav-tree-chevron" id="nav-my-drive-chevron" aria-label="Expand My Drive folders" aria-expanded="false"></button>
+                        <a href="#/files" class="nav-item nav-drive-link active" data-page="files" id="nav-files"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>My Drive</a>
+                    </div>
+                    <div class="nav-tree-children hidden" id="nav-my-drive-tree" role="group" aria-label="My Drive folders"></div>
+                </div>
                 <a href="#/computers" class="nav-item" data-page="computers" id="nav-computers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16c1.1 0 2 .9 2 2v9a2 2 0 0 1-2 2h-6l1.5 2v1H8.5v-1L10 18H4a2 2 0 0 1-2-2V7c0-1.1.9-2 2-2zm0 2v9h16V7H4z"/></svg>Computers</a>
                 <a href="#/recent" class="nav-item" data-page="recent" id="nav-recent"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>Recent</a>
                 <a href="#/starred" class="nav-item" data-page="starred" id="nav-starred"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>Starred</a>
@@ -235,7 +241,8 @@
                     <button class="btn-icon" id="bulk-share" title="Share"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg></button>
                     <button class="btn-icon" id="bulk-download" title="Download"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
                     <button class="btn-icon" id="bulk-move" title="Move to"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm0 12H4V8h16v10zm-8-1h2v-3h3v-2h-3V9h-2v3h-3v2h3v3z"/></svg></button>
-                    <button class="btn-icon danger-icon" id="bulk-delete" title="Delete"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
+                    <button class="btn-icon" id="bulk-restore" title="Restore" aria-label="Restore" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M14 12H5.83l3.58 3.59L8 17l-6-6 6-6 1.41 1.41L5.83 10H16a4 4 0 0 1 0 8h-3v-2h3a2 2 0 0 0 0-4z"/></svg></button>
+                    <button class="btn-icon danger-icon" id="bulk-delete" title="Delete" aria-label="Delete"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
                 </div>
             </div>
 
@@ -351,7 +358,7 @@
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                         Rename
                     </button>
-                    <button class="details-action-btn" id="details-delete-btn" title="Move to trash">
+                    <button class="details-action-btn" id="details-delete-btn" title="Move to trash" aria-label="Delete">
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                         Delete
                     </button>
@@ -400,8 +407,9 @@
         <div class="context-divider"></div>
         <button class="context-item" data-action="info">File information</button>
         <button class="context-item" data-action="download">Download</button>
+        <button class="context-item" data-action="restore" id="ctx-restore" hidden aria-label="Restore">Restore</button>
         <div class="context-divider"></div>
-        <button class="context-item danger" data-action="delete">Move to trash</button>
+        <button class="context-item danger" data-action="delete" id="ctx-delete" aria-label="Move to trash">Move to trash</button>
     </div>
 
     <div class="modal-overlay hidden" id="modal-overlay">
@@ -474,6 +482,7 @@
     <script src="/js/auth.js"></script>
     <script src="/js/upload.js"></script>
     <script src="/js/filemanager.js"></script>
+    <script src="/js/sidebar-tree.js"></script>
     <script src="/js/admin_panel.js"></script>
     <script src="/js/app.js"></script>
 </body>

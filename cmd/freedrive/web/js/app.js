@@ -151,6 +151,7 @@ const App = (() => {
         Auth.init();
         Upload.init();
         FileManager.init();
+        if (API.isLoggedIn()) SidebarTree.init();
 
         if (API.isLoggedIn()) {
             showApp();
@@ -354,6 +355,7 @@ const App = (() => {
             let dragCounter = 0;
             main.addEventListener('dragenter', (e) => {
                 e.preventDefault();
+                if (!FileManager.canAcceptUploads()) return;
                 dragCounter += 1;
                 document.getElementById('drop-overlay')?.classList.remove('hidden');
             });
@@ -366,12 +368,19 @@ const App = (() => {
                 }
             });
             main.addEventListener('dragover', (e) => e.preventDefault());
-            main.addEventListener('drop', (e) => {
+            main.addEventListener('drop', async (e) => {
                 e.preventDefault();
                 dragCounter = 0;
                 document.getElementById('drop-overlay')?.classList.add('hidden');
-                if (e.dataTransfer?.files?.length) {
-                    Upload.handleFiles(e.dataTransfer.files);
+                if (!FileManager.canAcceptUploads()) {
+                    Components.toast('Connect a computer to upload files here', 'info');
+                    return;
+                }
+                try {
+                    const files = await Upload.collectFromDataTransfer(e.dataTransfer);
+                    if (files.length) Upload.uploadFileTree(files);
+                } catch {
+                    Components.toast('Could not read dropped files', 'error');
                 }
             });
         }
@@ -527,6 +536,7 @@ const App = (() => {
             profileDropdown?.classList.add('hidden');
             try { await API.auth.logout(); } catch {}
             API.clearAuth();
+            SidebarTree.invalidateAll();
             showAuth();
         });
 
@@ -547,6 +557,7 @@ const App = (() => {
         document.getElementById('bulk-share')?.addEventListener('click', () => FileManager.bulkShare());
         document.getElementById('bulk-download')?.addEventListener('click', () => FileManager.bulkDownload());
         document.getElementById('bulk-move')?.addEventListener('click', () => FileManager.bulkMove());
+        document.getElementById('bulk-restore')?.addEventListener('click', () => FileManager.bulkRestore());
         document.getElementById('bulk-delete')?.addEventListener('click', () => FileManager.bulkDelete());
 
         document.getElementById('free-space-btn')?.addEventListener('click', () => FileManager.showLargestFiles());
@@ -614,6 +625,7 @@ const App = (() => {
             window.location.hash = prefs.startPage;
         }
 
+        SidebarTree.init();
         handleRoute();
     }
 
@@ -687,9 +699,12 @@ const App = (() => {
             FileManager.loadRecent();
             return;
         }
-        if (hash === '#/computers') {
+        if (hash === '#/computers' || hash.startsWith('#/computers/')) {
             setActiveNav('computers');
-            FileManager.loadFolder(null);
+            if (hash !== '#/computers') {
+                window.location.hash = '#/computers';
+            }
+            FileManager.loadComputers();
             return;
         }
         if (hash === '#/starred') {
@@ -734,6 +749,7 @@ const App = (() => {
             const sharedKey = query.get('k') || '';
             setActiveNav('files');
             FileManager.loadFolder(null);
+            SidebarTree.syncWithRoute();
             if (fileId) {
                 setTimeout(async () => {
                     try {
@@ -759,6 +775,7 @@ const App = (() => {
             setActiveNav('files');
             const folderId = hash.split('/')[2] || null;
             FileManager.loadFolder(folderId);
+            SidebarTree.syncWithRoute();
             return;
         }
 

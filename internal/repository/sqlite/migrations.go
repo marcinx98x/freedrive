@@ -23,6 +23,7 @@ func runMigrations(db *sql.DB) error {
 	}{
 		{1, migrationV1},
 		{2, migrationV2},
+		{3, migrationV3},
 	}
 
 	for _, m := range migrations {
@@ -215,4 +216,18 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 
 const migrationV2 = `
 ALTER TABLE invite_links ADD COLUMN quota_bytes INTEGER NOT NULL DEFAULT 10737418240;
+`
+
+const migrationV3 = `
+CREATE TABLE IF NOT EXISTS computers (
+    id             TEXT PRIMARY KEY,
+    owner_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    hostname       TEXT NOT NULL DEFAULT '',
+    root_folder_id TEXT NOT NULL UNIQUE REFERENCES folders(id) ON DELETE CASCADE,
+    last_seen_at   DATETIME,
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_computers_owner ON computers(owner_id);
 `

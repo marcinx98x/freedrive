@@ -165,6 +165,12 @@ const API = (() => {
         breadcrumb: (id) => request('GET', `/folders/${id}/breadcrumb`),
     };
 
+    const computers = {
+        list: () => request('GET', '/computers'),
+        get: (id) => request('GET', `/computers/${id}`),
+        register: (name, hostname) => request('POST', '/computers/register', { name, hostname }),
+    };
+
     const diskStats = () => request('GET', '/disk-stats');
     const myStorage = () => request('GET', '/me/storage');
 
@@ -194,6 +200,7 @@ const API = (() => {
         auth,
         files,
         folders,
+        computers,
         admin,
         activity,
         diskStats,

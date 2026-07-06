@@ -20,6 +20,7 @@ func NewRouter(
 	authService *service.AuthService,
 	fileService *service.FileService,
 	folderService *service.FolderService,
+	computerService *service.ComputerService,
 	fileRepo repository.FileRepository,
 	userRepo repository.UserRepository,
 	activityRepo repository.ActivityRepository,
@@ -44,6 +45,7 @@ func NewRouter(
 	authHandler := handlers.NewAuthHandler(authService)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
+	computerHandler := handlers.NewComputerHandler(computerService)
 	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService)
 	userHandler := handlers.NewUserHandler(userRepo)
 
@@ -89,6 +91,13 @@ func NewRouter(
 				r.Patch("/{id}", folderHandler.Update)
 				r.Delete("/{id}", folderHandler.Delete)
 				r.Get("/{id}/breadcrumb", folderHandler.GetBreadcrumb)
+			})
+
+			// Computers (desktop sync devices)
+			r.Route("/computers", func(r chi.Router) {
+				r.Get("/", computerHandler.List)
+				r.Post("/register", computerHandler.Register)
+				r.Get("/{id}", computerHandler.Get)
 			})
 
 			// Activity

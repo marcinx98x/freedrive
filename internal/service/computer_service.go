@@ -1,0 +1,72 @@
+package service
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
+)
+
+// ComputerService handles registered desktop device logic.
+type ComputerService struct {
+	computerRepo repository.ComputerRepository
+	folderRepo   repository.FolderRepository
+}
+
+// NewComputerService creates a new computer service.
+func NewComputerService(computerRepo repository.ComputerRepository, folderRepo repository.FolderRepository) *ComputerService {
+	return &ComputerService{
+		computerRepo: computerRepo,
+		folderRepo:   folderRepo,
+	}
+}
+
+// List returns all computers registered for the user.
+func (s *ComputerService) List(ctx context.Context, ownerID string) ([]domain.Computer, error) {
+	return s.computerRepo.ListByOwner(ctx, ownerID)
+}
+
+// Get returns a single computer if it belongs to the user.
+func (s *ComputerService) Get(ctx context.Context, ownerID, computerID string) (*domain.Computer, error) {
+	computer, err := s.computerRepo.GetByID(ctx, computerID)
+	if err != nil {
+		return nil, err
+	}
+	if computer == nil || computer.OwnerID != ownerID {
+		return nil, fmt.Errorf("computer not found")
+	}
+	return computer, nil
+}
+
+// Register creates a computer root folder and device record.
+// Intended for the future desktop sync client.
+func (s *ComputerService) Register(ctx context.Context, ownerID, name, hostname string) (*domain.Computer, error) {
+	if name == "" {
+		return nil, fmt.Errorf("computer name is required")
+	}
+
+	folder := &domain.Folder{
+		Name:    name,
+		OwnerID: ownerID,
+	}
+	if err := s.folderRepo.Create(ctx, folder); err != nil {
+		return nil, err
+	}
+
+	computer := &domain.Computer{
+		OwnerID:      ownerID,
+		Name:         name,
+		Hostname:     hostname,
+		RootFolderID: folder.ID,
+	}
+	if err := s.computerRepo.Create(ctx, computer); err != nil {
+		return nil, err
+	}
+	return computer, nil
+}
+
+// IsInComputerTree reports whether a folder belongs to a registered computer.
+func (s *ComputerService) IsInComputerTree(ctx context.Context, folderID string) (bool, error) {
+	return s.computerRepo.IsInComputerTree(ctx, folderID)
+}
