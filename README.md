@@ -85,7 +85,13 @@ FreeDrive is ideal for:
 - Search and search filters
 - Context menus and keyboard shortcuts
 
-### 2. File Lifecycle
+### 2. Sidebar: My Drive & Computers
+
+- **My Drive** — primary file space with an expandable sidebar folder tree (lazy-loaded folders, expand/collapse chevrons, path sync on navigation)
+- **Computers** — separate sidebar section for desktop backup/sync (isolated from My Drive root folders; API-ready for future desktop clients)
+- Drive-style pill highlights on nav rows, with chevrons inside the active/hover area
+
+### 3. File Lifecycle
 
 - Upload files via web UI
 - Download encrypted blob payloads with metadata headers
@@ -94,30 +100,30 @@ FreeDrive is ideal for:
 - Restore from Trash
 - Permanent delete
 
-### 3. Versioning Support
+### 4. Versioning Support
 
 - File version records are kept when content is updated
 - List versions per file
 - Restore an earlier version
 
-### 4. Sharing Model
+### 5. Sharing Model
 
 - User-to-user sharing data model (`user_shares`)
 - Share-link data model (`share_links`)
 - "Shared with me" and "Shared by me" listing paths
 
-### 5. Storage & Quota Awareness
+### 6. Storage & Quota Awareness
 
 - Per-user quota enforcement during uploads/content updates
 - Used-bytes accounting on delete/restore/permanent-delete paths
 - Disk usage endpoint for runtime visibility
 
-### 6. Activity Logging
+### 7. Activity Logging
 
 - File/folder actions are recorded in activity logs
 - User and admin activity listing endpoints
 
-### 7. Embedded App Delivery
+### 8. Embedded App Delivery
 
 - Frontend is embedded with `go:embed`
 - Single process serves API + SPA + static assets
