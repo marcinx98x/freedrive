@@ -246,13 +246,15 @@ Important: change defaults immediately in non-dev environments.
 
 ### Run Published Docker Image
 
-Images are built by [GitHub Actions](.github/workflows/docker-publish.yml) on push to `master` and published to GHCR as `ghcr.io/marcinx98x/freedrive` (`latest`, `master`, `sha-<commit>`).
+Images are built by [GitHub Actions](.github/workflows/docker-publish.yml) on push to `master` and published to GHCR as `ghcr.io/marcinx98x/freedrive` and Docker Hub as `marcinx98x/freedrive` (`latest`, `master`, `sha-<commit>`).
 
-If the package is private, log in first (GitHub PAT with `read:packages` scope):
+If the GHCR package is private, log in first (GitHub PAT with `read:packages` scope):
 
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u marcinx98x --password-stdin
 ```
+
+**GHCR:**
 
 ```bash
 docker pull ghcr.io/marcinx98x/freedrive:latest
@@ -263,6 +265,19 @@ docker run -d \
   -e FREEDRIVE_ADMIN_PASSWORD=change-me-now \
   -v freedrive-data:/app/data \
   ghcr.io/marcinx98x/freedrive:latest
+```
+
+**Docker Hub:**
+
+```bash
+docker pull marcinx98x/freedrive:latest
+docker run -d \
+  --name freedrive \
+  -p 8080:8080 \
+  -e FREEDRIVE_ADMIN_EMAIL=admin@freedrive.local \
+  -e FREEDRIVE_ADMIN_PASSWORD=change-me-now \
+  -v freedrive-data:/app/data \
+  marcinx98x/freedrive:latest
 ```
 
 To make the image publicly pullable without login: GitHub → **Packages** → **freedrive** → **Package settings** → **Change visibility** → **Public**.
