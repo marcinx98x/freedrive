@@ -11,11 +11,11 @@
 <p align="center"><strong>Licensed under MIT</strong></p>
 
 <p align="center">
-  <a href="https://abdullaabdullazade.github.io/freedrive/"><img src="https://img.shields.io/badge/Website-freedrive-blue?style=flat-square" alt="Website"/></a>
-  <a href="https://github.com/abdullaabdullazade/freedrive/releases"><img src="https://img.shields.io/github/v/release/abdullaabdullazade/freedrive?style=flat-square" alt="Release"/></a>
-  <a href="https://github.com/abdullaabdullazade/freedrive/stargazers"><img src="https://img.shields.io/github/stars/abdullaabdullazade/freedrive?style=flat-square" alt="Stars"/></a>
-  <a href="https://github.com/abdullaabdullazade/freedrive/blob/main/LICENSE"><img src="https://img.shields.io/github/license/abdullaabdullazade/freedrive?style=flat-square" alt="License"/></a>
-  <a href="https://github.com/abdullaabdullazade/freedrive"><img src="https://img.shields.io/github/go-mod/go-version/abdullaabdullazade/freedrive?style=flat-square" alt="Go version"/></a>
+  <a href="https://github.com/marcinx98x/freedrive"><img src="https://img.shields.io/badge/Website-freedrive-blue?style=flat-square" alt="Website"/></a>
+  <a href="https://github.com/marcinx98x/freedrive/releases"><img src="https://img.shields.io/github/v/release/marcinx98x/freedrive?style=flat-square" alt="Release"/></a>
+  <a href="https://github.com/marcinx98x/freedrive/stargazers"><img src="https://img.shields.io/github/stars/marcinx98x/freedrive?style=flat-square" alt="Stars"/></a>
+  <a href="https://github.com/marcinx98x/freedrive/blob/master/LICENSE"><img src="https://img.shields.io/github/license/marcinx98x/freedrive?style=flat-square" alt="License"/></a>
+  <a href="https://github.com/marcinx98x/freedrive"><img src="https://img.shields.io/github/go-mod/go-version/marcinx98x/freedrive?style=flat-square" alt="Go version"/></a>
 </p>
 
 ---
@@ -246,18 +246,26 @@ Important: change defaults immediately in non-dev environments.
 
 ### Run Published Docker Image
 
+Images are built by [GitHub Actions](.github/workflows/docker-publish.yml) on push to `master` and published to GHCR as `ghcr.io/marcinx98x/freedrive` (`latest`, `master`, `sha-<commit>`).
+
+If the package is private, log in first (GitHub PAT with `read:packages` scope):
+
 ```bash
-docker pull ghcr.io/abdullaabdullazade/freedrive:latest
+echo $GITHUB_TOKEN | docker login ghcr.io -u marcinx98x --password-stdin
+```
+
+```bash
+docker pull ghcr.io/marcinx98x/freedrive:latest
 docker run -d \
   --name freedrive \
   -p 8080:8080 \
   -e FREEDRIVE_ADMIN_EMAIL=admin@freedrive.local \
   -e FREEDRIVE_ADMIN_PASSWORD=change-me-now \
   -v freedrive-data:/app/data \
-  ghcr.io/abdullaabdullazade/freedrive:latest
+  ghcr.io/marcinx98x/freedrive:latest
 ```
 
-Docker Hub image tags are published as `docker.io/metalninjasabdulla/freedrive:<tag>`.
+To make the image publicly pullable without login: GitHub → **Packages** → **freedrive** → **Package settings** → **Change visibility** → **Public**.
 
 ### Run With Docker Compose
 
@@ -372,6 +380,12 @@ Base path: `/api/v1`
 - `DELETE /folders/{id}`
 - `GET /folders/{id}/breadcrumb`
 
+#### Computers
+
+- `GET /computers`
+- `GET /computers/{id}`
+- `POST /computers/register`
+
 ### Admin (Requires `admin` role)
 
 - `GET /admin/users`
@@ -469,7 +483,7 @@ curl -s http://localhost:8080/api/v1/health
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=abdullaabdullazade/freedrive&type=Date&legend=top-left)](https://www.star-history.com/?repos=abdullaabdullazade%2Ffreedrive&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=marcinx98x/freedrive&type=Date&legend=top-left)](https://www.star-history.com/?repos=marcinx98x%2Ffreedrive&type=date&legend=top-left)
 
 ---
 
