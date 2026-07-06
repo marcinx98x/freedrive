@@ -16,6 +16,7 @@
   <a href="https://github.com/marcinx98x/freedrive/stargazers"><img src="https://img.shields.io/github/stars/marcinx98x/freedrive?style=flat-square" alt="Stars"/></a>
   <a href="https://github.com/marcinx98x/freedrive/blob/master/LICENSE"><img src="https://img.shields.io/github/license/marcinx98x/freedrive?style=flat-square" alt="License"/></a>
   <a href="https://github.com/marcinx98x/freedrive"><img src="https://img.shields.io/github/go-mod/go-version/marcinx98x/freedrive?style=flat-square" alt="Go version"/></a>
+  <a href="https://hub.docker.com/r/marcinx98x/freedrive"><img src="https://img.shields.io/docker/pulls/marcinx98x/freedrive?style=flat-square" alt="Docker pulls"/></a>
 </p>
 
 ---
@@ -246,28 +247,14 @@ Important: change defaults immediately in non-dev environments.
 
 ### Run Published Docker Image
 
-Images are built by [GitHub Actions](.github/workflows/docker-publish.yml) on push to `master` and published to GHCR as `ghcr.io/marcinx98x/freedrive` and Docker Hub as `marcinx98x/freedrive` (`latest`, `master`, `sha-<commit>`).
+Images are built by [GitHub Actions](.github/workflows/docker-publish.yml) on push to `master` and published to:
 
-If the GHCR package is private, log in first (GitHub PAT with `read:packages` scope):
+- **Docker Hub:** [`marcinx98x/freedrive`](https://hub.docker.com/r/marcinx98x/freedrive) — public, no login required
+- **GHCR:** `ghcr.io/marcinx98x/freedrive` — may require GitHub login if the package is private
 
-```bash
-echo $GITHUB_TOKEN | docker login ghcr.io -u marcinx98x --password-stdin
-```
+Tags: `latest`, `master`, `sha-<commit>`. Multi-arch: `linux/amd64`, `linux/arm64`.
 
-**GHCR:**
-
-```bash
-docker pull ghcr.io/marcinx98x/freedrive:latest
-docker run -d \
-  --name freedrive \
-  -p 8080:8080 \
-  -e FREEDRIVE_ADMIN_EMAIL=admin@freedrive.local \
-  -e FREEDRIVE_ADMIN_PASSWORD=change-me-now \
-  -v freedrive-data:/app/data \
-  ghcr.io/marcinx98x/freedrive:latest
-```
-
-**Docker Hub:**
+**Docker Hub (recommended):**
 
 ```bash
 docker pull marcinx98x/freedrive:latest
@@ -280,11 +267,25 @@ docker run -d \
   marcinx98x/freedrive:latest
 ```
 
-To make the image publicly pullable without login: GitHub → **Packages** → **freedrive** → **Package settings** → **Change visibility** → **Public**.
+**GHCR** (log in first if the package is private; GitHub PAT with `read:packages` scope):
+
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u marcinx98x --password-stdin
+docker pull ghcr.io/marcinx98x/freedrive:latest
+docker run -d \
+  --name freedrive \
+  -p 8080:8080 \
+  -e FREEDRIVE_ADMIN_EMAIL=admin@freedrive.local \
+  -e FREEDRIVE_ADMIN_PASSWORD=change-me-now \
+  -v freedrive-data:/app/data \
+  ghcr.io/marcinx98x/freedrive:latest
+```
+
+To make the GHCR package publicly pullable without login: GitHub → **Packages** → **freedrive** → **Package settings** → **Change visibility** → **Public**.
 
 ### Run With Docker Compose
 
-Default image: `ghcr.io/marcinx98x/freedrive:latest`. Use `docker compose up --build` only when developing from source.
+Default image in `docker-compose.yml`: `ghcr.io/marcinx98x/freedrive:latest`. To use Docker Hub instead, set `image: marcinx98x/freedrive:latest` in the compose file or override it when starting. Use `docker compose up --build` only when developing from source.
 
 ```bash
 cp .env.example .env
