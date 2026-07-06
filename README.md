@@ -269,9 +269,12 @@ To make the image publicly pullable without login: GitHub → **Packages** → *
 
 ### Run With Docker Compose
 
+Default image: `ghcr.io/marcinx98x/freedrive:latest`. Use `docker compose up --build` only when developing from source.
+
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Open:

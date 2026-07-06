@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: freedrive:local
+    image: ghcr.io/marcinx98x/freedrive:latest
     container_name: freedrive
     restart: unless-stopped
     ports:
