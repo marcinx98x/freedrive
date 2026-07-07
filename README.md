@@ -307,21 +307,46 @@ Runtime data is stored in the `freedrive-data` Docker volume. Update `.env` befo
 - `--cleanup` removes the old image after each update.
 - Default check interval is `3600` seconds (hourly). Change `--interval` in the `watchtower` service's `command` to adjust it, or remove the whole `watchtower` service to disable auto-updates.
 
-### Synology: Reliable Update
+### Synology: Update Without Losing Data
 
-Container Manager's "update" on a `latest`-tagged container is unreliable: it often reports success while still running the old image (it pulls the image but does not recreate the container from the new digest). Use one of the options below.
+Important: your data is NOT deleted on update. The database (`freedrive.db`), the encrypted blobs (`blobs/`) and the `jwt_secret.key` all live in the folder you mapped to `/app/data`. They stay on the NAS.
 
-**Option A (recommended): let Watchtower do it.** Import `docker-compose.yml` as a Project. Watchtower starts alongside FreeDrive, pulls new `latest` images and recreates the container automatically — no manual "download latest" needed. The `freedrive-data` volume is preserved across recreations, so users and files are safe.
+What actually goes wrong: when you press "Update" or delete and recreate a single container in Container Manager, the GUI can drop the `/app/data` mapping (or you recreate it without re-selecting the exact same folder). The new container then starts on an empty `/app/data` inside its own writable layer, so the app shows no users and cannot read files — even though the real data is untouched in your folder. Do NOT rely on manual delete + recreate for updates.
 
-**Option B: manual recreate (keep the volume).**
+**Step 0 — confirm your data is safe (SSH):**
 
-1. Container Manager -> Container -> stop, then delete the `freedrive` container. Do NOT delete the `freedrive-data` volume — that is where the database and files live, and it survives.
-2. Container Manager -> Registry (or Image) -> download `marcinx98x/freedrive:latest` again.
-3. Recreate the container with the same volume mapping to `/app/data` and the same port.
+```bash
+ls -la /volume1/<your-path>/freedrive/data
+# expected: freedrive.db, blobs/, jwt_secret.key
+```
 
-**Option C: pin an immutable tag.** Instead of `latest`, use an immutable `sha-xxxxxxx` tag (visible on Docker Hub) and bump it deliberately when you want to update. This removes all ambiguity about which build is running.
+**Method A (recommended): update with Watchtower — the mapping can never be lost.**
 
-**Verify the running image over SSH:**
+Watchtower clones the running container's full configuration (including your `/app/data` bind mount) before pulling the new image and recreating it, so the folder mapping is always preserved.
+
+1. Add the label `com.centurylinklabs.watchtower.enable=true` to your `freedrive` container.
+2. Run a Watchtower container (via Container Manager or the `watchtower` service in `docker-compose.yml`) with `--cleanup --label-enable --interval 3600`.
+3. Stop pressing "Update" in the GUI — Watchtower now updates FreeDrive on its own without touching your data.
+
+**Method B: run FreeDrive as a Project (compose) with a bind mount to your folder.**
+
+Keep the mapping in the compose file so it can never be dropped. Replace the named volume with your host folder:
+
+```yaml
+    volumes:
+      - /volume1/<your-path>/freedrive/data:/app/data
+```
+
+Update with Watchtower automatically, or from the Project view via pull + up. Because the mapping lives in the file, every recreation reuses the exact same data folder.
+
+**If you must recreate manually:** your data is safe in the folder; you only have to map that exact same folder back to `/app/data` when creating the new container. Then verify the container is reading it:
+
+```bash
+docker inspect --format '{{json .Mounts}}' freedrive
+# the mount source must point to your /volume1/<your-path>/freedrive/data folder
+```
+
+**Verify you are actually running the new build (SSH):**
 
 ```bash
 # digest the container is currently running
@@ -330,7 +355,7 @@ docker inspect --format '{{.Image}}' freedrive
 docker inspect --format '{{index .RepoDigests 0}}' marcinx98x/freedrive:latest
 ```
 
-After the app itself is updated, the browser fetches fresh frontend assets automatically (the server sends `ETag` + `Cache-Control: no-cache`); a hard refresh (Ctrl+F5) is only needed if you loaded a version built before this behavior existed.
+After the app is updated, the browser fetches fresh frontend assets automatically (the server sends `ETag` + `Cache-Control: no-cache`); a hard refresh (Ctrl+F5) is only needed if you loaded a version built before this behavior existed.
 
 ---
 
