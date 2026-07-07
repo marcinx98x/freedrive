@@ -356,12 +356,34 @@ func (r *FileRepo) CountByOwner(ctx context.Context, ownerID string) (int, error
 }
 
 // SumEncryptedSizeByOwner returns the total encrypted bytes stored by a user
-// across all of their files (including trashed ones, which still occupy space).
+// across their non-trashed files (trashed files do not count toward usage).
 func (r *FileRepo) SumEncryptedSizeByOwner(ctx context.Context, ownerID string) (int64, error) {
 	var total int64
 	err := r.reader.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(encrypted_size), 0) FROM files WHERE owner_id = ?", ownerID).Scan(&total)
+		"SELECT COALESCE(SUM(encrypted_size), 0) FROM files WHERE owner_id = ? AND is_trashed = 0", ownerID).Scan(&total)
 	return total, err
+}
+
+// ListFileMetaByOwner returns lightweight metadata for a user's non-trashed
+// files, used to compute the storage breakdown. The set matches
+// SumEncryptedSizeByOwner so the category totals add up to used_bytes.
+func (r *FileRepo) ListFileMetaByOwner(ctx context.Context, ownerID string) ([]domain.FileMeta, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		"SELECT mime_type, name, encrypted_size FROM files WHERE owner_id = ? AND is_trashed = 0", ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var metas []domain.FileMeta
+	for rows.Next() {
+		var m domain.FileMeta
+		if err := rows.Scan(&m.MimeType, &m.Name, &m.EncryptedSize); err != nil {
+			return nil, err
+		}
+		metas = append(metas, m)
+	}
+	return metas, rows.Err()
 }
 
 // --- Versioning ---

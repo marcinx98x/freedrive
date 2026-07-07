@@ -3615,12 +3615,26 @@ const FileManager = (() => {
             const filesEl = document.getElementById('storage-total-files');
             if (freeEl) freeEl.textContent = Components.formatSize(free);
             if (filesEl) filesEl.textContent = String(totalFiles);
-            const buckets = { Images: 0, Videos: 0, Documents: 0, Other: 0 };
-
-            files.forEach((f) => {
-                const bytes = Number(f.encrypted_size || f.size || 0);
-                buckets[getStorageCategory(f.mime_type, f.name)] += bytes;
-            });
+            // Use the backend breakdown, computed over the same (non-trashed)
+            // file set as used_bytes, so the four categories add up exactly to
+            // "used" shown in the ring. Falls back to client-side categorization
+            // only if the API did not return a breakdown.
+            const b = disk.breakdown;
+            let buckets;
+            if (b && typeof b === 'object') {
+                buckets = {
+                    Images: Number(b.images || 0),
+                    Videos: Number(b.videos || 0),
+                    Documents: Number(b.documents || 0),
+                    Other: Number(b.other || 0),
+                };
+            } else {
+                buckets = { Images: 0, Videos: 0, Documents: 0, Other: 0 };
+                files.forEach((f) => {
+                    const bytes = Number(f.encrypted_size || f.size || 0);
+                    buckets[getStorageCategory(f.mime_type, f.name)] += bytes;
+                });
+            }
 
             // Bar length reflects usage against the configured capacity (quota),
             // so a few small files render as a thin bar, not a full line.
@@ -3639,8 +3653,11 @@ const FileManager = (() => {
         }
     }
 
-    function renderBreakdownItem(name, bytes, color, totalUsed) {
-        const sharePct = totalUsed > 0 ? Math.min((bytes / totalUsed) * 100, 100) : 0;
+    function renderBreakdownItem(name, bytes, color, capacity) {
+        const sharePct = capacity > 0 ? Math.min((bytes / capacity) * 100, 100) : 0;
+        // Keep a thin but visible sliver for any non-zero category, otherwise
+        // small categories against a large quota would round down to 0 width.
+        const widthPct = bytes > 0 ? Math.max(0.75, sharePct) : 0;
         const icons = {
             Images: '<svg viewBox="0 0 24 24" width="18" height="18" fill="' + color + '"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>',
             Videos: '<svg viewBox="0 0 24 24" width="18" height="18" fill="' + color + '"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>',
@@ -3656,7 +3673,7 @@ const FileManager = (() => {
                     <span class="break-size">${bytes > 0 ? Components.formatSize(bytes) : '—'}</span>
                 </div>
                 <div class="break-bar-track">
-                    <div class="break-bar-fill" style="width:${sharePct.toFixed(1)}%; background:${color};"></div>
+                    <div class="break-bar-fill" style="width:${widthPct.toFixed(2)}%; background:${color};"></div>
                 </div>
             </div>
         `;

@@ -22,6 +22,13 @@ type File struct {
 	AccessedAt    time.Time  `json:"accessed_at"`
 }
 
+// FileMeta is a lightweight projection of a file used for storage breakdown.
+type FileMeta struct {
+	MimeType      string
+	Name          string
+	EncryptedSize int64
+}
+
 // FileVersion represents a historical version of a file.
 type FileVersion struct {
 	ID        string    `json:"id"`
