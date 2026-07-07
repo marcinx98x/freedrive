@@ -1,9 +1,13 @@
 package api
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/handlers"
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
@@ -142,33 +146,35 @@ func NewRouter(
 	if err != nil {
 		panic("failed to get web sub filesystem: " + err.Error())
 	}
-	fileServer := http.FileServer(http.FS(webRoot))
 
-	// SPA fallback: serve index.html for all non-API, non-static routes
+	// SPA fallback: serve index.html for all non-API, non-static routes.
+	// Assets are served with an ETag (content hash) and Cache-Control: no-cache
+	// so browsers always revalidate and fetch fresh files after an image update.
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-		// Try to serve static file first
 		path := r.URL.Path
 		if path == "/" {
 			path = "/index.html"
 		}
 
-		// Check if file exists in embedded FS
-		f, err := webRoot.(fs.ReadFileFS).ReadFile(path[1:]) // strip leading /
+		data, err := webRoot.(fs.ReadFileFS).ReadFile(path[1:]) // strip leading /
 		if err != nil {
 			// Serve index.html for SPA routes
-			f, err = webRoot.(fs.ReadFileFS).ReadFile("index.html")
+			data, err = webRoot.(fs.ReadFileFS).ReadFile("index.html")
 			if err != nil {
 				http.NotFound(w, r)
 				return
 			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write(f)
-			return
+			path = "/index.html"
 		}
 
-		// Detect content type
-		_ = f
-		fileServer.ServeHTTP(w, r)
+		sum := sha256.Sum256(data)
+		etag := "\"" + hex.EncodeToString(sum[:]) + "\""
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache")
+
+		// ServeContent detects Content-Type from the file extension and
+		// handles If-None-Match (304) / range requests using the ETag above.
+		http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(data))
 	})
 
 	return r

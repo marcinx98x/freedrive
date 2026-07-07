@@ -285,7 +285,7 @@ To make the GHCR package publicly pullable without login: GitHub → **Packages*
 
 ### Run With Docker Compose
 
-Default image in `docker-compose.yml`: `ghcr.io/marcinx98x/freedrive:latest`. To use Docker Hub instead, set `image: marcinx98x/freedrive:latest` in the compose file or override it when starting. Use `docker compose up --build` only when developing from source.
+Default image in `docker-compose.yml`: `marcinx98x/freedrive:latest` (Docker Hub, public). To use GHCR instead, set `image: ghcr.io/marcinx98x/freedrive:latest` in the compose file or override it when starting. Use `docker compose up --build` only when developing from source.
 
 ```bash
 cp .env.example .env
@@ -298,6 +298,39 @@ Open:
 - `http://localhost:8080`
 
 Runtime data is stored in the `freedrive-data` Docker volume. Update `.env` before first start to set a strong admin password and optional JWT secret.
+
+### Automatic Updates (Watchtower)
+
+`docker-compose.yml` includes a [Watchtower](https://containrrr.dev/watchtower/) service. It periodically checks Docker Hub for a newer `latest` image and automatically pulls it and recreates the FreeDrive container, so you always run the newest version without a manual re-pull.
+
+- Scope is limited by label (`com.centurylinklabs.watchtower.enable=true` on the `freedrive` service via `--label-enable`), so Watchtower only updates FreeDrive and leaves your other containers untouched.
+- `--cleanup` removes the old image after each update.
+- Default check interval is `3600` seconds (hourly). Change `--interval` in the `watchtower` service's `command` to adjust it, or remove the whole `watchtower` service to disable auto-updates.
+
+### Synology: Reliable Update
+
+Container Manager's "update" on a `latest`-tagged container is unreliable: it often reports success while still running the old image (it pulls the image but does not recreate the container from the new digest). Use one of the options below.
+
+**Option A (recommended): let Watchtower do it.** Import `docker-compose.yml` as a Project. Watchtower starts alongside FreeDrive, pulls new `latest` images and recreates the container automatically — no manual "download latest" needed. The `freedrive-data` volume is preserved across recreations, so users and files are safe.
+
+**Option B: manual recreate (keep the volume).**
+
+1. Container Manager -> Container -> stop, then delete the `freedrive` container. Do NOT delete the `freedrive-data` volume — that is where the database and files live, and it survives.
+2. Container Manager -> Registry (or Image) -> download `marcinx98x/freedrive:latest` again.
+3. Recreate the container with the same volume mapping to `/app/data` and the same port.
+
+**Option C: pin an immutable tag.** Instead of `latest`, use an immutable `sha-xxxxxxx` tag (visible on Docker Hub) and bump it deliberately when you want to update. This removes all ambiguity about which build is running.
+
+**Verify the running image over SSH:**
+
+```bash
+# digest the container is currently running
+docker inspect --format '{{.Image}}' freedrive
+# digest of the local latest image
+docker inspect --format '{{index .RepoDigests 0}}' marcinx98x/freedrive:latest
+```
+
+After the app itself is updated, the browser fetches fresh frontend assets automatically (the server sends `ETag` + `Cache-Control: no-cache`); a hard refresh (Ctrl+F5) is only needed if you loaded a version built before this behavior existed.
 
 ---
 
