@@ -297,11 +297,10 @@ const App = (() => {
         };
 
         document.addEventListener('click', (e) => {
-            const rightPanelOpen = (detailsPanel && !detailsPanel.classList.contains('hidden'))
-                || (notificationsPanel && !notificationsPanel.classList.contains('hidden'));
-            if (!rightPanelOpen) return;
+            const notifOpen = notificationsPanel && !notificationsPanel.classList.contains('hidden');
+            if (!notifOpen) return;
             if (shouldIgnorePanelDismiss(e.target)) return;
-            closeRightPanels();
+            notificationsPanel.classList.add('hidden');
         });
 
         newBtn?.addEventListener('click', (e) => {
@@ -635,6 +634,7 @@ const App = (() => {
         if (isAdminMode) {
             document.getElementById('details-panel')?.classList.add('hidden');
             document.getElementById('notifications-panel')?.classList.add('hidden');
+            app?.classList.remove('details-open');
         }
     }
 

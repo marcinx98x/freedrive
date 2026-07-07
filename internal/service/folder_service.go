@@ -73,6 +73,11 @@ func (s *FolderService) GetContents(ctx context.Context, folderID *string, owner
 	}, nil
 }
 
+// ListAll returns all of an owner's folders (flat), optionally filtered by name.
+func (s *FolderService) ListAll(ctx context.Context, ownerID, search string) ([]domain.Folder, error) {
+	return s.folderRepo.ListAll(ctx, ownerID, search)
+}
+
 // Rename renames a folder.
 func (s *FolderService) Rename(ctx context.Context, folderID, ownerID, newName string) error {
 	folder, err := s.folderRepo.GetByID(ctx, folderID)

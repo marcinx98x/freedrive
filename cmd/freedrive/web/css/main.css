@@ -1501,8 +1501,7 @@ svg {
 .app.admin-mode .home-warning,
 .app.admin-mode .selection-bar { display: none !important; }
 .app.admin-mode .sidebar .admin-nav-item { display: flex !important; }
-.app.admin-mode .sidebar-nav .nav-item:not(.admin-nav-item),
-.app.admin-mode .sidebar-nav .nav-divider:not(.admin-nav-item) { display: none !important; }
+.app.admin-mode .sidebar-nav > *:not(.admin-nav-item) { display: none !important; }
 
 /* ── Audio player ── */
 .audio-mini-player {

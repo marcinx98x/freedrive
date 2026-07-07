@@ -87,6 +87,7 @@ func NewRouter(
 			r.Route("/folders", func(r chi.Router) {
 				r.Post("/", folderHandler.Create)
 				r.Get("/root", folderHandler.GetRoot)
+				r.Get("/all", folderHandler.ListAll)
 				r.Get("/{id}", folderHandler.Get)
 				r.Patch("/{id}", folderHandler.Update)
 				r.Delete("/{id}", folderHandler.Delete)

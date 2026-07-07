@@ -68,6 +68,7 @@ type FolderRepository interface {
 	Update(ctx context.Context, folder *domain.Folder) error
 	Delete(ctx context.Context, id string) error
 	GetChildren(ctx context.Context, parentID *string, ownerID string) ([]domain.Folder, error)
+	ListAll(ctx context.Context, ownerID, search string) ([]domain.Folder, error)
 	GetBreadcrumb(ctx context.Context, id string) ([]domain.Breadcrumb, error)
 	IsDescendant(ctx context.Context, folderID, potentialParentID string) (bool, error)
 }

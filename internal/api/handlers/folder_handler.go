@@ -81,6 +81,22 @@ func (h *FolderHandler) GetRoot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, contents)
 }
 
+// ListAll handles GET /api/v1/folders/all
+func (h *FolderHandler) ListAll(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	search := r.URL.Query().Get("search")
+
+	folders, err := h.folderService.ListAll(r.Context(), userID, search)
+	if err != nil {
+		writeError(w, "failed to list folders", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"folders": folders,
+	})
+}
+
 // Update handles PATCH /api/v1/folders/{id}
 func (h *FolderHandler) Update(w http.ResponseWriter, r *http.Request) {
 	folderID := chi.URLParam(r, "id")

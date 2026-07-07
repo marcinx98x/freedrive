@@ -160,6 +160,7 @@ const API = (() => {
         create: (name, parentId, color) => request('POST', '/folders', { name, parent_id: parentId || null, color }),
         get: (id) => request('GET', `/folders/${id}`),
         root: () => request('GET', '/folders/root'),
+        all: (search) => request('GET', `/folders/all${search ? `?search=${encodeURIComponent(search)}` : ''}`),
         update: (id, data) => request('PATCH', `/folders/${id}`, data),
         delete: (id) => request('DELETE', `/folders/${id}`),
         breadcrumb: (id) => request('GET', `/folders/${id}/breadcrumb`),

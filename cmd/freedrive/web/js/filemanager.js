@@ -26,6 +26,9 @@ const FileManager = (() => {
     let insecureUploadNoticeShown = false;
     const folderStatsCache = new Map();
     const folderStatsPending = new Map();
+    const folderNameCache = new Map();
+    let homeSuggestedFolders = [];
+    let homeSearchDebounce = null;
     const zipCrcTable = (() => {
         const table = new Uint32Array(256);
         for (let n = 0; n < 256; n += 1) {
@@ -166,11 +169,10 @@ const FileManager = (() => {
             });
         });
 
-        // Click on empty grid area → deselect + close panel
+        // Click on empty grid area → deselect (panel stays open until X/Escape)
         document.getElementById('file-grid')?.addEventListener('click', (e) => {
             if (e.target.closest('.file-row, .file-card')) return;
             clearSelection();
-            hideDetailsPanel();
         });
     }
 
@@ -415,7 +417,7 @@ const FileManager = (() => {
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6h-2v2h2v2h-2v2h-2v-2h2v-2h-2v-2h2v-2h-2V8h2v2h2v2z"/></svg>';
         }
         const icons = {
-            folder: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#fbbc04"><path d="M10 4H4c-1.1 0-2 .9-2 2v2h20V8c0-1.1-.9-2-2-2h-8l-2-2z"/><path d="M22 10H2v8c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-8z" fill="#f4b400"/></svg>',
+            folder: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>',
             image: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#34a853"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5A1.5 1.5 0 1 1 8.5 8a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z"/></svg>',
             video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#ea4335"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z"/></svg>',
             audio: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#a142f4"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z"/></svg>',
@@ -457,10 +459,11 @@ const FileManager = (() => {
     }
 
     function showFilesView() {
+        document.getElementById('app')?.classList.remove('home-active');
         document.getElementById('home-page')?.classList.add('hidden');
         document.getElementById('activity-page')?.classList.add('hidden');
         document.getElementById('storage-page')?.classList.add('hidden');
-        document.getElementById('md3-chip-bar')?.classList.remove('hidden');
+        document.getElementById('md3-chip-bar')?.classList.add('hidden');
         document.getElementById('file-grid')?.classList.remove('hidden');
         if (currentView === 'list') {
             document.getElementById('file-list-header')?.classList.remove('hidden');
@@ -469,6 +472,7 @@ const FileManager = (() => {
     }
 
     function showActivityView() {
+        document.getElementById('app')?.classList.remove('home-active');
         document.getElementById('home-page')?.classList.add('hidden');
         document.getElementById('activity-page')?.classList.remove('hidden');
         document.getElementById('storage-page')?.classList.add('hidden');
@@ -482,6 +486,7 @@ const FileManager = (() => {
     }
 
     function showStorageView() {
+        document.getElementById('app')?.classList.remove('home-active');
         document.getElementById('home-page')?.classList.add('hidden');
         document.getElementById('storage-page')?.classList.remove('hidden');
         document.getElementById('activity-page')?.classList.add('hidden');
@@ -495,10 +500,11 @@ const FileManager = (() => {
     }
 
     function showHomeView() {
+        document.getElementById('app')?.classList.add('home-active');
         document.getElementById('home-page')?.classList.remove('hidden');
         document.getElementById('activity-page')?.classList.add('hidden');
         document.getElementById('storage-page')?.classList.add('hidden');
-        document.getElementById('md3-chip-bar')?.classList.remove('hidden');
+        document.getElementById('md3-chip-bar')?.classList.add('hidden');
         document.getElementById('file-list-header')?.classList.add('hidden');
         document.getElementById('file-grid')?.classList.add('hidden');
         document.getElementById('shared-filter-bar')?.classList.add('hidden');
@@ -713,6 +719,8 @@ const FileManager = (() => {
             filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles);
+            HOME_CHIP_DEFS.forEach((d) => setFilterSelect(d.select, '', d.anyLabel));
+            renderSearchChipBar();
             await updateBreadcrumb(folderId || null);
             await updateStorageInfo();
             syncTrashActionLabels();
@@ -773,12 +781,23 @@ const FileManager = (() => {
                 seenNames.add(f.name);
                 return true;
             });
-            
+
+            // Fetch top-level folders for the "Suggested folders" section and to
+            // seed the location-name cache used by the live search dropdown.
+            homeSuggestedFolders = [];
+            try {
+                const root = await API.folders.root();
+                const rootFolders = Array.isArray(root.folders) ? root.folders : [];
+                rootFolders.forEach((f) => { if (f && f.id) folderNameCache.set(f.id, f.name); });
+                homeSuggestedFolders = [...rootFolders].sort((a, b) =>
+                    new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+            } catch { /* folders optional */ }
+
             const flt = filterCollections(allFolders, allFiles);
             filteredFolders = flt.folders;
             filteredFiles = flt.files;
 
-            renderHomeItems(filteredFiles);
+            renderHomeItems(filteredFiles, homeSuggestedFolders);
             setBreadcrumbText('Home');
             await renderHomeWarning();
         } catch {
@@ -789,26 +808,67 @@ const FileManager = (() => {
         }
     }
 
-    function renderHomeItems(files) {
+    // Filter chips shown under the Home search box. They mirror the hidden
+    // #filter-* <select> elements used by applyAdvancedSearch().
+    const HOME_CHIP_DEFS = [
+        { key: 'type', label: 'Type', select: 'filter-type', anyLabel: 'Any', options: ['Folders', 'Documents', 'Spreadsheets', 'PDFs', 'Images', 'Videos', 'Audio'] },
+        { key: 'people', label: 'People', select: 'filter-owner', anyLabel: 'Anyone', options: ['Me', 'Not me'] },
+        { key: 'modified', label: 'Modified', select: 'filter-modified', anyLabel: 'Any time', options: ['Today', 'Last 7 days', 'Last 30 days'] },
+        { key: 'location', label: 'Location', select: 'filter-location', anyLabel: 'Anywhere', options: ['My Drive', 'Shared with me', 'Trash'] },
+    ];
+
+    function homeChipHtml(defs, options = {}) {
+        const withClear = !!options.withClear;
+        const caretSvg = '<span class="gd-chip-caret"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg></span>';
+        const clearSvg = '<span class="gd-chip-clear" role="button" aria-label="Clear filter"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></span>';
+        return defs.map((d) => {
+            const sel = document.getElementById(d.select);
+            const current = sel && sel.value && sel.value !== d.anyLabel ? sel.value : '';
+            const active = current ? ' active' : '';
+            const label = current || d.label;
+            const trailing = (withClear && current) ? clearSvg : caretSvg;
+            const opts = `<button class="gd-chip-option" data-value="">${esc(d.anyLabel)}</button>` +
+                d.options.map((o) => `<button class="gd-chip-option" data-value="${esc(o)}">${esc(o)}</button>`).join('');
+            return `
+                <div class="gd-chip${active}" data-chip="${d.key}" data-select="${d.select}" data-any="${esc(d.anyLabel)}" data-label="${esc(d.label)}">
+                    <button class="gd-chip-btn" type="button">
+                        <span class="gd-chip-text">${esc(label)}</span>
+                        ${trailing}
+                    </button>
+                    <div class="gd-chip-menu hidden">${opts}</div>
+                </div>`;
+        }).join('');
+    }
+
+    function renderHomeItems(files, folders) {
         const homePage = document.getElementById('home-page');
         if (!homePage) return;
 
-        const rawUserName = String(getCurrentUser().username || getCurrentUser().email || '').split('@')[0];
-        const displayName = rawUserName ? `${rawUserName.charAt(0).toUpperCase()}${rawUserName.slice(1)}` : '';
-        const greeting = displayName ? `Welcome to Drive, ${esc(displayName)}` : 'Welcome to Drive';
-        
         const justFiles = files.filter(f => f.mime_type !== 'folder' && !f.isDir);
-        const suggestedFolders = [];
-        const suggestedFiles = [...justFiles].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        const suggestedFiles = [...justFiles].sort((a, b) =>
+            new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+        const suggestedFolders = (Array.isArray(folders) ? folders : []).slice(0, 6);
 
-        const topCards = suggestedFiles.slice(0, 4);
-        const listFiles = suggestedFiles.slice(4);
+        const topCards = suggestedFiles.slice(0, 6);
 
-        let html = '';
+        let html = `
+            <div class="gd-hero">
+                <h1 class="gd-hero-title">Welcome to FreeDrive</h1>
+                <div class="gd-home-search" id="gd-home-search">
+                    <div class="gd-home-search-box">
+                        <span class="gd-home-search-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></span>
+                        <input type="text" id="home-search-input" placeholder="Search in Drive" autocomplete="off">
+                        <button type="button" class="gd-home-search-clear hidden" id="home-search-clear" aria-label="Clear search"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+                    </div>
+                    <div class="gd-home-search-dropdown hidden" id="home-search-dropdown"></div>
+                </div>
+                <div class="gd-home-chips" id="gd-home-chips">${homeChipHtml(HOME_CHIP_DEFS)}</div>
+            </div>
+        `;
 
         if (suggestedFolders.length > 0) {
             html += `
-                <h3 class="gd-home-section-title"><span class="caret">▾</span> Suggested folders</h3>
+                <h3 class="gd-home-section-title collapsible" data-target="gd-suggested-grid"><span class="caret">▾</span> Suggested folders</h3>
                 <div class="gd-suggested-grid" id="gd-suggested-grid"></div>
             `;
         }
@@ -817,28 +877,13 @@ const FileManager = (() => {
             html += `
                 <h3 class="gd-home-section-title collapsible" data-target="gd-home-suggested-cards"><span class="caret">▾</span> Suggested files</h3>
                 <div class="file-grid grid-view" id="gd-home-suggested-cards"></div>
-            `;
-        }
-
-        if (listFiles.length > 0) {
-            html += `
-                <h3 class="gd-home-section-title collapsible" data-target="gd-home-recent-list"><span class="caret">▾</span> Files</h3>
-                <div class="file-list-header gd-home-list-header">
-                    <div class="col-name">Name <span class="sort-arrow">↕</span></div>
-                    <div class="col-owner">Last modified</div>
-                    <div class="col-date">Owner</div>
-                    <div class="col-size">Location</div>
-                    <div class="col-actions">File size</div>
-                </div>
-                <div class="gd-home-recent-list" id="gd-home-recent-list"></div>
+                <div class="gd-home-viewmore"><a href="#/recent" class="gd-viewmore-link">View more</a></div>
             `;
         }
 
         if (!suggestedFiles.length && !suggestedFolders.length) {
             html += `
-                <div style="text-align:center; padding: 40px; color:#5f6368;">
-                    Welcome to your Drive. You don't have any files yet.
-                </div>
+                <div class="gd-home-empty">Welcome to your Drive. You don't have any files yet.</div>
             `;
         }
 
@@ -850,25 +895,17 @@ const FileManager = (() => {
                 const card = document.createElement('div');
                 card.className = 'gd-suggested-card gd-suggested-folder';
                 card.dataset.id = f.id;
-                card.dataset.type = 'file';
+                card.dataset.type = 'folder';
                 card.innerHTML = `
-                    <div class="gd-card-top" style="padding-bottom: 0;">
+                    <div class="gd-card-top">
                         <div class="gd-card-icon"><svg viewBox="0 0 24 24" fill="#5F6368" width="24" height="24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg></div>
                         <div class="gd-card-content">
                             <div class="gd-card-name" title="${esc(f.name)}">${esc(f.name)}</div>
-                            <div class="gd-card-action" style="font-size: 11px;">in My Drive</div>
+                            <div class="gd-card-action">in My Drive</div>
                         </div>
                     </div>
                 `;
-                
-                card.addEventListener('dblclick', () => openFile(f));
-                card.addEventListener('click', (e) => {
-                    if (window.matchMedia('(max-width: 820px)').matches) {
-                        openFile(f);
-                        return;
-                    }
-                    selectSingle(f.id, { type: 'file', data: f, isTrash: false }, card, e);
-                });
+                card.addEventListener('click', () => { window.location.hash = `#/files/${f.id}`; });
                 grid.appendChild(card);
             });
         }
@@ -877,13 +914,6 @@ const FileManager = (() => {
             const gridContainer = document.getElementById('gd-home-suggested-cards');
             topCards.forEach(f => {
                 gridContainer.appendChild(createGridCard(f, 'file', false));
-            });
-        }
-
-        if (listFiles.length > 0) {
-            const listContainer = document.getElementById('gd-home-recent-list');
-            listFiles.forEach(f => {
-                listContainer.appendChild(createRow(f, 'file', false));
             });
         }
 
@@ -897,9 +927,320 @@ const FileManager = (() => {
                 if (caret) caret.textContent = target.classList.contains('hidden') ? '▸' : '▾';
             });
         });
-        
+
+        wireHomeSearchAndChips();
         clearSelection();
     }
+
+    function hideHomeDropdown() {
+        const dd = document.getElementById('home-search-dropdown');
+        dd?.classList.add('hidden');
+        document.querySelectorAll('.gd-chip-menu').forEach(m => m.classList.add('hidden'));
+        document.querySelectorAll('.gd-chip.open').forEach(c => c.classList.remove('open'));
+    }
+
+    function setFilterSelect(selectId, value, anyLabel) {
+        const sel = document.getElementById(selectId);
+        if (!sel) return;
+        if (!value) sel.value = (selectId === 'filter-type') ? '' : (anyLabel || '');
+        else sel.value = value;
+    }
+
+    function updateChipLabel(chip, value) {
+        const textEl = chip.querySelector('.gd-chip-text');
+        if (textEl) textEl.textContent = value || (chip.dataset.label || '');
+        chip.classList.toggle('active', !!value);
+    }
+
+    // Keep chips that target the same underlying <select> visually in sync
+    // (e.g. an inline dropdown chip and the outer Home chip).
+    function syncChipsForSelect(selectId, value) {
+        document.querySelectorAll(`.gd-chip[data-select="${selectId}"]`).forEach((chip) => {
+            updateChipLabel(chip, value);
+        });
+    }
+
+    function bindChip(chip, onSelect) {
+        const btn = chip.querySelector('.gd-chip-btn');
+        const menu = chip.querySelector('.gd-chip-menu');
+        if (!btn || !menu) return;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = menu.classList.contains('hidden');
+            document.querySelectorAll('.gd-chip-menu').forEach(m => m.classList.add('hidden'));
+            document.querySelectorAll('.gd-chip.open').forEach(c => c.classList.remove('open'));
+            if (willOpen) { menu.classList.remove('hidden'); chip.classList.add('open'); }
+        });
+        menu.querySelectorAll('.gd-chip-option').forEach((opt) => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.classList.add('hidden');
+                chip.classList.remove('open');
+                onSelect(opt.dataset.value || '');
+            });
+        });
+    }
+
+    let homeGlobalCloseBound = false;
+    function bindHomeGlobalClose() {
+        if (homeGlobalCloseBound) return;
+        homeGlobalCloseBound = true;
+        document.addEventListener('click', (e) => {
+            const search = document.getElementById('gd-home-search');
+            const chips = document.getElementById('gd-home-chips');
+            const withinSearch = search && search.contains(e.target);
+            const withinChips = chips && chips.contains(e.target);
+            if (!withinSearch) {
+                document.getElementById('home-search-dropdown')?.classList.add('hidden');
+            }
+            if (!withinSearch && !withinChips) {
+                document.querySelectorAll('.gd-chip-menu').forEach(m => m.classList.add('hidden'));
+                document.querySelectorAll('.gd-chip.open').forEach(c => c.classList.remove('open'));
+            }
+        });
+    }
+
+    function wireHomeSearchAndChips() {
+        const input = document.getElementById('home-search-input');
+        const clearBtn = document.getElementById('home-search-clear');
+        const chipsWrap = document.getElementById('gd-home-chips');
+
+        if (chipsWrap) {
+            chipsWrap.querySelectorAll('.gd-chip').forEach((chip) => {
+                bindChip(chip, (value) => {
+                    setFilterSelect(chip.dataset.select, value, chip.dataset.any);
+                    syncChipsForSelect(chip.dataset.select, value);
+                    hideHomeDropdown();
+                    applyAdvancedSearch();
+                });
+            });
+        }
+
+        if (input) {
+            input.addEventListener('input', () => {
+                const q = input.value.trim();
+                clearBtn?.classList.toggle('hidden', !q);
+                clearTimeout(homeSearchDebounce);
+                if (!q) { hideHomeDropdown(); return; }
+                homeSearchDebounce = setTimeout(() => renderHomeSearchDropdown(q), 220);
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    const q = input.value.trim();
+                    if (q) homeAllResults(q);
+                } else if (e.key === 'Escape') {
+                    hideHomeDropdown();
+                }
+            });
+            input.addEventListener('focus', () => {
+                const q = input.value.trim();
+                if (q) renderHomeSearchDropdown(q);
+            });
+        }
+
+        clearBtn?.addEventListener('click', () => {
+            if (input) { input.value = ''; input.focus(); }
+            clearBtn.classList.add('hidden');
+            hideHomeDropdown();
+        });
+
+        bindHomeGlobalClose();
+    }
+
+    function highlightMatch(name, qLower) {
+        const raw = String(name || '');
+        const idx = raw.toLowerCase().indexOf(qLower);
+        if (idx < 0 || !qLower) return esc(raw);
+        return `${esc(raw.slice(0, idx))}<strong>${esc(raw.slice(idx, idx + qLower.length))}</strong>${esc(raw.slice(idx + qLower.length))}`;
+    }
+
+    function resolveHomeLocationName(folderId) {
+        if (!folderId) return 'My Drive';
+        return folderNameCache.get(folderId) || '';
+    }
+
+    async function resolveUnknownLocations(items, dropdown) {
+        const missing = [...new Set(items
+            .map((f) => f.folder_id)
+            .filter((id) => id && !folderNameCache.has(id)))];
+        for (const id of missing) {
+            try {
+                const data = await API.folders.breadcrumb(id);
+                const crumbs = data.breadcrumb || [];
+                const name = crumbs.length ? crumbs[crumbs.length - 1].name : 'My Drive';
+                folderNameCache.set(id, name);
+                dropdown.querySelectorAll(`.gd-sr-row[data-folder="${id}"] .gd-sr-loc-text`).forEach((el) => {
+                    el.textContent = name;
+                });
+            } catch {
+                folderNameCache.set(id, 'My Drive');
+            }
+        }
+    }
+
+    // Apply the Type/People/Modified filter selects to a live search list.
+    function applyHomeInlineFilters(list) {
+        const me = getCurrentUser();
+        const type = document.getElementById('filter-type')?.value || '';
+        const owner = document.getElementById('filter-owner')?.value || 'Anyone';
+        const modified = document.getElementById('filter-modified')?.value || 'Any time';
+
+        let out = [...list];
+        if (type && type !== 'Any') {
+            out = out.filter((f) => {
+                const g = getMimeGroup(f.mime_type, f.mime_type === 'folder' ? 'folder' : 'file', f.name);
+                if (type === 'Folders') return f.mime_type === 'folder';
+                if (type === 'Documents') return g === 'document' || g === 'text';
+                if (type === 'Spreadsheets') return g === 'sheet';
+                if (type === 'PDFs') return g === 'pdf';
+                if (type === 'Images') return g === 'image';
+                if (type === 'Videos') return g === 'video';
+                if (type === 'Audio') return g === 'audio';
+                return true;
+            });
+        }
+        if (owner === 'Me') out = out.filter((f) => f.owner_id === me.id);
+        else if (owner === 'Not me') out = out.filter((f) => f.owner_id !== me.id);
+        if (modified !== 'Any time') {
+            const now = Date.now();
+            out = out.filter((f) => {
+                const diffDays = (now - new Date(f.updated_at || f.created_at).getTime()) / (1000 * 60 * 60 * 24);
+                if (modified === 'Today') return diffDays < 1;
+                if (modified === 'Last 7 days') return diffDays <= 7;
+                if (modified === 'Last 30 days') return diffDays <= 30;
+                return true;
+            });
+        }
+        return out;
+    }
+
+    async function renderHomeSearchDropdown(query) {
+        const dropdown = document.getElementById('home-search-dropdown');
+        if (!dropdown) return;
+        const q = String(query || '').trim();
+        if (!q) { hideHomeDropdown(); return; }
+
+        dropdown.classList.remove('hidden');
+
+        let list = [];
+        try {
+            const data = await API.files.list({ search: q, page_size: '20' });
+            list = data.files || [];
+        } catch { list = []; }
+
+        list = applyHomeInlineFilters(list);
+        const top = list.slice(0, 5);
+        const qLower = q.toLowerCase();
+
+        const chipsHtml = homeChipHtml(HOME_CHIP_DEFS.filter((d) => d.key !== 'location'));
+        const folderIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+
+        let rowsHtml;
+        if (!top.length) {
+            rowsHtml = '<div class="gd-sr-empty">No results found</div>';
+        } else {
+            rowsHtml = top.map((f) => {
+                const type = (f.mime_type === 'folder') ? 'folder' : 'file';
+                const loc = resolveHomeLocationName(f.folder_id);
+                return `
+                    <button type="button" class="gd-sr-row" data-id="${esc(f.id)}" data-type="${type}" data-folder="${esc(f.folder_id || '')}">
+                        <span class="gd-sr-icon">${getIcon(type, f.mime_type, f.name)}</span>
+                        <span class="gd-sr-main">
+                            <span class="gd-sr-name">${highlightMatch(f.name, qLower)}</span>
+                            <span class="gd-sr-owner">${esc(itemOwner(f))}</span>
+                        </span>
+                        <span class="gd-sr-date">${esc(Components.formatDate(f.updated_at || f.created_at))}</span>
+                        <span class="gd-sr-loc">${folderIcon}<span class="gd-sr-loc-text">${esc(loc || 'My Drive')}</span></span>
+                    </button>`;
+            }).join('');
+        }
+
+        dropdown.innerHTML = `
+            <div class="gd-sr-chips">${chipsHtml}</div>
+            <div class="gd-sr-list">${rowsHtml}</div>
+            <div class="gd-sr-footer">
+                <a href="#" class="gd-sr-advanced">Advanced search</a>
+                <a href="#" class="gd-sr-all">${'\u2190'} All results</a>
+            </div>
+        `;
+
+        dropdown.querySelectorAll('.gd-chip').forEach((chip) => {
+            bindChip(chip, (value) => {
+                setFilterSelect(chip.dataset.select, value, chip.dataset.any);
+                syncChipsForSelect(chip.dataset.select, value);
+                renderHomeSearchDropdown(q);
+            });
+        });
+
+        dropdown.querySelectorAll('.gd-sr-row').forEach((row) => {
+            row.addEventListener('click', () => {
+                const id = row.dataset.id;
+                if (row.dataset.type === 'folder') { window.location.hash = `#/files/${id}`; hideHomeDropdown(); return; }
+                const f = top.find((x) => x.id === id);
+                if (f) openFile(f);
+                hideHomeDropdown();
+            });
+        });
+
+        dropdown.querySelector('.gd-sr-advanced')?.addEventListener('click', (e) => { e.preventDefault(); homeOpenAdvancedSearch(q); });
+        dropdown.querySelector('.gd-sr-all')?.addEventListener('click', (e) => { e.preventDefault(); homeAllResults(q); });
+
+        resolveUnknownLocations(top, dropdown);
+    }
+
+    function homeAllResults(query) {
+        hideHomeDropdown();
+        const topInput = document.getElementById('search-input');
+        if (topInput) topInput.value = query;
+        quickSearch(query);
+    }
+
+    function homeOpenAdvancedSearch(query) {
+        hideHomeDropdown();
+        const topInput = document.getElementById('search-input');
+        if (topInput) topInput.value = query;
+        // Reveal the topbar search + advanced filter panel (hidden on Home).
+        document.getElementById('app')?.classList.remove('home-active');
+        document.getElementById('search-filter-panel')?.classList.remove('hidden');
+        topInput?.focus();
+    }
+
+    // Google Drive-style filter chip bar shown above the search results.
+    function renderSearchChipBar() {
+        const bar = document.getElementById('md3-chip-bar');
+        if (!bar) return;
+
+        const anyActive = HOME_CHIP_DEFS.some((d) => {
+            const s = document.getElementById(d.select);
+            return s && s.value && s.value !== d.anyLabel;
+        });
+        bar.innerHTML = homeChipHtml(HOME_CHIP_DEFS, { withClear: true })
+            + (anyActive ? '<button type="button" class="gd-chip-clearall">Clear filters</button>' : '');
+
+        bar.querySelectorAll('.gd-chip').forEach((chip) => {
+            const clearEl = chip.querySelector('.gd-chip-clear');
+            if (clearEl) {
+                clearEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    setFilterSelect(chip.dataset.select, '', chip.dataset.any);
+                    applyAdvancedSearch();
+                });
+            }
+            bindChip(chip, (value) => {
+                setFilterSelect(chip.dataset.select, value, chip.dataset.any);
+                syncChipsForSelect(chip.dataset.select, value);
+                applyAdvancedSearch();
+            });
+        });
+
+        bar.querySelector('.gd-chip-clearall')?.addEventListener('click', () => {
+            HOME_CHIP_DEFS.forEach((d) => setFilterSelect(d.select, '', d.anyLabel));
+            applyAdvancedSearch();
+        });
+
+        bar.classList.remove('hidden');
+    }
+
     async function loadRecent() {
         currentPage = 'recent';
         currentFolderId = null;
@@ -1128,6 +1469,7 @@ const FileManager = (() => {
             filteredFolders = [];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles);
+            renderSearchChipBar();
             setBreadcrumbText(`Search: ${query}`);
         } catch {
             Components.toast('Search failed', 'error');
@@ -1137,14 +1479,28 @@ const FileManager = (() => {
     }
 
     async function applyAdvancedSearch() {
-        const query = document.getElementById('search-input')?.value?.trim() || '';
+        const query = (document.getElementById('search-input')?.value?.trim()
+            || document.getElementById('home-search-input')?.value?.trim()
+            || '');
         const type = document.getElementById('filter-type')?.value || '';
         const owner = document.getElementById('filter-owner')?.value || 'Anyone';
         const modified = document.getElementById('filter-modified')?.value || 'Any time';
         const location = document.getElementById('filter-location')?.value || 'Anywhere';
 
+        currentPage = 'search';
         showFilesView();
         showLoading(true);
+
+        const withinModified = (item) => {
+            if (modified === 'Any time') return true;
+            const now = Date.now();
+            const t = new Date(item.updated_at || item.created_at).getTime();
+            const diffDays = (now - t) / (1000 * 60 * 60 * 24);
+            if (modified === 'Today') return diffDays < 1;
+            if (modified === 'Last 7 days') return diffDays <= 7;
+            if (modified === 'Last 30 days') return diffDays <= 30;
+            return true;
+        };
 
         try {
             const data = await API.files.list({ search: query, page_size: '500' });
@@ -1171,17 +1527,7 @@ const FileManager = (() => {
                 list = list.filter((f) => f.owner_id !== me.id);
             }
 
-            if (modified !== 'Any time') {
-                const now = Date.now();
-                list = list.filter((f) => {
-                    const t = new Date(f.updated_at || f.created_at).getTime();
-                    const diffDays = (now - t) / (1000 * 60 * 60 * 24);
-                    if (modified === 'Today') return diffDays < 1;
-                    if (modified === 'Last 7 days') return diffDays <= 7;
-                    if (modified === 'Last 30 days') return diffDays <= 30;
-                    return true;
-                });
-            }
+            list = list.filter(withinModified);
 
             if (location === 'Trash') {
                 const trashData = await API.files.trash();
@@ -1197,11 +1543,30 @@ const FileManager = (() => {
                 list = list.filter((f) => sharedIds.has(f.id));
             }
 
-            allFolders = [];
+            // Include folders when the type filter allows them (Any or Folders)
+            // and the location isn't file-only (Shared with me / Trash).
+            let folderList = [];
+            const includeFolders = (type === '' || type === 'Any' || type === 'Folders')
+                && location !== 'Shared with me' && location !== 'Trash';
+            if (includeFolders) {
+                try {
+                    const fdata = await API.folders.all(query);
+                    folderList = fdata.folders || [];
+                    if (owner === 'Me') {
+                        folderList = folderList.filter((f) => f.owner_id === me.id);
+                    } else if (owner === 'Not me') {
+                        folderList = [];
+                    }
+                    folderList = folderList.filter(withinModified);
+                } catch { folderList = []; }
+            }
+
+            allFolders = folderList;
             allFiles = list;
-            filteredFolders = [];
+            filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles);
+            renderSearchChipBar();
             setBreadcrumbText('Advanced Search');
         } catch {
             Components.toast('Advanced search failed', 'error');
@@ -1374,7 +1739,22 @@ const FileManager = (() => {
             grid.classList.add('grid-view');
             header.classList.add('hidden');
             let gi = 0;
-            filteredFolders.forEach((f) => { const el = createGridCard(f, 'folder', isTrash); el.style.setProperty('--fd-i', gi++); grid.appendChild(el); });
+            if (filteredFolders.length) {
+                const fh = document.createElement('div');
+                fh.className = 'fd-grid-section-title';
+                fh.textContent = 'Folders';
+                grid.appendChild(fh);
+                const fw = document.createElement('div');
+                fw.className = 'fd-folder-chips';
+                filteredFolders.forEach((f) => fw.appendChild(createGridCard(f, 'folder', isTrash)));
+                grid.appendChild(fw);
+                if (filteredFiles.length) {
+                    const dh = document.createElement('div');
+                    dh.className = 'fd-grid-section-title';
+                    dh.textContent = 'Files';
+                    grid.appendChild(dh);
+                }
+            }
             filteredFiles.forEach((f)   => { const el = createGridCard(f, 'file',   isTrash); el.style.setProperty('--fd-i', gi++); grid.appendChild(el); });
         } else {
             grid.classList.remove('grid-view');
@@ -1432,11 +1812,16 @@ const FileManager = (() => {
                 <span class="file-label">${esc(item.name)}</span>
                 ${lockBadge}
             </div>
-            <div class="file-cell cell-owner ${isHomeSuggested ? '' : 'owner-pill'}">${esc(isHomeSuggested ? modifiedText : owner)}</div>
+            <div class="file-cell cell-owner">${isHomeSuggested
+                ? esc(modifiedText)
+                : `<span class="owner-avatar" style="background-color:hsl(${(String(owner).length * 137) % 360},60%,50%)">${esc(Components.initials(owner))}</span><span class="owner-name">${esc(owner)}</span>`}</div>
             <div class="file-cell cell-date">${esc(isHomeSuggested ? owner : modifiedText)}</div>
             <div class="file-cell cell-size">${isHomeSuggested ? `<a class="home-location-link" href="#/files${item.folder_id ? `/${item.folder_id}` : ''}">${esc(locationText)}</a>` : sizeText}</div>
             ${isHomeSuggested
-                ? `<div class="file-cell file-actions home-size-cell">${esc(sizeText)}</div>`
+                ? `<div class="file-cell file-actions home-size-cell">
+                    <span class="home-size-text">${esc(sizeText)}</span>
+                    <button class="btn-icon action-more" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
+                </div>`
                 : `<div class="file-cell file-actions">
                     <button class="btn-icon action-share" title="Share"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg></button>
                     <button class="btn-icon action-download" title="Download"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
@@ -1457,20 +1842,37 @@ const FileManager = (() => {
         card.dataset.type = type;
         card.draggable = true;
 
-        const sizeText = type === 'folder' ? 'Folder' : Components.formatSize(item.size);
-        const lockBadge = '';
-        card.innerHTML = `
-            <div class="card-thumb" id="thumb-${item.id}">${getIcon(type, item.mime_type, item.name)}</div>
-            <div class="card-meta">
-                <div class="card-name">${esc(item.name)} ${lockBadge}</div>
-                <div class="card-size">${sizeText}</div>
-            </div>
+        const overlayHtml = `
             <div class="card-overlay">
                 <input type="checkbox" class="file-checkbox" aria-label="Select">
-                <div class="file-actions" style="opacity:1;">
-                    <button class="btn-icon action-share" title="Share"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg></button>
-                    <button class="btn-icon action-download" title="Download"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
-                    <button class="btn-icon action-more" title="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
+            </div>
+            <button class="btn-icon action-more card-more-btn" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>`;
+
+        if (type === 'folder') {
+            card.innerHTML = `
+                <span class="folder-chip-icon">${getIcon('folder', item.mime_type, item.name)}</span>
+                <span class="folder-chip-name" title="${esc(item.name)}">${esc(item.name)}</span>
+                <button class="btn-icon action-more card-more-btn" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
+            `;
+            bindItemRowEvents(card, item, type, isTrash);
+            setupDropTarget(card, item, type);
+            return card;
+        }
+
+        const me = getCurrentUser();
+        const edited = item.updated_at && item.created_at
+            && new Date(item.updated_at).getTime() > new Date(item.created_at).getTime();
+        const who = (item.owner_id && me.id && item.owner_id === me.id) ? 'You' : (itemOwner(item) || 'You');
+        const reason = `${who} ${edited ? 'edited' : 'created'} \u00b7 ${Components.formatDate(item.updated_at || item.created_at)}`;
+
+        card.innerHTML = `
+            <div class="card-thumb" id="thumb-${item.id}">${getIcon('file', item.mime_type, item.name)}</div>
+            ${overlayHtml}
+            <div class="card-meta">
+                <span class="card-type-icon">${getIcon('file', item.mime_type, item.name)}</span>
+                <div class="card-meta-text">
+                    <div class="card-name" title="${esc(item.name)}">${esc(item.name)}</div>
+                    <div class="card-sub">${esc(reason)}</div>
                 </div>
             </div>
         `;
@@ -1478,7 +1880,7 @@ const FileManager = (() => {
         bindItemRowEvents(card, item, type, isTrash);
         setupDropTarget(card, item, type);
 
-        if (type === 'file' && getMimeGroup(item.mime_type, type, item.name) === 'image') {
+        if (getMimeGroup(item.mime_type, type, item.name) === 'image') {
             renderImageThumb(item, card.querySelector('.card-thumb'));
         }
 
@@ -1743,6 +2145,11 @@ const FileManager = (() => {
             actionMap.restore.textContent = TrashCopy.restore;
             setActionLabel(actionMap.restore, TrashCopy.restore);
         }
+        if (actionMap.info) {
+            const infoLabel = (target && target.type === 'folder') ? 'Folder information' : 'File information';
+            actionMap.info.textContent = infoLabel;
+            setActionLabel(actionMap.info, infoLabel);
+        }
 
         if (inTrash) {
             ['open', 'restore', 'download', 'info', 'delete'].forEach((action) => {
@@ -1823,11 +2230,6 @@ const FileManager = (() => {
                 selectRange(selectionAnchor, id);
             }
             syncSelectionStyles();
-            if (selectedItems.size === 1) {
-                openDetailsPanel(payload);
-            } else {
-                hideDetailsPanel();
-            }
             return;
         }
 
@@ -1843,7 +2245,9 @@ const FileManager = (() => {
         selectedPrimary = payload;
         selectionAnchor = id;
         syncSelectionStyles();
-        openDetailsPanel(payload);
+        if (!document.getElementById('details-panel')?.classList.contains('hidden')) {
+            openDetailsPanel(payload);
+        }
     }
 
     function toggleSelection(id, payload, checked, el) {
@@ -1859,29 +2263,26 @@ const FileManager = (() => {
             }
         }
 
-        if (selectedItems.size === 1 && selectedPrimary) {
-            openDetailsPanel(selectedPrimary);
-        }
-
-        if (!selectedItems.size) {
-            hideDetailsPanel();
-        }
-
         syncSelectionStyles();
     }
 
     function updateSelectionUI() {
         const bar = document.getElementById('selection-bar');
         const count = document.getElementById('selection-count');
+        const chipBar = document.getElementById('md3-chip-bar');
         if (!bar || !count) return;
 
         if (!selectedItems.size) {
             bar.classList.add('hidden');
+            if (currentPage === 'files' || currentPage === 'search') {
+                chipBar?.classList.remove('hidden');
+            }
             return;
         }
 
         count.textContent = `${selectedItems.size} ${selectedItems.size === 1 ? 'item' : 'items'} selected`;
         syncTrashActionLabels();
+        chipBar?.classList.add('hidden');
         bar.classList.remove('hidden');
     }
 
@@ -1921,7 +2322,7 @@ const FileManager = (() => {
                 await renamePrompt(type, data);
                 return;
             case 'info':
-                showFileInfo(type, data);
+                openDetailsPanel({ type, data, isTrash });
                 return;
             case 'download':
                 await downloadPayloadAsZip({ type, data });
@@ -2379,6 +2780,7 @@ const FileManager = (() => {
         const panel = document.getElementById('notifications-panel');
         if (!panel) return;
         document.getElementById('details-panel')?.classList.add('hidden');
+        document.querySelector('.app')?.classList.remove('details-open');
         panel.classList.toggle('hidden');
         if (!panel.classList.contains('hidden')) {
             renderNotifications();
@@ -2619,7 +3021,7 @@ const FileManager = (() => {
     function getIconLarge(type, mime, name = '') {
         const group = getMimeGroup(mime, type, name);
         const colors = {
-            folder:   ['#fbbc04', '#f4b400'],
+            folder:   ['#5f6368', '#5f6368'],
             image:    ['#34a853', '#2d9248'],
             video:    ['#ea4335', '#d33427'],
             audio:    ['#a142f4', '#8e35d9'],
@@ -2631,7 +3033,7 @@ const FileManager = (() => {
         const c = colors[group] || colors.document;
 
         const svgs = {
-            folder: `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M10 4H4c-1.1 0-2 .9-2 2v2h20V8c0-1.1-.9-2-2-2h-8l-2-2z" fill="${c[0]}"/><path d="M22 10H2v8c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-8z" fill="${c[1]}"/></svg>`,
+            folder: `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" fill="${c[0]}"/></svg>`,
             image:  `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5A1.5 1.5 0 1 1 8.5 10a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z" fill="${c[0]}"/></svg>`,
             video:  `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z" fill="${c[0]}"/></svg>`,
             audio:  `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z" fill="${c[0]}"/></svg>`,
@@ -2679,11 +3081,12 @@ const FileManager = (() => {
     }
 
     async function openDetailsPanel(payload) {
-        if (!payload || selectedItems.size !== 1) return;
+        if (!payload) return;
         const panel = document.getElementById('details-panel');
         if (!panel) return;
         document.getElementById('notifications-panel')?.classList.add('hidden');
         panel.classList.remove('hidden');
+        document.querySelector('.app')?.classList.add('details-open');
 
         const { data, type } = payload;
         const preview = document.getElementById('details-preview');
@@ -2748,6 +3151,7 @@ const FileManager = (() => {
 
     function hideDetailsPanel() {
         document.getElementById('details-panel')?.classList.add('hidden');
+        document.querySelector('.app')?.classList.remove('details-open');
     }
 
     function renderAccessAvatars(itemId, itemType) {
@@ -5358,6 +5762,23 @@ const FileManager = (() => {
         }
     }
 
+    function formatStorageSize(bytes) {
+        const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        let value = Math.max(0, Number(bytes) || 0);
+        let i = 0;
+        while (value >= 1024 && i < units.length - 1) {
+            value /= 1024;
+            i++;
+        }
+        let str;
+        if (i === 0 || value >= 100) {
+            str = String(Math.round(value));
+        } else {
+            str = String(Math.round(value * 10) / 10);
+        }
+        return `${str} ${units[i]}`;
+    }
+
     async function updateStorageInfo() {
         try {
             const me = getCurrentUser();
@@ -5366,16 +5787,13 @@ const FileManager = (() => {
             const rawUsed = Number(s.used_bytes || 0);
             const rawTotal = Number(s.total_bytes || 1);
 
-            // Display realistic storage based on actual disk capacity
-            const usedGB = (rawUsed / (1024 * 1024 * 1024)).toFixed(1);
-            const totalGB = (rawTotal / (1024 * 1024 * 1024)).toFixed(1);
-            let pct = Math.round((Number(usedGB) / Number(totalGB)) * 100);
-            if (pct > 100) pct = 100;
+            const pct = rawTotal > 0 ? Math.min(100, Math.round((rawUsed / rawTotal) * 100)) : 0;
 
             const barFill = document.getElementById('storage-bar-fill');
             barFill.style.width = `${pct}%`;
             barFill.style.background = pct >= 90 ? '#d93025' : '#1a73e8';
-            document.getElementById('storage-text').textContent = `${usedGB} GB of ${totalGB} GB used`;
+            document.getElementById('storage-text').textContent =
+                `${formatStorageSize(rawUsed)} of ${formatStorageSize(rawTotal)} used`;
             document.getElementById('storage-percent').textContent = `${pct}% full`;
 
             if (pct >= 80) {

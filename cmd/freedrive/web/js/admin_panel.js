@@ -1,6 +1,7 @@
 const AdminPanel = (() => {
     const LOCAL_KEY = 'fd_admin_panel_state_v1';
     const INVITE_KEY = 'fd_admin_invites_local_v1';
+    const ALLOWED_TYPES_VERSION = 1;
 
     const DEFAULT_SETTINGS = {
         general: {
@@ -10,7 +11,31 @@ const AdminPanel = (() => {
             default_quota_gb: 10,
             registration: 'invite',
             max_upload_mb: 512,
-            allowed_types: ['png', 'jpg', 'jpeg', 'gif', 'pdf', 'txt', 'md', 'csv', 'zip', 'mp4', 'mp3'],
+            allowed_types: [
+                // Obrazy
+                'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tiff', 'tif', 'ico', 'heic', 'heif', 'avif', 'raw',
+                // Dokumenty
+                'pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'tex', 'epub', 'mobi', 'pages',
+                // Arkusze
+                'xls', 'xlsx', 'ods', 'csv', 'tsv', 'numbers',
+                // Prezentacje
+                'ppt', 'pptx', 'odp', 'key',
+                // Archiwa
+                'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz', 'iso',
+                // Audio
+                'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'opus', 'aiff',
+                // Wideo
+                'mp4', 'mkv', 'mov', 'avi', 'wmv', 'flv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp',
+                // Kod / dane
+                'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml', 'yaml', 'yml',
+                'py', 'java', 'c', 'cpp', 'h', 'cs', 'go', 'rb', 'php', 'sh', 'sql', 'rs', 'swift', 'kt',
+                // Design
+                'psd', 'ai', 'eps', 'xd', 'fig', 'sketch',
+                // Fonty
+                'ttf', 'otf', 'woff', 'woff2',
+                // Instalatory / binaria
+                'apk', 'exe', 'dmg', 'deb', 'rpm', 'msi', 'bin',
+            ],
         },
         email: {
             smtp_server: '',
@@ -224,6 +249,24 @@ const AdminPanel = (() => {
         }
     }
 
+    function migrateAllowedTypes() {
+        if (!state.settings.general) state.settings.general = {};
+        const gen = state.settings.general;
+        if (gen.allowed_types_version === ALLOWED_TYPES_VERSION) return false;
+        gen.allowed_types = clone(DEFAULT_SETTINGS.general.allowed_types);
+        gen.allowed_types_version = ALLOWED_TYPES_VERSION;
+        state.settingsDraft = clone(state.settings);
+        return true;
+    }
+
+    function persistSettingsToBackend() {
+        fetch('/api/v1/admin/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
+            body: JSON.stringify(state.settings),
+        }).catch(() => {});
+    }
+
     function deepMerge(target, source) {
         const out = { ...target };
         Object.keys(source || {}).forEach((k) => {
@@ -327,7 +370,7 @@ const AdminPanel = (() => {
 
 
     const AdminFileIcons = {
-        folder: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#fbbc04"><path d="M10 4H4c-1.1 0-2 .9-2 2v2h20V8c0-1.1-.9-2-2-2h-8l-2-2z"/><path d="M22 10H2v8c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-8z" fill="#f4b400"/></svg>',
+        folder: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>',
         image: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#34a853"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5A1.5 1.5 0 1 1 8.5 8a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z"/></svg>',
         video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#ea4335"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z"/></svg>',
         audio: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#a142f4"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z"/></svg>',
@@ -1667,6 +1710,7 @@ const AdminPanel = (() => {
         state.section = normalizeSection(section);
         if (!state.initialized) {
             loadLocalState();
+            if (migrateAllowedTypes()) saveLocalState();
             state.initialized = true;
             // Try loading settings from backend (non-blocking)
             fetch('/api/v1/admin/settings', {
@@ -1675,6 +1719,11 @@ const AdminPanel = (() => {
                 if (data && typeof data === 'object' && Object.keys(data).length > 0) {
                     state.settings = deepMerge(clone(DEFAULT_SETTINGS), data);
                     state.settingsDraft = clone(state.settings);
+                }
+                if (migrateAllowedTypes()) {
+                    saveLocalState();
+                    persistSettingsToBackend();
+                    if (state.section === 'settings') renderSection();
                 }
             }).catch(() => {});
         }

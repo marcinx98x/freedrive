@@ -189,7 +189,7 @@ body {
   border: none !important;
   border-radius: 0 !important;
   background: transparent !important;
-  padding: 0 !important;
+  padding: 8px 16px 4px 16px !important;
 }
 
 .app:not(.admin-mode) .storage-bar {
@@ -1264,6 +1264,17 @@ body {
   opacity: 1;
 }
 
+/* List view: hide checkboxes (selection still works via row click) */
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row .file-checkbox {
+  display: none !important;
+}
+
+/* List view: keep file icon visible on hover/select (no checkbox to reveal) */
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover .file-icon,
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row.selected .file-icon {
+  opacity: 1;
+}
+
 .app:not(.admin-mode) .enc-badge svg,
 .app:not(.admin-mode) .enc-badge-grid svg {
   width: 13px !important;
@@ -1274,6 +1285,17 @@ body {
   width: 340px !important;
   border-left: 1px solid #e0e3e7 !important;
   background: #fff !important;
+}
+
+/* Otwarty panel szczegolow zwezа glowna tresc (topbar zostaje pelnej szerokosci) */
+.app:not(.admin-mode) .content-frame {
+  transition: margin-right 280ms cubic-bezier(.2, 0, 0, 1);
+}
+.app:not(.admin-mode).details-open .content-frame {
+  margin-right: 340px !important;
+}
+@media (max-width: 1100px) {
+  .app:not(.admin-mode).details-open .content-frame { margin-right: 0 !important; }
 }
 
 .app:not(.admin-mode) .details-panel .panel-header {
@@ -1356,6 +1378,21 @@ body {
   justify-content: flex-end;
   color: #5f6368 !important;
   font-size: 12px !important;
+}
+
+/* Home list rows: show file size by default, reveal 3-dots on row hover */
+.app:not(.admin-mode) .file-row .home-size-cell {
+  opacity: 1;
+  gap: 4px;
+}
+.app:not(.admin-mode) .file-row .home-size-cell .action-more {
+  display: none;
+}
+.app:not(.admin-mode) .file-row:hover .home-size-cell .home-size-text {
+  display: none;
+}
+.app:not(.admin-mode) .file-row:hover .home-size-cell .action-more {
+  display: inline-flex;
 }
 
 .app:not(.admin-mode) .gd-home-recent-list .file-row .home-location-link {
@@ -1507,4 +1544,586 @@ body {
   .app:not(.admin-mode) .file-row .file-actions {
     display: none !important;
   }
+}
+
+/* ============================================================
+   Home tab — Google Drive "Welcome" layout
+   ============================================================ */
+
+/* Hide the topbar search when the Home tab is active */
+.app.home-active .search-wrap {
+  display: none !important;
+}
+
+.app:not(.admin-mode) .gd-hero {
+  max-width: 860px;
+  margin: 8px auto 28px;
+  padding: 16px 24px 0;
+  text-align: center;
+}
+
+.app:not(.admin-mode) .gd-hero-title {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 400;
+  color: #202124;
+  margin: 12px 0 24px;
+}
+
+/* Centered search box */
+.app:not(.admin-mode) .gd-home-search {
+  position: relative;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.app:not(.admin-mode) .gd-home-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 8px 0 16px;
+  background: #e9eef6;
+  border: 1px solid transparent;
+  border-radius: 26px;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.app:not(.admin-mode) .gd-home-search:focus-within .gd-home-search-box {
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(32, 33, 36, 0.28);
+  border-color: transparent;
+}
+
+.app:not(.admin-mode) .gd-home-search-icon {
+  display: flex;
+  align-items: center;
+  color: #5f6368;
+  flex: 0 0 auto;
+}
+
+.app:not(.admin-mode) .gd-home-search-box input {
+  flex: 1 1 auto;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  color: #202124;
+}
+
+.app:not(.admin-mode) .gd-home-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #5f6368;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.app:not(.admin-mode) .gd-home-search-clear:hover {
+  background: rgba(60, 64, 67, 0.08);
+}
+
+/* Chips (shared: outer Home row + inline dropdown) */
+.app:not(.admin-mode) .gd-home-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.app:not(.admin-mode) .gd-chip {
+  position: relative;
+}
+
+.app:not(.admin-mode) .gd-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 8px 0 14px;
+  background: #fff;
+  border: 1px solid #747775;
+  border-radius: 8px;
+  color: #444746;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app:not(.admin-mode) .gd-chip-btn:hover {
+  background: #f6f9fe;
+}
+
+.app:not(.admin-mode) .gd-chip.active .gd-chip-btn {
+  background: #c2e7ff;
+  border-color: transparent;
+  color: #001d35;
+}
+
+.app:not(.admin-mode) .gd-chip-caret {
+  display: inline-flex;
+  align-items: center;
+}
+
+.app:not(.admin-mode) .gd-chip-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px 0;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.app:not(.admin-mode) .gd-chip-menu.hidden {
+  display: none;
+}
+
+.app:not(.admin-mode) .gd-chip-option {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 14px;
+  color: #202124;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app:not(.admin-mode) .gd-chip-option:hover {
+  background: #f1f3f4;
+}
+
+/* Live search dropdown */
+.app:not(.admin-mode) .gd-home-search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 55;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(32, 33, 36, 0.28);
+  text-align: left;
+}
+
+.app:not(.admin-mode) .gd-home-search-dropdown.hidden {
+  display: none;
+}
+
+.app:not(.admin-mode) .gd-sr-chips {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #ebedf0;
+}
+
+.app:not(.admin-mode) .gd-sr-list {
+  padding: 4px 0;
+}
+
+.app:not(.admin-mode) .gd-sr-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.app:not(.admin-mode) .gd-sr-row:hover {
+  background: #f1f3f4;
+}
+
+.app:not(.admin-mode) .gd-sr-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.app:not(.admin-mode) .gd-sr-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.app:not(.admin-mode) .gd-sr-name {
+  font-size: 14px;
+  color: #202124;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app:not(.admin-mode) .gd-sr-name strong {
+  font-weight: 700;
+}
+
+.app:not(.admin-mode) .gd-sr-owner {
+  font-size: 12px;
+  color: #5f6368;
+}
+
+.app:not(.admin-mode) .gd-sr-date {
+  flex: 0 0 auto;
+  width: 92px;
+  font-size: 13px;
+  color: #5f6368;
+  text-align: right;
+}
+
+.app:not(.admin-mode) .gd-sr-loc {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 150px;
+  font-size: 13px;
+  color: #5f6368;
+}
+
+.app:not(.admin-mode) .gd-sr-loc-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app:not(.admin-mode) .gd-sr-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: #5f6368;
+  font-size: 14px;
+}
+
+.app:not(.admin-mode) .gd-sr-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid #ebedf0;
+}
+
+.app:not(.admin-mode) .gd-sr-footer a {
+  font-size: 14px;
+  color: #1a73e8;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.app:not(.admin-mode) .gd-sr-footer a:hover {
+  text-decoration: underline;
+}
+
+/* Suggested folders grid */
+.app:not(.admin-mode) .gd-suggested-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+
+.app:not(.admin-mode) .gd-suggested-card {
+  border: 1px solid #dadce0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+
+.app:not(.admin-mode) .gd-suggested-card:hover {
+  background: #f8fafd;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.18);
+}
+
+.app:not(.admin-mode) .gd-suggested-card .gd-card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.app:not(.admin-mode) .gd-suggested-card .gd-card-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.app:not(.admin-mode) .gd-suggested-card .gd-card-content {
+  min-width: 0;
+}
+
+.app:not(.admin-mode) .gd-suggested-card .gd-card-name {
+  font-size: 14px;
+  color: #202124;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app:not(.admin-mode) .gd-suggested-card .gd-card-action {
+  font-size: 12px;
+  color: #5f6368;
+  margin-top: 2px;
+}
+
+/* View more link + empty state */
+.app:not(.admin-mode) .gd-home-viewmore {
+  padding: 6px 0 16px;
+}
+
+.app:not(.admin-mode) .gd-viewmore-link {
+  font-size: 14px;
+  color: #1a73e8;
+  text-decoration: none;
+}
+
+.app:not(.admin-mode) .gd-viewmore-link:hover {
+  text-decoration: underline;
+}
+
+.app:not(.admin-mode) .gd-home-empty {
+  text-align: center;
+  padding: 40px;
+  color: #5f6368;
+}
+
+/* Search-results filter chip bar (reuses .gd-chip component) */
+.app:not(.admin-mode) .md3-chip-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #ebedf0;
+}
+
+.app:not(.admin-mode) .md3-chip-bar .gd-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.app:not(.admin-mode) .md3-chip-bar .gd-chip-clear:hover {
+  background: rgba(0, 29, 53, 0.14);
+}
+
+.app:not(.admin-mode) .gd-chip-clearall {
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: #1a73e8;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.app:not(.admin-mode) .gd-chip-clearall:hover {
+  text-decoration: underline;
+}
+
+/* ============================================================
+   Square grid tiles (Google Drive style) + list owner avatar
+   ============================================================ */
+
+/* File cards: preview on top + two-line footer */
+.app:not(.admin-mode) .file-grid.grid-view .file-card {
+  display: flex !important;
+  flex-direction: column !important;
+  border: 1px solid #dadce0 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+
+.app:not(.admin-mode) .file-card .card-thumb {
+  height: auto !important;
+  aspect-ratio: 4 / 3;
+  background: #f5f5f5 !important;
+  border-radius: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.app:not(.admin-mode) .file-card .card-thumb svg {
+  width: 64px !important;
+  height: 64px !important;
+}
+
+.app:not(.admin-mode) .file-card .card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.app:not(.admin-mode) .file-card .card-meta {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px !important;
+  border-top: 1px solid #ebedf0 !important;
+}
+
+.app:not(.admin-mode) .file-card .card-type-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.app:not(.admin-mode) .file-card .card-type-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app:not(.admin-mode) .file-card .card-meta-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.app:not(.admin-mode) .file-card .card-name {
+  font-size: 13px;
+  color: #202124;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app:not(.admin-mode) .file-card .card-sub {
+  font-size: 12px;
+  color: #5f6368;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Grid view: section titles (Folders / Files) spanning full width */
+.app:not(.admin-mode) .file-grid.grid-view .fd-grid-section-title {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  font-weight: 500;
+  color: #5f6368;
+  margin: 6px 0 2px;
+}
+
+/* Grid view: folder chips row (full width) */
+.app:not(.admin-mode) .file-grid.grid-view .fd-folder-chips {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* Folder chips: wide horizontal card (icon + name + more) */
+.app:not(.admin-mode) .file-grid.grid-view .file-card.folder-card {
+  aspect-ratio: auto !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  height: 48px;
+  padding: 0 6px 0 14px !important;
+  gap: 10px;
+  background: #f0f4f9 !important;
+  border: 1px solid transparent !important;
+  border-radius: 10px !important;
+}
+
+.app:not(.admin-mode) .folder-card .folder-chip-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: #5f6368;
+}
+
+.app:not(.admin-mode) .folder-card .folder-chip-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app:not(.admin-mode) .folder-card .folder-chip-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: #202124;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app:not(.admin-mode) .folder-card .card-more-btn {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  flex: 0 0 auto;
+  background: transparent !important;
+}
+
+/* List view: owner avatar + name */
+.app:not(.admin-mode) .file-row .cell-owner {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.app:not(.admin-mode) .file-row .owner-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  flex: 0 0 auto;
+  text-transform: uppercase;
+}
+
+.app:not(.admin-mode) .file-row .owner-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Grid tile: always-visible 3-dots (more) button, top-right */
+.app:not(.admin-mode) .file-card .card-more-btn {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  z-index: 2;
+  opacity: 1 !important;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: transparent;
+  color: #444746;
+}
+
+.app:not(.admin-mode) .file-card .card-more-btn:hover {
+  background: transparent;
 }

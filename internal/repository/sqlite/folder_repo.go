@@ -95,6 +95,37 @@ func (r *FolderRepo) GetChildren(ctx context.Context, parentID *string, ownerID 
 	return folders, nil
 }
 
+// ListAll returns all of an owner's folders (flat), optionally filtered by a
+// name substring. Computer root folders are excluded, matching GetChildren.
+func (r *FolderRepo) ListAll(ctx context.Context, ownerID, search string) ([]domain.Folder, error) {
+	query := `SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
+		 FROM folders
+		 WHERE owner_id = ?
+		   AND id NOT IN (SELECT root_folder_id FROM computers WHERE owner_id = ?)`
+	args := []interface{}{ownerID, ownerID}
+	if search != "" {
+		query += " AND name LIKE ?"
+		args = append(args, "%"+search+"%")
+	}
+	query += " ORDER BY name"
+
+	rows, err := r.reader.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var folders []domain.Folder
+	for rows.Next() {
+		var f domain.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+	return folders, nil
+}
+
 func (r *FolderRepo) GetBreadcrumb(ctx context.Context, id string) ([]domain.Breadcrumb, error) {
 	// Use recursive CTE to walk up the folder tree
 	rows, err := r.reader.QueryContext(ctx, `
