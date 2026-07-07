@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -443,6 +444,7 @@ func (h *AdminHandler) Activity(w http.ResponseWriter, r *http.Request) {
 
 	logs, total, err := h.activityRepo.ListAll(r.Context(), page, pageSize)
 	if err != nil {
+		log.Printf("activity list error (ListAll): %v", err)
 		writeError(w, "failed to list activity", http.StatusInternalServerError)
 		return
 	}
@@ -466,6 +468,7 @@ func (h *AdminHandler) MyActivity(w http.ResponseWriter, r *http.Request) {
 
 	logs, total, err := h.activityRepo.List(r.Context(), userID, page, pageSize)
 	if err != nil {
+		log.Printf("activity list error (List user=%s): %v", userID, err)
 		writeError(w, "failed to list activity", http.StatusInternalServerError)
 		return
 	}

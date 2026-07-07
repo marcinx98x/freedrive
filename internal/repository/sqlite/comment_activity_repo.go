@@ -152,13 +152,21 @@ func scanActivityRows(rows *sql.Rows) ([]domain.ActivityLog, error) {
 	var logs []domain.ActivityLog
 	for rows.Next() {
 		var l domain.ActivityLog
-		var username sql.NullString
+		var id, userID, username, action, targetType, targetID, targetName, metadata, ipAddress sql.NullString
 		var createdAt sql.NullTime
-		if err := rows.Scan(&l.ID, &l.UserID, &username, &l.Action, &l.TargetType, &l.TargetID,
-			&l.TargetName, &l.Metadata, &l.IPAddress, &createdAt); err != nil {
+		if err := rows.Scan(&id, &userID, &username, &action, &targetType, &targetID,
+			&targetName, &metadata, &ipAddress, &createdAt); err != nil {
 			return nil, err
 		}
+		l.ID = id.String
+		l.UserID = userID.String
 		l.Username = username.String
+		l.Action = domain.ActivityAction(action.String)
+		l.TargetType = targetType.String
+		l.TargetID = targetID.String
+		l.TargetName = targetName.String
+		l.Metadata = metadata.String
+		l.IPAddress = ipAddress.String
 		l.CreatedAt = createdAt.Time
 		logs = append(logs, l)
 	}

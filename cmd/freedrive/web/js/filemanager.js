@@ -3497,10 +3497,27 @@ const FileManager = (() => {
         setBreadcrumbText('Storage');
 
         try {
-            const [disk, listResp] = await Promise.all([
+            const pageSize = 500;
+            const firstResp = await Promise.all([
                 API.myStorage(),
-                API.files.list({ page_size: '500' }),
+                API.files.list({ page: '1', page_size: String(pageSize) }),
             ]);
+            const disk = firstResp[0];
+            const firstList = firstResp[1];
+
+            // Fetch ALL non-trashed files (paginate) so breakdown, count and
+            // "largest files" reflect the full picture, not just the first page.
+            const totalFiles = Number(firstList.total || (firstList.files || []).length);
+            let files = firstList.files || [];
+            if (totalFiles > files.length) {
+                const pages = Math.ceil(totalFiles / pageSize);
+                const rest = [];
+                for (let p = 2; p <= pages; p++) {
+                    rest.push(API.files.list({ page: String(p), page_size: String(pageSize) }));
+                }
+                const restResp = await Promise.all(rest);
+                restResp.forEach((r) => { files = files.concat(r.files || []); });
+            }
 
             const used = Number(disk.used_bytes || 0);
             const total = Number(disk.total_bytes || 1);
@@ -3538,27 +3555,30 @@ const FileManager = (() => {
                 </div>
             `;
 
-            const files = listResp.files || [];
             const free = Math.max(total - used, 0);
             const freeEl = document.getElementById('storage-free-space');
             const filesEl = document.getElementById('storage-total-files');
             if (freeEl) freeEl.textContent = Components.formatSize(free);
-            if (filesEl) filesEl.textContent = String(files.length);
+            if (filesEl) filesEl.textContent = String(totalFiles);
             const buckets = { Images: 0, Videos: 0, Documents: 0, Other: 0 };
 
             files.forEach((f) => {
+                const bytes = Number(f.encrypted_size || f.size || 0);
                 const g = getMimeGroup(f.mime_type, 'file', f.name);
-                if (g === 'image') buckets.Images += Number(f.size || 0);
-                else if (g === 'video') buckets.Videos += Number(f.size || 0);
-                else if (g === 'text' || g === 'document' || g === 'sheet' || g === 'pdf') buckets.Documents += Number(f.size || 0);
-                else buckets.Other += Number(f.size || 0);
+                if (g === 'image') buckets.Images += bytes;
+                else if (g === 'video') buckets.Videos += bytes;
+                else if (g === 'text' || g === 'document' || g === 'sheet' || g === 'pdf') buckets.Documents += bytes;
+                else buckets.Other += bytes;
             });
 
+            // Bars are a share of the categorized total so they add up to ~100%.
+            const categoriesTotal = buckets.Images + buckets.Videos + buckets.Documents + buckets.Other;
+
             document.getElementById('storage-breakdown').innerHTML = `
-                ${renderBreakdownItem('Images',    buckets.Images,    '#ea4335', used)}
-                ${renderBreakdownItem('Videos',    buckets.Videos,    '#fbbc04', used)}
-                ${renderBreakdownItem('Documents', buckets.Documents, '#4285f4', used)}
-                ${renderBreakdownItem('Other',     buckets.Other,     '#a142f4', used)}
+                ${renderBreakdownItem('Images',    buckets.Images,    '#ea4335', categoriesTotal)}
+                ${renderBreakdownItem('Videos',    buckets.Videos,    '#fbbc04', categoriesTotal)}
+                ${renderBreakdownItem('Documents', buckets.Documents, '#4285f4', categoriesTotal)}
+                ${renderBreakdownItem('Other',     buckets.Other,     '#a142f4', categoriesTotal)}
             `;
 
             const largest = [...files].sort((a, b) => Number(b.size || 0) - Number(a.size || 0)).slice(0, 20);
@@ -5840,7 +5860,6 @@ const FileManager = (() => {
             barFill.style.background = pct >= 90 ? '#d93025' : '#1a73e8';
             document.getElementById('storage-text').textContent =
                 `${formatStorageSize(rawUsed)} of ${formatStorageSize(rawTotal)} used`;
-            document.getElementById('storage-percent').textContent = `${pct}% full`;
 
             if (pct >= 80) {
                 const key = 'fd_storage_notice_last';
