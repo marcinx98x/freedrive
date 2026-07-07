@@ -3437,11 +3437,22 @@ const FileManager = (() => {
                 myAvatar = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}').profileAvatar || '';
             } catch {}
 
-            list.innerHTML = merged.map((a) => {
+            // The activity feed only needs recent items; capping also prevents a
+            // huge joined string (RangeError: Invalid string length).
+            const MAX_ACTIVITY_ROWS = 100;
+            merged = merged.slice(0, MAX_ACTIVITY_ROWS);
+
+            // Inject the (potentially large base64) avatar ONCE via a scoped CSS
+            // rule instead of inlining it into every row's style attribute.
+            const meAvatarCss = myAvatar
+                ? `#activity-list .activity-avatar.is-me{background-image:url("${myAvatar}");background-size:cover;background-position:center;color:transparent;}`
+                : '';
+
+            const rows = merged.map((a) => {
                 try {
                     const actor = a.username || 'User';
                     const isMe = a.user_id === me.id || actor === currentUserLabel();
-                    const avatarStyle = (isMe && myAvatar) ? `background-image:url(${myAvatar}); background-size:cover; background-position:center; color:transparent;` : '';
+                    const showPhoto = isMe && myAvatar;
 
                     let textHtml = '';
                     if (a.action === 'local_event') {
@@ -3454,7 +3465,7 @@ const FileManager = (() => {
 
                     return `
                     <div class="activity-item">
-                        <div class="activity-avatar" style="${avatarStyle}">${isMe && myAvatar ? '' : esc(Components.initials(actor))}</div>
+                        <div class="activity-avatar${showPhoto ? ' is-me' : ''}">${showPhoto ? '' : esc(Components.initials(actor))}</div>
                         <div>
                             ${textHtml}
                             <div class="activity-time">${Components.formatAbsoluteDate(a.created_at)}</div>
@@ -3466,6 +3477,8 @@ const FileManager = (() => {
                     return '';
                 }
             }).join('');
+
+            list.innerHTML = `<style>${meAvatarCss}</style>` + rows;
         } catch (err) {
             console.error('loadActivity error:', err);
             list.innerHTML = '';
