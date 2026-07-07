@@ -355,6 +355,15 @@ func (r *FileRepo) CountByOwner(ctx context.Context, ownerID string) (int, error
 	return count, err
 }
 
+// SumEncryptedSizeByOwner returns the total encrypted bytes stored by a user
+// across all of their files (including trashed ones, which still occupy space).
+func (r *FileRepo) SumEncryptedSizeByOwner(ctx context.Context, ownerID string) (int64, error) {
+	var total int64
+	err := r.reader.QueryRowContext(ctx,
+		"SELECT COALESCE(SUM(encrypted_size), 0) FROM files WHERE owner_id = ?", ownerID).Scan(&total)
+	return total, err
+}
+
 // --- Versioning ---
 
 func (r *FileRepo) CreateVersion(ctx context.Context, version *domain.FileVersion) error {

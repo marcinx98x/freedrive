@@ -45,6 +45,7 @@ type FileRepository interface {
 	GetTrashedFiles(ctx context.Context, ownerID string) ([]domain.File, error)
 	PurgeOldTrashed(ctx context.Context, days int) ([]domain.File, error)
 	CountByOwner(ctx context.Context, ownerID string) (int, error)
+	SumEncryptedSizeByOwner(ctx context.Context, ownerID string) (int64, error)
 
 	// Versioning
 	CreateVersion(ctx context.Context, version *domain.FileVersion) error

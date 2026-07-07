@@ -100,7 +100,7 @@ func (r *ActivityRepo) List(ctx context.Context, userID string, page, pageSize i
 
 	rows, err := r.reader.QueryContext(ctx,
 		`SELECT a.id, a.user_id, u.username, a.action, a.target_type, a.target_id, a.target_name, a.metadata, a.ip_address, a.created_at
-		 FROM activity_log a JOIN users u ON a.user_id = u.id
+		 FROM activity_log a LEFT JOIN users u ON a.user_id = u.id
 		 WHERE a.user_id = ? ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
 		userID, pageSize, (page-1)*pageSize)
 	if err != nil {
@@ -108,14 +108,9 @@ func (r *ActivityRepo) List(ctx context.Context, userID string, page, pageSize i
 	}
 	defer rows.Close()
 
-	var logs []domain.ActivityLog
-	for rows.Next() {
-		var l domain.ActivityLog
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Action, &l.TargetType, &l.TargetID,
-			&l.TargetName, &l.Metadata, &l.IPAddress, &l.CreatedAt); err != nil {
-			return nil, 0, err
-		}
-		logs = append(logs, l)
+	logs, err := scanActivityRows(rows)
+	if err != nil {
+		return nil, 0, err
 	}
 	return logs, total, nil
 }
@@ -136,7 +131,7 @@ func (r *ActivityRepo) ListAll(ctx context.Context, page, pageSize int) ([]domai
 
 	rows, err := r.reader.QueryContext(ctx,
 		`SELECT a.id, a.user_id, u.username, a.action, a.target_type, a.target_id, a.target_name, a.metadata, a.ip_address, a.created_at
-		 FROM activity_log a JOIN users u ON a.user_id = u.id
+		 FROM activity_log a LEFT JOIN users u ON a.user_id = u.id
 		 ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
 		pageSize, (page-1)*pageSize)
 	if err != nil {
@@ -144,14 +139,28 @@ func (r *ActivityRepo) ListAll(ctx context.Context, page, pageSize int) ([]domai
 	}
 	defer rows.Close()
 
+	logs, err := scanActivityRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return logs, total, nil
+}
+
+// scanActivityRows reads activity rows null-safely so that orphaned rows (user
+// deleted) or unusual date formats can never abort the query.
+func scanActivityRows(rows *sql.Rows) ([]domain.ActivityLog, error) {
 	var logs []domain.ActivityLog
 	for rows.Next() {
 		var l domain.ActivityLog
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Action, &l.TargetType, &l.TargetID,
-			&l.TargetName, &l.Metadata, &l.IPAddress, &l.CreatedAt); err != nil {
-			return nil, 0, err
+		var username sql.NullString
+		var createdAt sql.NullTime
+		if err := rows.Scan(&l.ID, &l.UserID, &username, &l.Action, &l.TargetType, &l.TargetID,
+			&l.TargetName, &l.Metadata, &l.IPAddress, &createdAt); err != nil {
+			return nil, err
 		}
+		l.Username = username.String
+		l.CreatedAt = createdAt.Time
 		logs = append(logs, l)
 	}
-	return logs, total, nil
+	return logs, rows.Err()
 }

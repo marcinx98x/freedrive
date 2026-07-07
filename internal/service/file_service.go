@@ -238,6 +238,11 @@ func (s *FileService) StartTrashPurge(ctx context.Context) {
 	}()
 }
 
+// RecordDownload logs a file download in the activity log.
+func (s *FileService) RecordDownload(ctx context.Context, userID, fileID, fileName string) {
+	s.logActivity(ctx, userID, domain.ActionDownload, "file", fileID, fileName, "")
+}
+
 func (s *FileService) logActivity(ctx context.Context, userID string, action domain.ActivityAction, targetType, targetID, targetName, metadata string) {
 	_ = s.activityRepo.Create(ctx, &domain.ActivityLog{
 		UserID:     userID,

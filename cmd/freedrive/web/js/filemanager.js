@@ -3378,17 +3378,37 @@ const FileManager = (() => {
         const list = document.getElementById('activity-list');
         list.innerHTML = '<div class="loading-state" style="min-height:180px;"><div class="spinner"></div></div>';
 
-        try {
-            let logs = [];
-            try {
-                const data = await API.activity.list(1, 120);
-                logs = data.activities || [];
-            } catch {
-                const data = await API.admin.activity(1, 120);
-                logs = data.activities || [];
-            }
+        const me = getCurrentUser() || { id: 'unknown' };
+        const isAdmin = String(me.role || '').toLowerCase() === 'admin';
 
-            const me = getCurrentUser() || { id: 'unknown' };
+        // Fetch server activity. Only fall back to the admin endpoint for admins
+        // (a non-admin would get 403 there and double-fault).
+        let logs = [];
+        try {
+            const data = await API.activity.list(1, 120);
+            logs = data.activities || [];
+        } catch (err) {
+            console.error('loadActivity fetch error (/activity):', err);
+            if (isAdmin) {
+                try {
+                    const data = await API.admin.activity(1, 120);
+                    logs = data.activities || [];
+                } catch (err2) {
+                    console.error('loadActivity fetch error (/admin/activity):', err2);
+                    list.innerHTML = '';
+                    Components.toast('Failed to load activity', 'error');
+                    setBreadcrumbText('Activity');
+                    return;
+                }
+            } else {
+                list.innerHTML = '';
+                Components.toast('Failed to load activity', 'error');
+                setBreadcrumbText('Activity');
+                return;
+            }
+        }
+
+        try {
             const extra = Object.values(meta.file_activity || {})
                 .flat()
                 .map((it) => ({
@@ -3418,20 +3438,21 @@ const FileManager = (() => {
             } catch {}
 
             list.innerHTML = merged.map((a) => {
-                const actor = a.username || 'User';
-                const isMe = a.user_id === me.id || actor === currentUserLabel();
-                const avatarStyle = (isMe && myAvatar) ? `background-image:url(${myAvatar}); background-size:cover; background-position:center; color:transparent;` : '';
-                
-                let textHtml = '';
-                if (a.action === 'local_event') {
-                    // old format backwards compatibility
-                    textHtml = `<div class="activity-text">${esc(a.target_name)}</div>`;
-                } else {
-                    const action = formatAction(a.action);
-                    textHtml = `<div class="activity-text"><strong>${esc(actor)}</strong> ${esc(action)} <strong>${esc(a.target_name || 'item')}</strong></div>`;
-                }
+                try {
+                    const actor = a.username || 'User';
+                    const isMe = a.user_id === me.id || actor === currentUserLabel();
+                    const avatarStyle = (isMe && myAvatar) ? `background-image:url(${myAvatar}); background-size:cover; background-position:center; color:transparent;` : '';
 
-                return `
+                    let textHtml = '';
+                    if (a.action === 'local_event') {
+                        // old format backwards compatibility
+                        textHtml = `<div class="activity-text">${esc(a.target_name)}</div>`;
+                    } else {
+                        const action = formatAction(a.action);
+                        textHtml = `<div class="activity-text"><strong>${esc(actor)}</strong> ${esc(action)} <strong>${esc(a.target_name || 'item')}</strong></div>`;
+                    }
+
+                    return `
                     <div class="activity-item">
                         <div class="activity-avatar" style="${avatarStyle}">${isMe && myAvatar ? '' : esc(Components.initials(actor))}</div>
                         <div>
@@ -3440,6 +3461,10 @@ const FileManager = (() => {
                         </div>
                     </div>
                 `;
+                } catch (rowErr) {
+                    console.error('loadActivity row error:', rowErr, a);
+                    return '';
+                }
             }).join('');
         } catch (err) {
             console.error('loadActivity error:', err);
@@ -3473,7 +3498,7 @@ const FileManager = (() => {
 
         try {
             const [disk, listResp] = await Promise.all([
-                API.diskStats(),
+                API.myStorage(),
                 API.files.list({ page_size: '500' }),
             ]);
 
@@ -5804,9 +5829,7 @@ const FileManager = (() => {
 
     async function updateStorageInfo() {
         try {
-            const me = getCurrentUser();
-            const isAdmin = me && String(me.role || '').toLowerCase() === 'admin';
-            const s = isAdmin ? await API.diskStats() : await API.myStorage();
+            const s = await API.myStorage();
             const rawUsed = Number(s.used_bytes || 0);
             const rawTotal = Number(s.total_bytes || 1);
 

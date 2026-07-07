@@ -51,7 +51,7 @@ func NewRouter(
 	folderHandler := handlers.NewFolderHandler(folderService)
 	computerHandler := handlers.NewComputerHandler(computerService)
 	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService)
-	userHandler := handlers.NewUserHandler(userRepo)
+	userHandler := handlers.NewUserHandler(userRepo, fileRepo)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
