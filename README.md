@@ -285,10 +285,11 @@ To make the GHCR package publicly pullable without login: GitHub → **Packages*
 
 ### Run With Docker Compose
 
-Default image in `docker-compose.yml`: `marcinx98x/freedrive:latest` (Docker Hub, public). To use GHCR instead, set `image: ghcr.io/marcinx98x/freedrive:latest` in the compose file or override it when starting. Use `docker compose up --build` only when developing from source.
+`docker-compose.yml` pulls `marcinx98x/freedrive:latest` from Docker Hub, runs a single `freedrive` service, and maps a host folder to `/app/data` through a bind mount. To use GHCR instead, set `image: ghcr.io/marcinx98x/freedrive:latest` in the compose file.
+
+Before the first start, edit `docker-compose.yml`: set a strong `FREEDRIVE_ADMIN_PASSWORD` (and `FREEDRIVE_ADMIN_EMAIL`), adjust the published port if needed, and change the bind-mount path (`/volume2/docker/freedrive/data`) to a folder that exists on your host.
 
 ```bash
-cp .env.example .env
 docker compose pull
 docker compose up -d
 ```
@@ -297,15 +298,14 @@ Open:
 
 - `http://localhost:8080`
 
-Runtime data is stored in the `freedrive-data` Docker volume. Update `.env` before first start to set a strong admin password and optional JWT secret.
+Runtime data (the `freedrive.db` database, encrypted `blobs/`, and `jwt_secret.key`) lives in the host folder you mapped to `/app/data`, so it survives container recreation and image updates.
 
-### Automatic Updates (Watchtower)
+### Automatic Updates (Watchtower, optional)
 
-`docker-compose.yml` includes a [Watchtower](https://containrrr.dev/watchtower/) service. It periodically checks Docker Hub for a newer `latest` image and automatically pulls it and recreates the FreeDrive container, so you always run the newest version without a manual re-pull.
+The default `docker-compose.yml` does not include Watchtower. If you want automatic updates, add a [Watchtower](https://containrrr.dev/watchtower/) container that periodically checks Docker Hub for a newer `latest` image and recreates the FreeDrive container:
 
-- Scope is limited by label (`com.centurylinklabs.watchtower.enable=true` on the `freedrive` service via `--label-enable`), so Watchtower only updates FreeDrive and leaves your other containers untouched.
-- `--cleanup` removes the old image after each update.
-- Default check interval is `3600` seconds (hourly). Change `--interval` in the `watchtower` service's `command` to adjust it, or remove the whole `watchtower` service to disable auto-updates.
+- Run Watchtower with `--cleanup --label-enable --interval 3600` (hourly; `--cleanup` removes the old image after each update).
+- Add the label `com.centurylinklabs.watchtower.enable=true` to the `freedrive` service so Watchtower only updates FreeDrive and leaves your other containers untouched.
 
 ### Synology: Update Without Losing Data
 
@@ -320,24 +320,24 @@ ls -la /volume1/<your-path>/freedrive/data
 # expected: freedrive.db, blobs/, jwt_secret.key
 ```
 
-**Method A (recommended): update with Watchtower — the mapping can never be lost.**
+**Method A (recommended): run FreeDrive as a Project (compose) with a bind mount to your folder.**
 
-Watchtower clones the running container's full configuration (including your `/app/data` bind mount) before pulling the new image and recreating it, so the folder mapping is always preserved.
-
-1. Add the label `com.centurylinklabs.watchtower.enable=true` to your `freedrive` container.
-2. Run a Watchtower container (via Container Manager or the `watchtower` service in `docker-compose.yml`) with `--cleanup --label-enable --interval 3600`.
-3. Stop pressing "Update" in the GUI — Watchtower now updates FreeDrive on its own without touching your data.
-
-**Method B: run FreeDrive as a Project (compose) with a bind mount to your folder.**
-
-Keep the mapping in the compose file so it can never be dropped. Replace the named volume with your host folder:
+The shipped `docker-compose.yml` already uses a host bind mount, so the mapping lives in the file and can never be dropped. Point it at a folder on your NAS:
 
 ```yaml
     volumes:
       - /volume1/<your-path>/freedrive/data:/app/data
 ```
 
-Update with Watchtower automatically, or from the Project view via pull + up. Because the mapping lives in the file, every recreation reuses the exact same data folder.
+Update from the Project view via pull + up (`docker compose pull && docker compose up -d`). Because the mapping lives in the file, every recreation reuses the exact same data folder.
+
+**Method B (optional): add Watchtower for automatic updates — the mapping can never be lost.**
+
+Watchtower clones the running container's full configuration (including your `/app/data` bind mount) before pulling the new image and recreating it, so the folder mapping is always preserved.
+
+1. Add the label `com.centurylinklabs.watchtower.enable=true` to your `freedrive` container.
+2. Run a Watchtower container (via Container Manager or a separate compose service) with `--cleanup --label-enable --interval 3600`.
+3. Stop pressing "Update" in the GUI — Watchtower now updates FreeDrive on its own without touching your data.
 
 **If you must recreate manually:** your data is safe in the folder; you only have to map that exact same folder back to `/app/data` when creating the new container. Then verify the container is reading it:
 
