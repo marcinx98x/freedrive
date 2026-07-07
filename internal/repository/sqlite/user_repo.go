@@ -61,7 +61,7 @@ func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, 
 	user := &domain.User{}
 	err := r.reader.QueryRowContext(ctx,
 		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, created_at, updated_at, last_login_at
-		 FROM users WHERE email = ?`, email,
+		 FROM users WHERE email = ? COLLATE NOCASE`, email,
 	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role,
 		&user.QuotaBytes, &user.UsedBytes, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
 	if err == sql.ErrNoRows {

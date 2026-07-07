@@ -45,7 +45,7 @@ const Auth = (() => {
                 e.preventDefault();
                 const newPassword = String(document.getElementById('reset-password')?.value || '');
                 const confirm = String(document.getElementById('reset-password-confirm')?.value || '');
-                const finalEmail = String(document.getElementById('reset-email')?.value || '').trim();
+                const finalEmail = String(document.getElementById('reset-email')?.value || '').trim().toLowerCase();
                 const btn = document.getElementById('reset-btn');
 
                 if (!token || !finalEmail) {
@@ -83,7 +83,7 @@ const Auth = (() => {
         // Login form
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const email = document.getElementById('login-email').value;
+            const email = String(document.getElementById('login-email').value || '').trim().toLowerCase();
             const password = document.getElementById('login-password').value;
             const btn = document.getElementById('login-btn');
 
@@ -111,7 +111,7 @@ const Auth = (() => {
         document.getElementById('register-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const username = document.getElementById('reg-username').value;
-            const email = document.getElementById('reg-email').value;
+            const email = String(document.getElementById('reg-email').value || '').trim().toLowerCase();
             const password = document.getElementById('reg-password').value;
             const inviteCode = document.getElementById('reg-invite').value;
             const btn = document.getElementById('register-btn');

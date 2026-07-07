@@ -402,6 +402,34 @@ const FileManager = (() => {
         return 'document';
     }
 
+    // Classifier for the Storage breakdown: maps a file to one of the four
+    // fixed buckets using both mime type and extension. Unknown types (audio,
+    // archives, binaries, fonts, ...) fall into 'Other' rather than Documents.
+    function getStorageCategory(mime, name) {
+        const mt = String(mime || '').toLowerCase();
+        const ext = getFileExtension(name);
+        const IMAGE = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tif', 'tiff', 'heic', 'heif', 'avif', 'raw', 'cr2', 'nef', 'arw', 'dng', 'psd']);
+        const VIDEO = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v', 'mpg', 'mpeg', '3gp', 'ts', 'm2ts', 'ogv', 'mts']);
+        const DOC = new Set([
+            'pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'markdown', 'pages',
+            'ppt', 'pptx', 'odp', 'key',
+            'xls', 'xlsx', 'ods', 'csv', 'tsv', 'numbers',
+            'json', 'jsonc', 'xml', 'html', 'htm', 'css', 'js', 'ts', 'jsx', 'tsx',
+            'py', 'c', 'cpp', 'h', 'hpp', 'sh', 'bash', 'go', 'java', 'php', 'rb', 'swift',
+            'ini', 'cfg', 'conf', 'yml', 'yaml', 'toml', 'log',
+        ]);
+        if (mt.startsWith('image/') || IMAGE.has(ext)) return 'Images';
+        if (mt.startsWith('video/') || VIDEO.has(ext)) return 'Videos';
+        if (mt === 'application/pdf'
+            || mt.startsWith('text/')
+            || mt.includes('word') || mt.includes('opendocument')
+            || mt.includes('spreadsheet') || mt.includes('ms-excel') || mt.includes('spreadsheetml')
+            || mt.includes('presentation') || mt.includes('powerpoint')
+            || mt === 'application/json'
+            || DOC.has(ext)) return 'Documents';
+        return 'Other';
+    }
+
     function getIcon(type, mime, name = '') {
         const group = getMimeGroup(mime, type, name);
         const ext = getFileExtension(name);
@@ -3591,11 +3619,7 @@ const FileManager = (() => {
 
             files.forEach((f) => {
                 const bytes = Number(f.encrypted_size || f.size || 0);
-                const g = getMimeGroup(f.mime_type, 'file', f.name);
-                if (g === 'image') buckets.Images += bytes;
-                else if (g === 'video') buckets.Videos += bytes;
-                else if (g === 'text' || g === 'document' || g === 'sheet' || g === 'pdf') buckets.Documents += bytes;
-                else buckets.Other += bytes;
+                buckets[getStorageCategory(f.mime_type, f.name)] += bytes;
             });
 
             // Bar length reflects usage against the configured capacity (quota),

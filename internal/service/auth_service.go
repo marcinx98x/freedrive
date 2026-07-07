@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
@@ -45,6 +46,7 @@ type TokenPair struct {
 
 // Register creates a new user account.
 func (s *AuthService) Register(ctx context.Context, email, username, password, inviteCode string) (*domain.User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
 	// Check if first user (skip invite for first user)
 	userCount, err := s.userRepo.Count(ctx)
 	if err != nil {
@@ -112,6 +114,7 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 
 // Login authenticates a user and returns JWT tokens.
 func (s *AuthService) Login(ctx context.Context, email, password string) (*TokenPair, *domain.User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return nil, nil, err
@@ -171,6 +174,7 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 
 // ResetPasswordByEmail updates user's password using email.
 func (s *AuthService) ResetPasswordByEmail(ctx context.Context, email, newPassword string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return err
