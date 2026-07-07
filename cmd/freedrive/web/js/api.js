@@ -48,7 +48,7 @@ const API = (() => {
         localStorage.removeItem('fd_user');
     }
 
-    async function request(method, path, body = null, isRetry = false) {
+    async function request(method, path, body = null, isRetry = false, rlRetries = 2) {
         const headers = {};
         if (!(body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
@@ -66,10 +66,15 @@ const API = (() => {
 
         if (res.status === 401 && !isRetry && refreshToken) {
             const refreshed = await tryRefresh();
-            if (refreshed) return request(method, path, body, true);
+            if (refreshed) return request(method, path, body, true, rlRetries);
             clearAuth();
             window.location.hash = '#/login';
             throw new Error('Session expired');
+        }
+
+        if (res.status === 429 && rlRetries > 0) {
+            await new Promise((r) => setTimeout(r, 400));
+            return request(method, path, body, isRetry, rlRetries - 1);
         }
 
         const data = await res.json().catch(() => ({}));

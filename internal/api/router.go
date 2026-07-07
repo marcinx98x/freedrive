@@ -42,7 +42,7 @@ func NewRouter(
 	r.Use(middleware.CORS)
 
 	// Rate limiter: 100 requests/second, burst of 200
-	limiter := middleware.NewRateLimiter(100, 200)
+	limiter := middleware.NewRateLimiter(100, 400)
 	r.Use(limiter.Limit)
 
 	// Create handlers
