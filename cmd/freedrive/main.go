@@ -58,7 +58,7 @@ func main() {
 	authService := service.NewAuthService(userRepo, cfg.JWTSecret)
 	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo)
 	computerService := service.NewComputerService(computerRepo, folderRepo)
-	folderService := service.NewFolderService(folderRepo, fileRepo, activityRepo, computerRepo)
+	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo)
 
 	// Create admin user if no users exist
 	if err := authService.EnsureAdmin(context.Background(), cfg.AdminEmail, cfg.AdminPassword); err != nil {

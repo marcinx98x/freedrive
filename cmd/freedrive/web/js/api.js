@@ -168,6 +168,9 @@ const API = (() => {
         all: (search) => request('GET', `/folders/all${search ? `?search=${encodeURIComponent(search)}` : ''}`),
         update: (id, data) => request('PATCH', `/folders/${id}`, data),
         delete: (id) => request('DELETE', `/folders/${id}`),
+        restore: (id) => request('POST', `/folders/${id}/restore`),
+        permanentDelete: (id) => request('DELETE', `/folders/${id}/permanent`),
+        trash: () => request('GET', '/folders/trash'),
         breadcrumb: (id) => request('GET', `/folders/${id}/breadcrumb`),
     };
 

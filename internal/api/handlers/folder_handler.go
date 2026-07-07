@@ -157,6 +157,45 @@ func (h *FolderHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 
+// Restore handles POST /api/v1/folders/{id}/restore
+func (h *FolderHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	folderID := chi.URLParam(r, "id")
+	userID := middleware.GetUserID(r.Context())
+
+	if err := h.folderService.Restore(r.Context(), folderID, userID); err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "restored"})
+}
+
+// PermanentDelete handles DELETE /api/v1/folders/{id}/permanent
+func (h *FolderHandler) PermanentDelete(w http.ResponseWriter, r *http.Request) {
+	folderID := chi.URLParam(r, "id")
+	userID := middleware.GetUserID(r.Context())
+
+	if err := h.folderService.PermanentDelete(r.Context(), folderID, userID); err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "permanently deleted"})
+}
+
+// Trash handles GET /api/v1/folders/trash
+func (h *FolderHandler) Trash(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+
+	folders, err := h.folderService.ListTrash(r.Context(), userID)
+	if err != nil {
+		writeError(w, "failed to list trash", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"folders": folders})
+}
+
 // GetBreadcrumb handles GET /api/v1/folders/{id}/breadcrumb
 func (h *FolderHandler) GetBreadcrumb(w http.ResponseWriter, r *http.Request) {
 	folderID := chi.URLParam(r, "id")

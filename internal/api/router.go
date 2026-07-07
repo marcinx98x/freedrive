@@ -92,9 +92,12 @@ func NewRouter(
 				r.Post("/", folderHandler.Create)
 				r.Get("/root", folderHandler.GetRoot)
 				r.Get("/all", folderHandler.ListAll)
+				r.Get("/trash", folderHandler.Trash)
 				r.Get("/{id}", folderHandler.Get)
 				r.Patch("/{id}", folderHandler.Update)
 				r.Delete("/{id}", folderHandler.Delete)
+				r.Post("/{id}/restore", folderHandler.Restore)
+				r.Delete("/{id}/permanent", folderHandler.PermanentDelete)
 				r.Get("/{id}/breadcrumb", folderHandler.GetBreadcrumb)
 			})
 

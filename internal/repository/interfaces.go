@@ -39,6 +39,7 @@ type FileRepository interface {
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, opts domain.FileListOptions) ([]domain.File, int, error)
 	GetByFolderID(ctx context.Context, folderID *string, ownerID string) ([]domain.File, error)
+	GetByFolderIDs(ctx context.Context, folderIDs []string) ([]domain.File, error)
 	MoveToTrash(ctx context.Context, id string) error
 	RestoreFromTrash(ctx context.Context, id string) error
 	GetTrashedFiles(ctx context.Context, ownerID string) ([]domain.File, error)
@@ -71,6 +72,10 @@ type FolderRepository interface {
 	ListAll(ctx context.Context, ownerID, search string) ([]domain.Folder, error)
 	GetBreadcrumb(ctx context.Context, id string) ([]domain.Breadcrumb, error)
 	IsDescendant(ctx context.Context, folderID, potentialParentID string) (bool, error)
+	MoveToTrash(ctx context.Context, id string) error
+	RestoreFromTrash(ctx context.Context, id string) error
+	GetTrashedFolders(ctx context.Context, ownerID string) ([]domain.Folder, error)
+	ListSubtreeIDs(ctx context.Context, id string) ([]string, error)
 }
 
 // ShareRepository defines data access for sharing.

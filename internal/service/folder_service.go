@@ -6,21 +6,26 @@ import (
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/storage"
 )
 
 // FolderService handles folder business logic.
 type FolderService struct {
 	folderRepo   repository.FolderRepository
 	fileRepo     repository.FileRepository
+	userRepo     repository.UserRepository
+	storage      *storage.DiskStorage
 	activityRepo repository.ActivityRepository
 	computerRepo repository.ComputerRepository
 }
 
 // NewFolderService creates a new folder service.
-func NewFolderService(folderRepo repository.FolderRepository, fileRepo repository.FileRepository, activityRepo repository.ActivityRepository, computerRepo repository.ComputerRepository) *FolderService {
+func NewFolderService(folderRepo repository.FolderRepository, fileRepo repository.FileRepository, userRepo repository.UserRepository, store *storage.DiskStorage, activityRepo repository.ActivityRepository, computerRepo repository.ComputerRepository) *FolderService {
 	return &FolderService{
 		folderRepo:   folderRepo,
 		fileRepo:     fileRepo,
+		userRepo:     userRepo,
+		storage:      store,
 		activityRepo: activityRepo,
 		computerRepo: computerRepo,
 	}
@@ -142,7 +147,7 @@ func (s *FolderService) Move(ctx context.Context, folderID, ownerID string, newP
 	return s.folderRepo.Update(ctx, folder)
 }
 
-// Delete deletes a folder and all its contents.
+// Delete moves a folder and all its contents to trash.
 func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) error {
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
@@ -152,7 +157,90 @@ func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) er
 		return fmt.Errorf("folder not found")
 	}
 
-	// Cascade delete handled by foreign key ON DELETE CASCADE
+	// Soft-delete the whole subtree so files are not orphaned to root and the
+	// folder can be restored as a whole.
+	if err := s.folderRepo.MoveToTrash(ctx, folderID); err != nil {
+		return err
+	}
+
+	_ = s.activityRepo.Create(ctx, &domain.ActivityLog{
+		UserID:     ownerID,
+		Action:     domain.ActionDelete,
+		TargetType: "folder",
+		TargetID:   folderID,
+		TargetName: folder.Name,
+	})
+	return nil
+}
+
+// ListTrash returns the roots of the owner's trashed folder subtrees.
+func (s *FolderService) ListTrash(ctx context.Context, ownerID string) ([]domain.Folder, error) {
+	return s.folderRepo.GetTrashedFolders(ctx, ownerID)
+}
+
+// Restore restores a trashed folder and its whole subtree.
+func (s *FolderService) Restore(ctx context.Context, folderID, ownerID string) error {
+	folder, err := s.folderRepo.GetByID(ctx, folderID)
+	if err != nil {
+		return err
+	}
+	if folder == nil || folder.OwnerID != ownerID {
+		return fmt.Errorf("folder not found")
+	}
+
+	if err := s.folderRepo.RestoreFromTrash(ctx, folderID); err != nil {
+		return err
+	}
+
+	_ = s.activityRepo.Create(ctx, &domain.ActivityLog{
+		UserID:     ownerID,
+		Action:     domain.ActionRestore,
+		TargetType: "folder",
+		TargetID:   folderID,
+		TargetName: folder.Name,
+	})
+	return nil
+}
+
+// PermanentDelete removes a folder subtree together with every contained file's
+// blob, refunds quota, and deletes the folder rows.
+func (s *FolderService) PermanentDelete(ctx context.Context, folderID, ownerID string) error {
+	folder, err := s.folderRepo.GetByID(ctx, folderID)
+	if err != nil {
+		return err
+	}
+	if folder == nil || folder.OwnerID != ownerID {
+		return fmt.Errorf("folder not found")
+	}
+
+	ids, err := s.folderRepo.ListSubtreeIDs(ctx, folderID)
+	if err != nil {
+		return err
+	}
+
+	files, err := s.fileRepo.GetByFolderIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		if f.OwnerID != ownerID {
+			continue
+		}
+		// Remove version blobs
+		versions, _ := s.fileRepo.GetVersions(ctx, f.ID)
+		for _, v := range versions {
+			_ = s.storage.Delete(v.BlobPath)
+		}
+		// Remove main blob
+		_ = s.storage.Delete(f.BlobPath)
+		if err := s.fileRepo.Delete(ctx, f.ID); err != nil {
+			return err
+		}
+		_ = s.userRepo.UpdateUsedBytes(ctx, ownerID, -f.EncryptedSize)
+	}
+
+	// Deleting the root folder cascades removal of descendant folder rows.
 	if err := s.folderRepo.Delete(ctx, folderID); err != nil {
 		return err
 	}

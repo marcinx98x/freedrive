@@ -214,7 +214,45 @@ func (r *FileRepo) GetTrashedFiles(ctx context.Context, ownerID string) ([]domai
 	rows, err := r.reader.QueryContext(ctx,
 		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
 		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
-		 FROM files WHERE owner_id = ? AND is_trashed = 1 ORDER BY trashed_at DESC`, ownerID)
+		 FROM files
+		 WHERE owner_id = ? AND is_trashed = 1
+		   AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM folders WHERE is_trashed = 1))
+		 ORDER BY trashed_at DESC`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
+			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// GetByFolderIDs returns all files (regardless of trash state) that live in any
+// of the given folders. Used to permanently delete a folder subtree.
+func (r *FileRepo) GetByFolderIDs(ctx context.Context, folderIDs []string) ([]domain.File, error) {
+	if len(folderIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(folderIDs))
+	args := make([]interface{}, len(folderIDs))
+	for i, id := range folderIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+	        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+	 FROM files WHERE folder_id IN (` + strings.Join(placeholders, ",") + `)`
+
+	rows, err := r.reader.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

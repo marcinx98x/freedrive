@@ -1290,10 +1290,10 @@ const FileManager = (() => {
         showFilesView();
         showLoading(true);
         try {
-            const data = await API.files.trash();
-            allFolders = [];
-            allFiles = data.files || [];
-            filteredFolders = [];
+            const [fileData, folderData] = await Promise.all([API.files.trash(), API.folders.trash()]);
+            allFolders = folderData.folders || [];
+            allFiles = fileData.files || [];
+            filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles, { isTrash: true });
             setBreadcrumbText('Trash');
@@ -2127,12 +2127,15 @@ const FileManager = (() => {
         });
 
         const inTrash = isTrashMode(target);
+        const isFolder = target && target.type === 'folder';
         const allowed = inTrash
-            ? new Set(['open', 'restore', 'info', 'download', 'delete'])
+            ? new Set(isFolder
+                ? ['open', 'restore', 'info', 'delete']
+                : ['open', 'restore', 'info', 'download', 'delete'])
             : null;
 
         Object.entries(actionMap).forEach(([action, item]) => {
-            const show = !inTrash || allowed.has(action);
+            const show = inTrash ? allowed.has(action) : action !== 'restore';
             setElementHidden(item, !show);
             item.style.display = show ? '' : 'none';
         });
@@ -2328,7 +2331,11 @@ const FileManager = (() => {
                 await downloadPayloadAsZip({ type, data });
                 return;
             case 'restore':
-                await API.files.restore(data.id);
+                if (type === 'folder') {
+                    await API.folders.restore(data.id);
+                } else {
+                    await API.files.restore(data.id);
+                }
                 Components.toast(TrashCopy.restoredToast(1), 'success');
                 refresh();
                 return;
@@ -2458,15 +2465,19 @@ const FileManager = (() => {
     }
 
     async function moveToTrash(type, data, isTrash) {
-        if (isTrashMode({ isTrash }) && type === 'file') {
+        if (isTrashMode({ isTrash })) {
             const ok = await Components.confirm(
                 TrashCopy.deleteForeverTitle,
                 TrashCopy.singleDeleteBody(data.name),
                 TrashCopy.deleteForeverButton,
             );
             if (!ok) return;
-            await API.files.permanentDelete(data.id);
-            await CryptoModule.deleteKey(data.id);
+            if (type === 'folder') {
+                await API.folders.permanentDelete(data.id);
+            } else {
+                await API.files.permanentDelete(data.id);
+                await CryptoModule.deleteKey(data.id);
+            }
             Components.toast(TrashCopy.deleteForeverToast, 'success');
             refresh();
             return;
@@ -2490,6 +2501,8 @@ const FileManager = (() => {
                 try {
                     if (type === 'file') {
                         await API.files.restore(data.id);
+                    } else {
+                        await API.folders.restore(data.id);
                     }
                     refresh();
                 } catch {
@@ -2969,8 +2982,13 @@ const FileManager = (() => {
             );
             if (!ok) return;
             for (const id of ids) {
-                await API.files.permanentDelete(id);
-                await CryptoModule.deleteKey(id);
+                const payload = findSelectedPayload(id);
+                if (payload && payload.type === 'folder') {
+                    await API.folders.permanentDelete(id);
+                } else {
+                    await API.files.permanentDelete(id);
+                    await CryptoModule.deleteKey(id);
+                }
             }
             clearSelection();
             Components.toast(TrashCopy.deleteForeverToast, 'success');
@@ -3003,7 +3021,12 @@ const FileManager = (() => {
         const ids = Array.from(selectedItems);
         if (!ids.length) return;
         for (const id of ids) {
-            await API.files.restore(id);
+            const payload = findSelectedPayload(id);
+            if (payload && payload.type === 'folder') {
+                await API.folders.restore(id);
+            } else {
+                await API.files.restore(id);
+            }
         }
         clearSelection();
         Components.toast(TrashCopy.restoredToast(ids.length), 'success');

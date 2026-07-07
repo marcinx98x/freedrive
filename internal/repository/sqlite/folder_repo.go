@@ -29,10 +29,10 @@ func (r *FolderRepo) Create(ctx context.Context, folder *domain.Folder) error {
 	folder.UpdatedAt = now
 
 	_, err := r.writer.ExecContext(ctx,
-		`INSERT INTO folders (id, name, parent_id, owner_id, color, is_starred, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO folders (id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		folder.ID, folder.Name, folder.ParentID, folder.OwnerID,
-		folder.Color, folder.IsStarred, folder.CreatedAt, folder.UpdatedAt,
+		folder.Color, folder.IsStarred, folder.IsTrashed, folder.TrashedAt, folder.CreatedAt, folder.UpdatedAt,
 	)
 	return err
 }
@@ -40,9 +40,9 @@ func (r *FolderRepo) Create(ctx context.Context, folder *domain.Folder) error {
 func (r *FolderRepo) GetByID(ctx context.Context, id string) (*domain.Folder, error) {
 	f := &domain.Folder{}
 	err := r.reader.QueryRowContext(ctx,
-		`SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
+		`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
 		 FROM folders WHERE id = ?`, id,
-	).Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.CreatedAt, &f.UpdatedAt)
+	).Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -69,15 +69,15 @@ func (r *FolderRepo) GetChildren(ctx context.Context, parentID *string, ownerID 
 
 	if parentID == nil {
 		rows, err = r.reader.QueryContext(ctx,
-			`SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
+			`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
 			 FROM folders
-			 WHERE parent_id IS NULL AND owner_id = ?
+			 WHERE parent_id IS NULL AND owner_id = ? AND is_trashed = 0
 			   AND id NOT IN (SELECT root_folder_id FROM computers WHERE owner_id = ?)
 			 ORDER BY name`, ownerID, ownerID)
 	} else {
 		rows, err = r.reader.QueryContext(ctx,
-			`SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
-			 FROM folders WHERE parent_id = ? AND owner_id = ? ORDER BY name`, *parentID, ownerID)
+			`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
+			 FROM folders WHERE parent_id = ? AND owner_id = ? AND is_trashed = 0 ORDER BY name`, *parentID, ownerID)
 	}
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (r *FolderRepo) GetChildren(ctx context.Context, parentID *string, ownerID 
 	var folders []domain.Folder
 	for rows.Next() {
 		var f domain.Folder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
 		folders = append(folders, f)
@@ -98,9 +98,9 @@ func (r *FolderRepo) GetChildren(ctx context.Context, parentID *string, ownerID 
 // ListAll returns all of an owner's folders (flat), optionally filtered by a
 // name substring. Computer root folders are excluded, matching GetChildren.
 func (r *FolderRepo) ListAll(ctx context.Context, ownerID, search string) ([]domain.Folder, error) {
-	query := `SELECT id, name, parent_id, owner_id, color, is_starred, created_at, updated_at
+	query := `SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
 		 FROM folders
-		 WHERE owner_id = ?
+		 WHERE owner_id = ? AND is_trashed = 0
 		   AND id NOT IN (SELECT root_folder_id FROM computers WHERE owner_id = ?)`
 	args := []interface{}{ownerID, ownerID}
 	if search != "" {
@@ -118,7 +118,7 @@ func (r *FolderRepo) ListAll(ctx context.Context, ownerID, search string) ([]dom
 	var folders []domain.Folder
 	for rows.Next() {
 		var f domain.Folder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
 		folders = append(folders, f)
@@ -170,4 +170,96 @@ func (r *FolderRepo) IsDescendant(ctx context.Context, folderID, potentialParent
 		SELECT COUNT(*) FROM descendants WHERE id = ?
 	`, folderID, potentialParentID).Scan(&count)
 	return count > 0, err
+}
+
+// MoveToTrash soft-deletes a folder together with its whole subtree (all
+// descendant folders and every file inside them), so contents are hidden and
+// files are not orphaned to root.
+func (r *FolderRepo) MoveToTrash(ctx context.Context, id string) error {
+	now := time.Now()
+	const subtree = `WITH RECURSIVE sub(id) AS (
+			SELECT id FROM folders WHERE id = ?
+			UNION ALL
+			SELECT f.id FROM folders f INNER JOIN sub ON f.parent_id = sub.id
+		)`
+	if _, err := r.writer.ExecContext(ctx,
+		subtree+` UPDATE folders SET is_trashed = 1, trashed_at = ?, updated_at = ? WHERE id IN (SELECT id FROM sub)`,
+		id, now, now); err != nil {
+		return err
+	}
+	_, err := r.writer.ExecContext(ctx,
+		subtree+` UPDATE files SET is_trashed = 1, trashed_at = ?, updated_at = ? WHERE folder_id IN (SELECT id FROM sub)`,
+		id, now, now)
+	return err
+}
+
+// RestoreFromTrash restores a folder and its whole subtree from trash.
+func (r *FolderRepo) RestoreFromTrash(ctx context.Context, id string) error {
+	now := time.Now()
+	const subtree = `WITH RECURSIVE sub(id) AS (
+			SELECT id FROM folders WHERE id = ?
+			UNION ALL
+			SELECT f.id FROM folders f INNER JOIN sub ON f.parent_id = sub.id
+		)`
+	if _, err := r.writer.ExecContext(ctx,
+		subtree+` UPDATE folders SET is_trashed = 0, trashed_at = NULL, updated_at = ? WHERE id IN (SELECT id FROM sub)`,
+		id, now); err != nil {
+		return err
+	}
+	_, err := r.writer.ExecContext(ctx,
+		subtree+` UPDATE files SET is_trashed = 0, trashed_at = NULL, updated_at = ? WHERE folder_id IN (SELECT id FROM sub)`,
+		id, now)
+	return err
+}
+
+// GetTrashedFolders returns only the roots of trashed subtrees (a trashed
+// folder whose parent is not itself trashed), so nested items are not listed
+// individually in the trash view.
+func (r *FolderRepo) GetTrashedFolders(ctx context.Context, ownerID string) ([]domain.Folder, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
+		 FROM folders
+		 WHERE owner_id = ? AND is_trashed = 1
+		   AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM folders WHERE is_trashed = 1))
+		 ORDER BY trashed_at DESC`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var folders []domain.Folder
+	for rows.Next() {
+		var f domain.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+	return folders, nil
+}
+
+// ListSubtreeIDs returns every folder id in the subtree rooted at id (including
+// id itself). Used for permanent deletion.
+func (r *FolderRepo) ListSubtreeIDs(ctx context.Context, id string) ([]string, error) {
+	rows, err := r.reader.QueryContext(ctx, `
+		WITH RECURSIVE sub(id) AS (
+			SELECT id FROM folders WHERE id = ?
+			UNION ALL
+			SELECT f.id FROM folders f INNER JOIN sub ON f.parent_id = sub.id
+		)
+		SELECT id FROM sub`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var fid string
+		if err := rows.Scan(&fid); err != nil {
+			return nil, err
+		}
+		ids = append(ids, fid)
+	}
+	return ids, nil
 }

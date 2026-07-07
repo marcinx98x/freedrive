@@ -24,6 +24,7 @@ func runMigrations(db *sql.DB) error {
 		{1, migrationV1},
 		{2, migrationV2},
 		{3, migrationV3},
+		{4, migrationV4},
 	}
 
 	for _, m := range migrations {
@@ -230,4 +231,10 @@ CREATE TABLE IF NOT EXISTS computers (
     updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_computers_owner ON computers(owner_id);
+`
+
+const migrationV4 = `
+ALTER TABLE folders ADD COLUMN is_trashed BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE folders ADD COLUMN trashed_at DATETIME;
+CREATE INDEX IF NOT EXISTS idx_folders_trashed ON folders(is_trashed, trashed_at);
 `
