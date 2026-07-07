@@ -148,6 +148,22 @@ const AdminPanel = (() => {
             .join('');
     }
 
+    const MAX_UPLOAD_OPTIONS_MB = [
+        { mb: 512 * 1024, label: '512 GB' },
+        { mb: 1024 * 1024, label: '1 TB' },
+        { mb: 4 * 1024 * 1024, label: '4 TB' },
+        { mb: 7 * 1024 * 1024, label: '7 TB' },
+        { mb: 10 * 1024 * 1024, label: '10 TB' },
+    ];
+
+    function maxUploadOptionsHtml(currentMb) {
+        const values = MAX_UPLOAD_OPTIONS_MB.map((o) => o.mb);
+        const sel = values.includes(Number(currentMb)) ? Number(currentMb) : values[0];
+        return MAX_UPLOAD_OPTIONS_MB
+            .map((o) => `<option value="${o.mb}" ${o.mb === sel ? 'selected' : ''}>${o.label}</option>`)
+            .join('');
+    }
+
     function promptQuota(title, currentGb) {
         return new Promise((resolve) => {
             Components.showModal(
@@ -1391,8 +1407,8 @@ const AdminPanel = (() => {
                     </select>
                 </div>
                 <div class="admin-form-group">
-                    <label>Max file size (MB)</label>
-                    <input class="admin-input" type="number" min="1" data-setting="general.max_upload_mb" value="${g.max_upload_mb}">
+                    <label>Max file size</label>
+                    <select class="admin-input" data-setting="general.max_upload_mb">${maxUploadOptionsHtml(g.max_upload_mb)}</select>
                 </div>
             </div>
             <div class="types-chip-wrap">
