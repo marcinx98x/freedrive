@@ -1121,6 +1121,10 @@
     display: none !important;
 }
 
+.app.admin-mode .topbar-leading {
+    display: none !important;
+}
+
 .app.admin-mode .topbar .topbar-actions {
     margin-left: auto !important;
 }
@@ -1356,7 +1360,7 @@
     }
 
     .app.admin-mode .topbar .topbar-leading {
-        display: flex !important;
+        display: none !important;
     }
 
     .app.admin-mode .file-list-header {
