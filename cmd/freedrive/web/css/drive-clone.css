@@ -2101,6 +2101,14 @@ body {
   text-transform: uppercase;
 }
 
+.app:not(.admin-mode) .file-row .owner-avatar.has-avatar {
+  background-image: var(--fd-me-avatar, none);
+  background-size: cover;
+  background-position: center;
+  background-color: transparent !important;
+  color: transparent;
+}
+
 .app:not(.admin-mode) .file-row .owner-name {
   overflow: hidden;
   text-overflow: ellipsis;

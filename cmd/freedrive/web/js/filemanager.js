@@ -293,6 +293,14 @@ const FileManager = (() => {
         return item.shared_by_name || 'Admin';
     }
 
+    function getMyProfileAvatar() {
+        try {
+            return JSON.parse(localStorage.getItem('fd_user_prefs') || '{}').profileAvatar || '';
+        } catch {
+            return '';
+        }
+    }
+
     function formatSizeStrict(bytes) {
         const value = Number(bytes || 0);
         if (!Number.isFinite(value) || value < 0) return '—';
@@ -1759,6 +1767,8 @@ const FileManager = (() => {
         } else {
             grid.classList.remove('grid-view');
             header.classList.remove('hidden');
+            const myAvatar = getMyProfileAvatar();
+            grid.style.setProperty('--fd-me-avatar', myAvatar ? `url("${myAvatar}")` : 'none');
             let ri = 0;
             filteredFolders.forEach((f) => { const el = createRow(f, 'folder', isTrash); el.style.setProperty('--fd-i', ri++); grid.appendChild(el); });
             filteredFiles.forEach((f)   => { const el = createRow(f, 'file',   isTrash); el.style.setProperty('--fd-i', ri++); grid.appendChild(el); });
@@ -1805,6 +1815,10 @@ const FileManager = (() => {
         }
         const lockBadge = '';
 
+        const currentUser = getCurrentUser();
+        const isMeOwner = !!(item.owner_id && currentUser.id && item.owner_id === currentUser.id) && !isSharedWith && !isSharedBy;
+        const showOwnerPhoto = isMeOwner && !!getMyProfileAvatar();
+
         row.innerHTML = `
             <div class="file-cell file-name">
                 <input type="checkbox" class="file-checkbox" aria-label="Select">
@@ -1814,7 +1828,7 @@ const FileManager = (() => {
             </div>
             <div class="file-cell cell-owner">${isHomeSuggested
                 ? esc(modifiedText)
-                : `<span class="owner-avatar" style="background-color:hsl(${(String(owner).length * 137) % 360},60%,50%)">${esc(Components.initials(owner))}</span><span class="owner-name">${esc(owner)}</span>`}</div>
+                : `<span class="owner-avatar${showOwnerPhoto ? ' has-avatar' : ''}"${showOwnerPhoto ? '' : ` style="background-color:hsl(${(String(owner).length * 137) % 360},60%,50%)"`}>${showOwnerPhoto ? '' : esc(Components.initials(owner))}</span><span class="owner-name">${esc(owner)}</span>`}</div>
             <div class="file-cell cell-date">${esc(isHomeSuggested ? owner : modifiedText)}</div>
             <div class="file-cell cell-size">${isHomeSuggested ? `<a class="home-location-link" href="#/files${item.folder_id ? `/${item.folder_id}` : ''}">${esc(locationText)}</a>` : sizeText}</div>
             ${isHomeSuggested
@@ -3584,14 +3598,13 @@ const FileManager = (() => {
                 else buckets.Other += bytes;
             });
 
-            // Bars are a share of the categorized total so they add up to ~100%.
-            const categoriesTotal = buckets.Images + buckets.Videos + buckets.Documents + buckets.Other;
-
+            // Bar length reflects usage against the configured capacity (quota),
+            // so a few small files render as a thin bar, not a full line.
             document.getElementById('storage-breakdown').innerHTML = `
-                ${renderBreakdownItem('Images',    buckets.Images,    '#ea4335', categoriesTotal)}
-                ${renderBreakdownItem('Videos',    buckets.Videos,    '#fbbc04', categoriesTotal)}
-                ${renderBreakdownItem('Documents', buckets.Documents, '#4285f4', categoriesTotal)}
-                ${renderBreakdownItem('Other',     buckets.Other,     '#a142f4', categoriesTotal)}
+                ${renderBreakdownItem('Images',    buckets.Images,    '#ea4335', total)}
+                ${renderBreakdownItem('Videos',    buckets.Videos,    '#fbbc04', total)}
+                ${renderBreakdownItem('Documents', buckets.Documents, '#4285f4', total)}
+                ${renderBreakdownItem('Other',     buckets.Other,     '#a142f4', total)}
             `;
 
             const largest = [...files].sort((a, b) => Number(b.size || 0) - Number(a.size || 0)).slice(0, 20);
@@ -5866,10 +5879,13 @@ const FileManager = (() => {
             const rawUsed = Number(s.used_bytes || 0);
             const rawTotal = Number(s.total_bytes || 1);
 
-            const pct = rawTotal > 0 ? Math.min(100, Math.round((rawUsed / rawTotal) * 100)) : 0;
+            const ratio = rawTotal > 0 ? rawUsed / rawTotal : 0;
+            const pct = Math.min(100, Math.round(ratio * 100));
+            // Fractional width; when anything is used show at least a thin sliver.
+            const widthPct = rawUsed > 0 ? Math.max(1, Math.min(100, ratio * 100)) : 0;
 
             const barFill = document.getElementById('storage-bar-fill');
-            barFill.style.width = `${pct}%`;
+            barFill.style.width = `${widthPct.toFixed(2)}%`;
             barFill.style.background = pct >= 90 ? '#d93025' : '#1a73e8';
             document.getElementById('storage-text').textContent =
                 `${formatStorageSize(rawUsed)} of ${formatStorageSize(rawTotal)} used`;
