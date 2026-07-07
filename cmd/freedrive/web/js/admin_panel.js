@@ -135,6 +135,32 @@ const AdminPanel = (() => {
         return Number.isFinite(n) ? n : fallback;
     }
 
+    const QUOTA_OPTIONS_GB = [15, 256, 512, 1024, 2048, 5120];
+
+    function quotaLabel(gb) {
+        return gb >= 1024 ? `${gb / 1024} TB` : `${gb} GB`;
+    }
+
+    function quotaOptionsHtml(currentGb) {
+        const sel = QUOTA_OPTIONS_GB.includes(Number(currentGb)) ? Number(currentGb) : 15;
+        return QUOTA_OPTIONS_GB
+            .map((gb) => `<option value="${gb}" ${gb === sel ? 'selected' : ''}>${quotaLabel(gb)}</option>`)
+            .join('');
+    }
+
+    function promptQuota(title, currentGb) {
+        return new Promise((resolve) => {
+            Components.showModal(
+                title,
+                `<div class="gd-input-group"><label>Storage quota</label><select id="quota-select" class="gd-input">${quotaOptionsHtml(currentGb)}</select></div>`,
+                [
+                    { text: 'Cancel', action: () => resolve(null) },
+                    { text: 'OK', class: 'btn-primary', action: () => resolve(asNumber(document.getElementById('quota-select')?.value, null)) },
+                ]
+            );
+        });
+    }
+
     function getCurrentUser() {
         return API.getUser() || { id: '', username: 'Admin', email: '', role: 'user' };
     }
@@ -801,8 +827,8 @@ const AdminPanel = (() => {
                             </select>
                         </div>
                         <div class="gd-input-group">
-                            <label>Storage quota (GB)</label>
-                            <input type="number" class="gd-input" min="1" id="drawer-quota" value="${Math.max(1, Math.round(asNumber(u.quota_bytes, 0) / (1024 ** 3)))}">
+                            <label>Storage quota</label>
+                            <select class="gd-input" id="drawer-quota">${quotaOptionsHtml(Math.max(1, Math.round(asNumber(u.quota_bytes, 0) / (1024 ** 3))))}</select>
                         </div>
                         <div style="display:flex; justify-content: flex-end;">
                            <button type="button" class="gd-btn-primary" data-admin-action="save-inline-edit" data-user-id="${u.id}">Save changes</button>
@@ -1355,8 +1381,8 @@ const AdminPanel = (() => {
                     </select>
                 </div>
                 <div class="admin-form-group">
-                    <label>Default quota (GB)</label>
-                    <input class="admin-input" type="number" min="1" data-setting="general.default_quota_gb" value="${g.default_quota_gb}">
+                    <label>Default quota</label>
+                    <select class="admin-input" data-setting="general.default_quota_gb">${quotaOptionsHtml(g.default_quota_gb)}</select>
                 </div>
                 <div class="admin-form-group">
                     <label>Registration</label>
@@ -1800,7 +1826,7 @@ const AdminPanel = (() => {
         }
 
         if (action === 'adjust-quota') {
-            const gb = await Components.prompt('Adjust quota (GB)', String(Math.max(1, Math.round(asNumber(user.quota_bytes, 0) / (1024 ** 3)))));
+            const gb = await promptQuota('Adjust quota', Math.max(1, Math.round(asNumber(user.quota_bytes, 0) / (1024 ** 3))));
             if (!gb) return;
             const quota = Math.max(1, asNumber(gb, 10));
             await API.admin.updateUser(userId, { quota_bytes: Math.round(quota * (1024 ** 3)) }).catch((err) => {
@@ -1857,8 +1883,8 @@ const AdminPanel = (() => {
                         <option value="guest">Guest</option>
                     </select>
 
-                    <label class="modal-label" for="invite-quota">Quota (GB)</label>
-                    <input id="invite-quota" class="admin-input" type="number" min="1" value="10">
+                    <label class="modal-label" for="invite-quota">Quota</label>
+                    <select id="invite-quota" class="admin-input">${quotaOptionsHtml(10)}</select>
 
                     <label class="modal-label" for="invite-message">Welcome message (optional)</label>
                     <textarea id="invite-message" class="admin-input invite-message-input" rows="3" placeholder="Welcome to FreeDrive..."></textarea>
@@ -2225,7 +2251,7 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'bulk-quota') {
-                    const quota = await Components.prompt('New quota in GB', '10');
+                    const quota = await promptQuota('New quota', 10);
                     if (!quota) return;
                     const bytes = Math.round(Math.max(1, asNumber(quota, 10)) * (1024 ** 3));
                     for (const id of state.userSelection) {
