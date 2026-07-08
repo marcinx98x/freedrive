@@ -91,6 +91,13 @@ func (s *FolderService) GetContents(ctx context.Context, folderID *string, owner
 		return nil, err
 	}
 
+	if folders == nil {
+		folders = []domain.Folder{}
+	}
+	if files == nil {
+		files = []domain.File{}
+	}
+
 	return &domain.FolderContents{
 		Folder:  folder,
 		Folders: folders,
