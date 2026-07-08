@@ -24,7 +24,80 @@ const Auth = (() => {
         if (lower.includes('registration is closed')) {
             return 'New account registration is currently closed.';
         }
+        if (lower.includes('verification code') || lower.includes('two-factor')) {
+            return raw;
+        }
+        if (lower.includes('access denied from this network')) {
+            return 'Sign-in is not allowed from this network. Contact your administrator.';
+        }
         return raw || 'Something went wrong. Please try again.';
+    }
+
+    function showTwoFAForm(challengeId, emailMasked) {
+        document.getElementById('login-form')?.classList.add('hidden');
+        document.getElementById('register-form')?.classList.add('hidden');
+        document.getElementById('reset-form')?.classList.add('hidden');
+        document.getElementById('confirm-email-form')?.classList.add('hidden');
+        document.querySelector('.auth-tabs')?.classList.add('hidden');
+
+        const form = document.getElementById('twofa-form');
+        form?.classList.remove('hidden');
+
+        const titleEl = document.querySelector('.auth-logo h1');
+        const subtitleEl = document.querySelector('.auth-logo .tagline');
+        if (titleEl) titleEl.textContent = 'Verify sign-in';
+        if (subtitleEl) subtitleEl.textContent = 'two-factor authentication';
+
+        const messageEl = document.getElementById('twofa-message');
+        if (messageEl) {
+            messageEl.textContent = emailMasked
+                ? `Enter the 6-digit code sent to ${emailMasked}.`
+                : 'Enter the 6-digit code sent to your email.';
+        }
+
+        const challengeInput = document.getElementById('twofa-challenge-id');
+        if (challengeInput) challengeInput.value = challengeId || '';
+
+        const codeInput = document.getElementById('twofa-code');
+        if (codeInput) {
+            codeInput.value = '';
+            codeInput.focus();
+        }
+        clearFormError('twofa-error');
+    }
+
+    function showLoginForm() {
+        document.getElementById('twofa-form')?.classList.add('hidden');
+        document.getElementById('register-form')?.classList.add('hidden');
+        document.getElementById('reset-form')?.classList.add('hidden');
+        document.getElementById('confirm-email-form')?.classList.add('hidden');
+        document.getElementById('login-form')?.classList.remove('hidden');
+        document.querySelector('.auth-tabs')?.classList.remove('hidden');
+
+        const titleEl = document.querySelector('.auth-logo h1');
+        const subtitleEl = document.querySelector('.auth-logo .tagline');
+        if (titleEl) titleEl.textContent = 'Sign in';
+        if (subtitleEl) subtitleEl.textContent = 'to continue to FreeDrive';
+        clearFormError('login-error');
+        clearFormError('twofa-error');
+    }
+
+    async function completeLogin(data) {
+        if (!data?.tokens?.access_token || !data?.user) {
+            throw new Error('Login response was incomplete. Please try again.');
+        }
+        API.setTokens(data.tokens);
+        API.setUser(data.user);
+        if (data.user?.avatar_url) {
+            try {
+                const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}') || {};
+                prefs.profileAvatar = data.user.avatar_url;
+                localStorage.setItem('fd_user_prefs', JSON.stringify(prefs));
+                localStorage.setItem('fd_profile_photo', data.user.avatar_url);
+            } catch { /* ignore */ }
+        }
+        Components.toast('Welcome back, ' + (data.user.username || data.user.email) + '!', 'success');
+        App.showApp();
     }
 
     function setFormError(id, message) {
@@ -69,6 +142,41 @@ const Auth = (() => {
         document.getElementById('forgot-password-btn')?.addEventListener('click', (e) => {
             e.preventDefault();
             showForgotPasswordHelp();
+        });
+
+        document.getElementById('twofa-back-btn')?.addEventListener('click', () => {
+            showLoginForm();
+        });
+
+        document.getElementById('twofa-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const challengeId = String(document.getElementById('twofa-challenge-id')?.value || '').trim();
+            const code = String(document.getElementById('twofa-code')?.value || '').trim();
+            const btn = document.getElementById('twofa-btn');
+            clearFormError('twofa-error');
+
+            if (!challengeId || code.length !== 6) {
+                const msg = 'Enter the 6-digit verification code';
+                setFormError('twofa-error', msg);
+                Components.toast(msg, 'error');
+                return;
+            }
+
+            try {
+                btn.disabled = true;
+                btn.querySelector('.btn-loader').classList.remove('hidden');
+                btn.querySelector('span').textContent = 'Verifying...';
+                const data = await API.auth.verify2FA(challengeId, code);
+                await completeLogin(data);
+            } catch (err) {
+                const msg = friendlyAuthError(err);
+                setFormError('twofa-error', msg);
+                Components.toast(msg, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.querySelector('.btn-loader').classList.add('hidden');
+                btn.querySelector('span').textContent = 'Verify';
+            }
         });
 
         // Parse ?invite= / ?email= from URL
@@ -222,22 +330,11 @@ const Auth = (() => {
                 btn.querySelector('span').textContent = 'Signing in...';
 
                 const data = await API.auth.login(email, password);
-                if (!data?.tokens?.access_token || !data?.user) {
-                    throw new Error('Login response was incomplete. Please try again.');
+                if (data?.requires_2fa) {
+                    showTwoFAForm(data.challenge_id, data.email_masked);
+                    return;
                 }
-                API.setTokens(data.tokens);
-                API.setUser(data.user);
-                if (data.user?.avatar_url) {
-                    try {
-                        const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}') || {};
-                        prefs.profileAvatar = data.user.avatar_url;
-                        localStorage.setItem('fd_user_prefs', JSON.stringify(prefs));
-                        localStorage.setItem('fd_profile_photo', data.user.avatar_url);
-                    } catch { /* ignore */ }
-                }
-
-                Components.toast('Welcome back, ' + data.user.username + '!', 'success');
-                App.showApp();
+                await completeLogin(data);
             } catch (err) {
                 const msg = friendlyAuthError(err);
                 setFormError('login-error', msg);
@@ -268,14 +365,11 @@ const Auth = (() => {
 
                 // Auto-login after registration
                 const data = await API.auth.login(email, password);
-                if (!data?.tokens?.access_token || !data?.user) {
-                    throw new Error('Account created, but automatic sign-in failed. Please sign in with ' + email);
+                if (data?.requires_2fa) {
+                    showTwoFAForm(data.challenge_id, data.email_masked);
+                    return;
                 }
-                API.setTokens(data.tokens);
-                API.setUser(data.user);
-
-                Components.toast('Account created. Sign-in email: ' + email, 'success', { duration: 7000 });
-                App.showApp();
+                await completeLogin(data);
             } catch (err) {
                 const msg = friendlyAuthError(err);
                 setFormError('register-error', msg);

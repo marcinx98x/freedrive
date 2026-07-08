@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
@@ -52,6 +53,7 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user.TwoFactorRequired = adminsettings.Require2FA()
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -70,8 +72,9 @@ func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username  *string `json:"username"`
-		AvatarURL *string `json:"avatar_url"`
+		Username          *string `json:"username"`
+		AvatarURL         *string `json:"avatar_url"`
+		Email2FAEnabled   *bool   `json:"email_2fa_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -108,12 +111,21 @@ func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.Email2FAEnabled != nil {
+		if err := service.CanSetEmail2FA(*req.Email2FAEnabled); err != nil {
+			writeError(w, "two-factor authentication is required by administrator", http.StatusForbidden)
+			return
+		}
+		user.Email2FAEnabled = *req.Email2FAEnabled
+	}
+
 	user.UpdatedAt = time.Now()
 	if err := h.userRepo.Update(r.Context(), user); err != nil {
 		writeError(w, "failed to update profile", http.StatusInternalServerError)
 		return
 	}
 
+	user.TwoFactorRequired = adminsettings.Require2FA()
 	writeJSON(w, http.StatusOK, user)
 }
 

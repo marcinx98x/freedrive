@@ -179,7 +179,7 @@ const App = (() => {
                         <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Current password</span>
                         <input id="settings-email-password" type="password" placeholder="Required to change email" autocomplete="current-password" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
                     </label>
-                    <button type="button" class="btn btn-secondary" id="settings-send-email-confirm" style="align-self:flex-start;">Send confirmation</button>
+                    <button type="button" class="btn btn-secondary drive-settings-confirm-btn" id="settings-send-email-confirm">Confirm</button>
                     ${pendingBanner}
                 </div>
                 <input id="settings-avatar-input" type="file" accept="image/*" hidden>
@@ -299,6 +299,58 @@ const App = (() => {
             } finally {
                 sendConfirmBtn.disabled = false;
                 sendConfirmBtn.textContent = prevLabel;
+            }
+        });
+    }
+
+    async function openSecurityCenter() {
+        const esc = Components.escapeHtml;
+        let profile = API.getUser() || {};
+        try {
+            profile = await API.me();
+            API.setUser(profile);
+        } catch { /* use cached */ }
+
+        const required = Boolean(profile.two_factor_required);
+        const enabled = Boolean(profile.email_2fa_enabled) || required;
+        const toggleDisabled = required ? 'disabled' : '';
+        const requiredNote = required
+            ? '<p style="margin:12px 0 0;font-size:12px;color:#174ea6;line-height:1.45;">Your administrator requires email two-factor authentication for all accounts.</p>'
+            : '<p style="margin:12px 0 0;font-size:12px;color:#5f6368;line-height:1.45;">When enabled, you will receive a 6-digit code by email each time you sign in.</p>';
+
+        Components.showModal('Security', `
+            <div class="drive-settings-modal" style="padding:8px 0;">
+                <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+                        <div>
+                            <div style="font-size:15px;font-weight:600;color:#202124;margin-bottom:4px;">Email two-factor authentication</div>
+                            <div style="font-size:13px;color:#5f6368;line-height:1.45;">Protect your account with a verification code sent to ${esc(profile.email || 'your email')}.</div>
+                        </div>
+                        <label class="live-toggle" style="flex-shrink:0;display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+                            <input type="checkbox" id="security-2fa-toggle" ${enabled ? 'checked' : ''} ${toggleDisabled}>
+                        </label>
+                    </div>
+                    ${requiredNote}
+                </div>
+            </div>
+        `, [{ text: 'Close' }]);
+
+        const toggle = document.getElementById('security-2fa-toggle');
+        toggle?.addEventListener('change', async () => {
+            if (required) {
+                toggle.checked = true;
+                Components.toast('Two-factor authentication is required by your administrator', 'info');
+                return;
+            }
+            const next = Boolean(toggle.checked);
+            const prev = !next;
+            try {
+                const updated = await API.updateMe({ email_2fa_enabled: next });
+                API.setUser(updated);
+                Components.toast(next ? 'Email two-factor authentication enabled' : 'Email two-factor authentication disabled', 'success');
+            } catch (err) {
+                toggle.checked = prev;
+                Components.toast(err?.message || 'Failed to update security setting', 'error');
             }
         });
     }
@@ -454,7 +506,7 @@ const App = (() => {
             openDriveSettings();
         });
         document.getElementById('topbar-security')?.addEventListener('click', () => {
-            Components.toast('Security center will be available soon', 'info');
+            openSecurityCenter();
         });
 
         const shouldIgnorePanelDismiss = (target) => {
@@ -720,7 +772,7 @@ const App = (() => {
 
         document.getElementById('profile-security-btn')?.addEventListener('click', () => {
             profileDropdown?.classList.add('hidden');
-            Components.toast('Security center will be available soon', 'info');
+            openSecurityCenter();
         });
 
         document.getElementById('profile-toggle-view-btn')?.addEventListener('click', () => {

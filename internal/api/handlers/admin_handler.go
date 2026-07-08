@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -153,11 +152,12 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Role       *string `json:"role"`
-		QuotaBytes *int64  `json:"quota_bytes"`
-		Username   *string `json:"username"`
-		Email      *string `json:"email"`
-		Suspended  *bool   `json:"suspended"`
+		Role              *string `json:"role"`
+		QuotaBytes        *int64  `json:"quota_bytes"`
+		Username          *string `json:"username"`
+		Email             *string `json:"email"`
+		Suspended         *bool   `json:"suspended"`
+		Email2FAEnabled   *bool   `json:"email_2fa_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -196,6 +196,13 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			_ = h.userRepo.DeleteUserRefreshTokens(r.Context(), user.ID)
 		}
 	}
+	if req.Email2FAEnabled != nil {
+		if !*req.Email2FAEnabled && adminsettings.Require2FA() {
+			writeError(w, "cannot disable two-factor authentication while it is required globally", http.StatusBadRequest)
+			return
+		}
+		user.Email2FAEnabled = *req.Email2FAEnabled
+	}
 
 	if err := h.userRepo.Update(r.Context(), user); err != nil {
 		writeError(w, "failed to update user", http.StatusInternalServerError)
@@ -203,6 +210,54 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, user)
+}
+
+// Send2FAReminder handles POST /api/v1/admin/users/send-2fa-reminder
+func (h *AdminHandler) Send2FAReminder(w http.ResponseWriter, r *http.Request) {
+	if !adminsettings.SMTPConfigured() {
+		writeError(w, "SMTP is not configured", http.StatusBadRequest)
+		return
+	}
+	if adminsettings.Require2FA() {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"sent":    0,
+			"message": "two-factor authentication is already required for everyone",
+		})
+		return
+	}
+
+	users, err := h.userRepo.List(r.Context())
+	if err != nil {
+		writeError(w, "failed to list users", http.StatusInternalServerError)
+		return
+	}
+
+	sent := 0
+	for _, user := range users {
+		if user.Suspended || user.Email2FAEnabled || strings.TrimSpace(user.Email) == "" {
+			continue
+		}
+		subject := "Enable two-factor authentication on FreeDrive"
+		body := fmt.Sprintf(
+			"Hello %s,\n\nYour FreeDrive administrator recommends enabling email two-factor authentication for your account.\n\nSign in to FreeDrive, open Security from your profile menu, and turn on email two-factor authentication.\n",
+			chooseReminderName(user.Username, user.Email),
+		)
+		if err := email.SendFromSettings(user.Email, subject, body); err != nil {
+			continue
+		}
+		sent++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"sent": sent,
+	})
+}
+
+func chooseReminderName(username, email string) string {
+	if strings.TrimSpace(username) != "" {
+		return username
+	}
+	return email
 }
 
 // RevokeUserSessions handles POST /api/v1/admin/users/{id}/revoke-sessions
@@ -597,46 +652,23 @@ func (h *AdminHandler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 
 // RunBackupNow handles POST /api/v1/admin/backup/run
 func (h *AdminHandler) RunBackupNow(w http.ResponseWriter, r *http.Request) {
-	adminSettingsMu.RLock()
-	backupCfg, _ := adminSettings["backup"].(map[string]interface{})
-	location := strings.TrimSpace(asString(backupCfg["location"]))
-	if location == "" {
-		location = "/var/lib/freedrive/backups"
-	}
-	snapshot := map[string]interface{}{}
-	for k, v := range adminSettings {
-		snapshot[k] = v
-	}
-	adminSettingsMu.RUnlock()
-
-	if err := os.MkdirAll(location, 0755); err != nil {
-		writeError(w, "failed to create backup directory: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	now := time.Now()
-	fileName := fmt.Sprintf("freedrive-backup-%s.json", now.Format("20060102-150405"))
-	fullPath := filepath.Join(location, fileName)
-	payload := map[string]interface{}{
-		"created_at": now.UTC().Format(time.RFC3339),
-		"kind":       "settings_snapshot",
-		"settings":   snapshot,
-	}
-	bytes, err := json.MarshalIndent(payload, "", "  ")
+	fullPath, err := adminsettings.RunSettingsBackup()
 	if err != nil {
-		writeError(w, "failed to create backup payload", http.StatusInternalServerError)
+		writeError(w, "failed to create backup: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(fullPath, bytes, fs.FileMode(0644)); err != nil {
-		writeError(w, "failed to write backup file: "+err.Error(), http.StatusInternalServerError)
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		writeError(w, "backup created but could not be read", http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":   "success",
-		"at":       now.UTC().Format(time.RFC3339),
-		"size":     formatBytes(int64(len(bytes))),
-		"filename": fileName,
+		"at":       time.Now().UTC().Format(time.RFC3339),
+		"size":     formatBytes(info.Size()),
+		"filename": filepath.Base(fullPath),
 		"path":     fullPath,
 	})
 }

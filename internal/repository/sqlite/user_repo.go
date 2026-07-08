@@ -33,11 +33,15 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) error {
 	if user.Suspended {
 		suspended = 1
 	}
+	email2fa := 0
+	if user.Email2FAEnabled {
+		email2fa = 1
+	}
 	_, err := r.writer.ExecContext(ctx,
-		`INSERT INTO users (id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO users (id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, email_2fa_enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, user.Email, user.Username, user.PasswordHash, user.Role,
-		user.QuotaBytes, user.UsedBytes, user.AvatarURL, suspended, user.CreatedAt, user.UpdatedAt,
+		user.QuotaBytes, user.UsedBytes, user.AvatarURL, suspended, email2fa, user.CreatedAt, user.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -49,19 +53,20 @@ func scanUser(row interface {
 	Scan(dest ...interface{}) error
 }) (*domain.User, error) {
 	user := &domain.User{}
-	var suspended int
+	var suspended, email2fa int
 	err := row.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role,
-		&user.QuotaBytes, &user.UsedBytes, &user.AvatarURL, &suspended, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
+		&user.QuotaBytes, &user.UsedBytes, &user.AvatarURL, &suspended, &email2fa, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
 	if err != nil {
 		return nil, err
 	}
 	user.Suspended = suspended != 0
+	user.Email2FAEnabled = email2fa != 0
 	return user, nil
 }
 
 func (r *UserRepo) GetByID(ctx context.Context, id string) (*domain.User, error) {
 	row := r.reader.QueryRowContext(ctx,
-		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at, last_login_at
+		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, email_2fa_enabled, created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id,
 	)
 	user, err := scanUser(row)
@@ -76,7 +81,7 @@ func (r *UserRepo) GetByID(ctx context.Context, id string) (*domain.User, error)
 
 func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	row := r.reader.QueryRowContext(ctx,
-		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at, last_login_at
+		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, email_2fa_enabled, created_at, updated_at, last_login_at
 		 FROM users WHERE email = ? COLLATE NOCASE`, email,
 	)
 	user, err := scanUser(row)
@@ -95,11 +100,15 @@ func (r *UserRepo) Update(ctx context.Context, user *domain.User) error {
 	if user.Suspended {
 		suspended = 1
 	}
+	email2fa := 0
+	if user.Email2FAEnabled {
+		email2fa = 1
+	}
 	_, err := r.writer.ExecContext(ctx,
-		`UPDATE users SET email=?, username=?, password_hash=?, role=?, quota_bytes=?, used_bytes=?, avatar_url=?, suspended=?, updated_at=?, last_login_at=?
+		`UPDATE users SET email=?, username=?, password_hash=?, role=?, quota_bytes=?, used_bytes=?, avatar_url=?, suspended=?, email_2fa_enabled=?, updated_at=?, last_login_at=?
 		 WHERE id=?`,
 		user.Email, user.Username, user.PasswordHash, user.Role,
-		user.QuotaBytes, user.UsedBytes, user.AvatarURL, suspended, user.UpdatedAt, user.LastLoginAt, user.ID,
+		user.QuotaBytes, user.UsedBytes, user.AvatarURL, suspended, email2fa, user.UpdatedAt, user.LastLoginAt, user.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)
@@ -117,7 +126,7 @@ func (r *UserRepo) Delete(ctx context.Context, id string) error {
 
 func (r *UserRepo) List(ctx context.Context) ([]domain.User, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at, last_login_at
+		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, email_2fa_enabled, created_at, updated_at, last_login_at
 		 FROM users ORDER BY created_at DESC`,
 	)
 	if err != nil {

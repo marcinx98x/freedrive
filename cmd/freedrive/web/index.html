@@ -58,6 +58,14 @@
                 <div class="auth-error" id="confirm-email-error" role="alert" aria-live="polite"></div>
                 <button type="button" class="btn btn-primary btn-full hidden" id="confirm-email-login-btn"><span>Sign in</span></button>
             </form>
+            <form id="twofa-form" class="auth-form hidden">
+                <p id="twofa-message" style="margin:0 0 16px;color:#5f6368;font-size:14px;line-height:1.45;text-align:center;">Enter the 6-digit code sent to your email.</p>
+                <div class="form-group"><input type="text" id="twofa-code" placeholder="6-digit code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></div>
+                <input type="hidden" id="twofa-challenge-id" value="">
+                <div class="auth-error" id="twofa-error" role="alert" aria-live="polite"></div>
+                <button type="submit" class="btn btn-primary btn-full" id="twofa-btn"><span>Verify</span><div class="btn-loader hidden"></div></button>
+                <button type="button" class="auth-link-btn" id="twofa-back-btn">Back to sign in</button>
+            </form>
             <div class="auth-footer">
                 <div class="encryption-badge">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>

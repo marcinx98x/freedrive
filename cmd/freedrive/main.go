@@ -59,9 +59,10 @@ func main() {
 	searchRepo := sqlite.NewSearchRepo(db)
 	approvalRepo := sqlite.NewApprovalRepo(db)
 	emailChangeRepo := sqlite.NewEmailChangeRepo(db)
+	email2faRepo := sqlite.NewEmail2FARepo(db)
 
 	// Initialize services
-	authService := service.NewAuthService(userRepo, cfg.JWTSecret)
+	authService := service.NewAuthService(userRepo, email2faRepo, cfg.JWTSecret)
 	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo)
 	computerService := service.NewComputerService(computerRepo, folderRepo)
 	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo)
@@ -80,6 +81,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fileService.StartTrashPurge(ctx)
+	adminsettings.StartBackupScheduler(ctx)
 
 	// Create router
 	router := api.NewRouter(

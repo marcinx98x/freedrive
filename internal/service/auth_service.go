@@ -29,15 +29,17 @@ var (
 
 // AuthService handles authentication and authorization.
 type AuthService struct {
-	userRepo  repository.UserRepository
-	jwtSecret []byte
+	userRepo     repository.UserRepository
+	email2faRepo repository.Email2FARepository
+	jwtSecret    []byte
 }
 
 // NewAuthService creates a new auth service.
-func NewAuthService(userRepo repository.UserRepository, jwtSecret string) *AuthService {
+func NewAuthService(userRepo repository.UserRepository, email2faRepo repository.Email2FARepository, jwtSecret string) *AuthService {
 	return &AuthService{
-		userRepo:  userRepo,
-		jwtSecret: []byte(jwtSecret),
+		userRepo:     userRepo,
+		email2faRepo: email2faRepo,
+		jwtSecret:    []byte(jwtSecret),
 	}
 }
 
@@ -129,36 +131,16 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 	return user, nil
 }
 
-// Login authenticates a user and returns JWT tokens.
+// Login authenticates a user and returns JWT tokens (legacy helper; prefer VerifyCredentials + IssueTokens).
 func (s *AuthService) Login(ctx context.Context, email, password string) (*TokenPair, *domain.User, error) {
-	email = strings.ToLower(strings.TrimSpace(email))
-	user, err := s.userRepo.GetByEmail(ctx, email)
+	user, err := s.VerifyCredentials(ctx, email, password)
 	if err != nil {
 		return nil, nil, err
 	}
-	if user == nil {
-		return nil, nil, ErrInvalidCredentials
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return nil, nil, ErrInvalidCredentials
-	}
-	if user.Suspended {
-		return nil, nil, ErrAccountSuspended
-	}
-
-	// Update last login
-	now := time.Now()
-	user.LastLoginAt = &now
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return nil, nil, err
-	}
-
-	tokens, err := s.generateTokenPair(ctx, user)
+	tokens, err := s.IssueTokens(ctx, user)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	return tokens, user, nil
 }
 

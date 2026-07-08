@@ -417,9 +417,9 @@ const AdminPanel = (() => {
             const userFiles = state.files.filter((f) => String(f.owner_id || f.user_id || '') === String(u.id));
             if (!state.userMeta[u.id]) {
                 state.userMeta[u.id] = {
-                    status: 'active',
+                    status: u.suspended ? 'suspended' : 'active',
                     last_active: u.last_login_at || u.updated_at || u.created_at || nowISO(),
-                    twofa: Boolean(state.userMeta[u.id]?.twofa),
+                    twofa: Boolean(u.email_2fa_enabled),
                     files_count: userFiles.length,
                     bandwidth_month: asNumber(state.userMeta[u.id]?.bandwidth_month, 0),
                 };
@@ -855,6 +855,8 @@ const AdminPanel = (() => {
         if (!u) return '';
         const meta = state.userMeta[u.id] || {};
         const status = meta.status || 'active';
+        const twofaEnabled = Boolean(u.email_2fa_enabled);
+        const global2FA = Boolean(state.settings?.security?.require_2fa);
         const breakdown = estimateFileTypeBuckets();
         const bItems = Object.entries(breakdown).slice(0, 4);
         const recent = state.activities.filter((a) => (a.user_id || '') === u.id || (a.username || '') === (u.username || '')).slice(0, 5);
@@ -902,6 +904,13 @@ const AdminPanel = (() => {
                         <div class="gd-input-group">
                             <label>Storage quota</label>
                             <select class="gd-input" id="drawer-quota">${quotaOptionsHtml(Math.max(1, Math.round(asNumber(u.quota_bytes, 0) / (1024 ** 3))))}</select>
+                        </div>
+                        <div class="gd-input-group">
+                            <label>Email two-factor authentication</label>
+                            <label class="live-toggle" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+                                <input type="checkbox" id="drawer-2fa" ${twofaEnabled || global2FA ? 'checked' : ''} ${global2FA ? 'disabled' : ''}>
+                                <span style="font-size:13px;color:#5f6368;">${global2FA ? 'Required for all users' : 'Require code at sign-in'}</span>
+                            </label>
                         </div>
                         <div style="display:flex; justify-content: flex-end;">
                            <button type="button" class="gd-btn-primary" data-admin-action="save-inline-edit" data-user-id="${u.id}">Save changes</button>
@@ -1352,12 +1361,29 @@ const AdminPanel = (() => {
     function renderSecuritySection() {
         const fails = getFailedLogins();
         const sessions = getActiveSessions();
+        const sec = state.settingsDraft?.security || state.settings?.security || {};
+        const require2FA = Boolean(sec.require_2fa);
+        const lastRotation = sec.last_key_rotation ? Components.formatDate(sec.last_key_rotation) : 'Never';
 
         return `
             <div class="gd-storage-container">
                 <div class="gd-storage-hero" style="margin-bottom: 24px;">
                     <h2 class="gd-storage-hero-title">Security & access</h2>
-                    <p class="gd-storage-hero-subtitle">Monitor suspicious activity and active sessions.</p>
+                    <p class="gd-storage-hero-subtitle">Monitor suspicious activity, sessions, and authentication policy.</p>
+                </div>
+
+                <div class="gd-card" style="padding:24px;margin-bottom:24px;">
+                    <h3 style="margin:0 0 8px;font-size:16px;">Two-factor authentication</h3>
+                    <p style="margin:0 0 16px;color:#5f6368;font-size:14px;">Require a 6-digit email code at sign-in for every user (including admins).</p>
+                    <label class="live-toggle" style="display:inline-flex;align-items:center;gap:10px;cursor:pointer;">
+                        <input type="checkbox" data-admin-action="toggle-require-2fa" ${require2FA ? 'checked' : ''}>
+                        <span style="font-weight:500;color:#3c4043;">Require email 2FA for all users</span>
+                    </label>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:18px;">
+                        <button class="gd-btn-outline" data-admin-action="send-2fa-reminder">Remind users without 2FA</button>
+                        <button class="gd-btn-outline" data-admin-action="rotate-keys">Record key rotation</button>
+                    </div>
+                    <p style="margin:12px 0 0;font-size:12px;color:#5f6368;">Last recorded key rotation: ${esc(lastRotation)}. Full encryption key rotation is not automated yet — this only updates the timestamp.</p>
                 </div>
 
                 <div class="gd-cards-layout">
@@ -2265,6 +2291,7 @@ const AdminPanel = (() => {
                     const email = String(document.getElementById('drawer-email')?.value || '').trim();
                     const role = String(document.getElementById('drawer-role')?.value || 'user').toLowerCase();
                     const quotaGb = Math.max(1, asNumber(document.getElementById('drawer-quota')?.value, 10));
+                    const email2fa = Boolean(document.getElementById('drawer-2fa')?.checked);
                     if (!name || !email.includes('@')) {
                         Components.toast('Please fill valid name and e-mail', 'error');
                         return;
@@ -2274,6 +2301,7 @@ const AdminPanel = (() => {
                         email,
                         role,
                         quota_bytes: Math.round(quotaGb * (1024 ** 3)),
+                        email_2fa_enabled: email2fa,
                     }).catch((err) => {
                         Components.toast(err.message, 'error');
                         throw err;
@@ -2604,7 +2632,8 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'toggle-require-2fa') {
-                    state.settingsDraft.security.require_2fa = btn.checked;
+                    const next = btn.type === 'checkbox' ? !btn.checked : Boolean(btn.checked);
+                    state.settingsDraft.security.require_2fa = next;
                     try {
                         await persistSettingsNow({ silent: true });
                         Components.toast('2FA requirement saved', 'success');
@@ -2616,12 +2645,18 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'send-2fa-reminder') {
-                    Components.toast('2FA reminders sent', 'success');
+                    try {
+                        const result = await API.admin.send2FAReminder();
+                        const sent = Number(result?.sent || 0);
+                        Components.toast(sent > 0 ? `2FA reminders sent to ${sent} user(s)` : (result?.message || 'No reminders sent'), sent > 0 ? 'success' : 'info');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to send reminders', 'error');
+                    }
                     return;
                 }
 
                 if (action === 'rotate-keys') {
-                    const ok = await Components.confirm('Rotate encryption keys', 'This is a sensitive operation. It may take time and cannot be canceled once started.', 'Rotate');
+                    const ok = await Components.confirm('Record key rotation', 'This only saves a rotation timestamp in settings. It does not re-encrypt stored files yet.', 'Record');
                     if (!ok) return;
                     state.settingsDraft.security.last_key_rotation = nowISO();
                     try {

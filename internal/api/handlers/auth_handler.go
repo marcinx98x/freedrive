@@ -3,7 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
+	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
+	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
 )
@@ -13,6 +17,7 @@ type AuthHandler struct {
 	authService     *service.AuthService
 	emailChangeRepo repository.EmailChangeRepository
 	userRepo        repository.UserRepository
+	activityRepo    repository.ActivityRepository
 }
 
 // NewAuthHandler creates a new auth handler.
@@ -20,16 +25,49 @@ func NewAuthHandler(
 	authService *service.AuthService,
 	emailChangeRepo repository.EmailChangeRepository,
 	userRepo repository.UserRepository,
+	activityRepo repository.ActivityRepository,
 ) *AuthHandler {
 	return &AuthHandler{
 		authService:     authService,
 		emailChangeRepo: emailChangeRepo,
 		userRepo:        userRepo,
+		activityRepo:    activityRepo,
 	}
+}
+
+func (h *AuthHandler) checkIP(w http.ResponseWriter, r *http.Request) bool {
+	if !adminsettings.IsIPAllowed(middleware.ClientIP(r)) {
+		writeError(w, "access denied from this network", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (h *AuthHandler) logAuthActivity(r *http.Request, user *domain.User, action domain.ActivityAction) {
+	if h.activityRepo == nil || user == nil || user.ID == "" {
+		return
+	}
+	username := user.Username
+	if username == "" {
+		username = user.Email
+	}
+	_ = h.activityRepo.Create(r.Context(), &domain.ActivityLog{
+		UserID:     user.ID,
+		Username:   username,
+		Action:     action,
+		TargetType: "auth",
+		TargetID:   user.ID,
+		TargetName: username,
+		IPAddress:  middleware.ClientIP(r),
+	})
 }
 
 // Register handles POST /api/v1/auth/register
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
 	var req struct {
 		Email      string `json:"email"`
 		Username   string `json:"username"`
@@ -74,6 +112,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 // Login handles POST /api/v1/auth/login
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -88,9 +130,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, user, err := h.authService.Login(r.Context(), req.Email, req.Password)
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	user, err := h.authService.VerifyCredentials(r.Context(), email, req.Password)
 	if err != nil {
 		if err == service.ErrInvalidCredentials {
+			if existing, _ := h.userRepo.GetByEmail(r.Context(), email); existing != nil {
+				h.logAuthActivity(r, existing, domain.ActionFailedLogin)
+			}
 			writeError(w, "invalid email or password", http.StatusUnauthorized)
 		} else if err == service.ErrAccountSuspended {
 			writeError(w, "account suspended", http.StatusForbidden)
@@ -100,6 +146,68 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if service.Needs2FA(user) {
+		challenge, err := h.authService.StartEmail2FA(r.Context(), user)
+		if err == service.Err2FAUnavailable {
+			writeError(w, "email two-factor authentication is unavailable; contact your administrator", http.StatusServiceUnavailable)
+			return
+		}
+		if err != nil {
+			writeError(w, "failed to start two-factor authentication", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"requires_2fa":  true,
+			"challenge_id":  challenge.ChallengeID,
+			"email_masked":  challenge.EmailMasked,
+		})
+		return
+	}
+
+	tokens, err := h.authService.IssueTokens(r.Context(), user)
+	if err != nil {
+		writeError(w, "login failed", http.StatusInternalServerError)
+		return
+	}
+	h.logAuthActivity(r, user, domain.ActionLogin)
+
+	user.TwoFactorRequired = adminsettings.Require2FA()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tokens": tokens,
+		"user":   user,
+	})
+}
+
+// Verify2FA handles POST /api/v1/auth/verify-2fa
+func (h *AuthHandler) Verify2FA(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
+	var req struct {
+		ChallengeID string `json:"challenge_id"`
+		Code        string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tokens, user, err := h.authService.VerifyEmail2FA(r.Context(), req.ChallengeID, req.Code)
+	if err != nil {
+		switch err {
+		case service.ErrInvalid2FACode:
+			writeError(w, "invalid or expired verification code", http.StatusBadRequest)
+		case service.ErrAccountSuspended:
+			writeError(w, "account suspended", http.StatusForbidden)
+		default:
+			writeError(w, "verification failed", http.StatusInternalServerError)
+		}
+		return
+	}
+	h.logAuthActivity(r, user, domain.ActionLogin)
+
+	user.TwoFactorRequired = adminsettings.Require2FA()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tokens": tokens,
 		"user":   user,
@@ -108,6 +216,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Refresh handles POST /api/v1/auth/refresh
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
@@ -147,6 +259,10 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // ResetPassword handles POST /api/v1/auth/reset-password
 func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
 	var req struct {
 		Token       string `json:"token"`
 		Email       string `json:"email"`

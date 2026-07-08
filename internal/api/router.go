@@ -51,7 +51,7 @@ func NewRouter(
 	r.Use(limiter.Limit)
 
 	// Create handlers
-	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo)
+	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo, activityRepo)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
 	computerHandler := handlers.NewComputerHandler(computerService)
@@ -66,6 +66,7 @@ func NewRouter(
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
+			r.Post("/verify-2fa", authHandler.Verify2FA)
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
 			r.Post("/reset-password", authHandler.ResetPassword)
@@ -140,6 +141,7 @@ func NewRouter(
 				r.Get("/users", adminHandler.ListUsers)
 				r.Post("/users", adminHandler.CreateUser)
 				r.Patch("/users/{id}", adminHandler.UpdateUser)
+				r.Post("/users/send-2fa-reminder", adminHandler.Send2FAReminder)
 				r.Delete("/users/{id}", adminHandler.DeleteUser)
 				r.Post("/users/{id}/reset-password", adminHandler.SendPasswordReset)
 				r.Post("/users/{id}/revoke-sessions", adminHandler.RevokeUserSessions)

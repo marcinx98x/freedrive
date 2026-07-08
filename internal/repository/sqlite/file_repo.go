@@ -461,6 +461,14 @@ func (r *FileRepo) SumEncryptedSizeByOwner(ctx context.Context, ownerID string) 
 	return total, err
 }
 
+// SumAllEncryptedSize returns total encrypted bytes for all non-trashed files.
+func (r *FileRepo) SumAllEncryptedSize(ctx context.Context) (int64, error) {
+	var total int64
+	err := r.reader.QueryRowContext(ctx,
+		"SELECT COALESCE(SUM(encrypted_size), 0) FROM files WHERE is_trashed = 0").Scan(&total)
+	return total, err
+}
+
 // ListFileMetaByOwner returns lightweight metadata for a user's non-trashed
 // files, used to compute the storage breakdown. The set matches
 // SumEncryptedSizeByOwner so the category totals add up to used_bytes.

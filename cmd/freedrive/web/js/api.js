@@ -78,7 +78,8 @@ const API = (() => {
             || path === '/auth/register'
             || path === '/auth/refresh'
             || path === '/auth/reset-password'
-            || path === '/auth/confirm-email';
+            || path === '/auth/confirm-email'
+            || path === '/auth/verify-2fa';
         if (res.status === 401 && !isRetry && refreshToken && !isPublicAuth) {
             const refreshed = await tryRefresh();
             if (refreshed) return request(method, path, body, true, rlRetries);
@@ -154,6 +155,7 @@ const API = (() => {
 
     const auth = {
         login: (email, password) => request('POST', '/auth/login', { email, password }),
+        verify2FA: (challenge_id, code) => request('POST', '/auth/verify-2fa', { challenge_id, code }),
         register: (email, username, password, invite_code) => request('POST', '/auth/register', { email, username, password, invite_code }),
         logout: () => request('POST', '/auth/logout', { refresh_token: refreshToken }),
         resetPassword: (token, email, new_password) => request('POST', '/auth/reset-password', { token, email, new_password }),
@@ -209,6 +211,7 @@ const API = (() => {
         updateUser: (id, data) => request('PATCH', `/admin/users/${id}`, data),
         deleteUser: (id) => request('DELETE', `/admin/users/${id}`),
         sendPasswordReset: (id) => request('POST', `/admin/users/${id}/reset-password`),
+        send2FAReminder: () => request('POST', '/admin/users/send-2fa-reminder'),
         revokeUserSessions: (id) => request('POST', `/admin/users/${id}/revoke-sessions`),
         revokeAllSessions: () => request('POST', '/admin/sessions/revoke-all'),
         stats: () => request('GET', '/admin/stats'),

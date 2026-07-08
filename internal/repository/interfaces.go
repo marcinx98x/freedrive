@@ -43,6 +43,14 @@ type EmailChangeRepository interface {
 	DeleteByID(ctx context.Context, id string) error
 }
 
+// Email2FARepository defines data access for email 2FA challenges.
+type Email2FARepository interface {
+	Create(ctx context.Context, challenge *domain.Email2FAChallenge) error
+	GetByID(ctx context.Context, id string) (*domain.Email2FAChallenge, error)
+	DeleteByUserID(ctx context.Context, userID string) error
+	DeleteByID(ctx context.Context, id string) error
+}
+
 // FileRepository defines data access for files.
 type FileRepository interface {
 	Create(ctx context.Context, file *domain.File) error
@@ -62,6 +70,7 @@ type FileRepository interface {
 	ListAllBlobPaths(ctx context.Context) ([]string, error)
 	CountByOwner(ctx context.Context, ownerID string) (int, error)
 	SumEncryptedSizeByOwner(ctx context.Context, ownerID string) (int64, error)
+	SumAllEncryptedSize(ctx context.Context) (int64, error)
 	ListFileMetaByOwner(ctx context.Context, ownerID string) ([]domain.FileMeta, error)
 
 	// Versioning

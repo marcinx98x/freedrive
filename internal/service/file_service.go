@@ -44,6 +44,9 @@ func (s *FileService) Upload(ctx context.Context, file *domain.File, blobPath st
 	if user.UsedBytes+file.EncryptedSize > user.QuotaBytes {
 		return fmt.Errorf("quota exceeded: used %d + %d > %d", user.UsedBytes, file.EncryptedSize, user.QuotaBytes)
 	}
+	if err := s.checkServerCapacity(ctx, file.EncryptedSize); err != nil {
+		return err
+	}
 
 	file.BlobPath = blobPath
 
@@ -273,14 +276,16 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 	}
 
 	// Create a snapshot of current state before replacing content.
-	_ = s.fileRepo.CreateVersion(ctx, &domain.FileVersion{
-		FileID:    file.ID,
-		Version:   file.Version,
-		Size:      file.Size,
-		BlobPath:  file.BlobPath,
-		IV:        file.IV,
-		CreatedBy: userID,
-	})
+	if adminsettings.VersioningEnabled() {
+		_ = s.fileRepo.CreateVersion(ctx, &domain.FileVersion{
+			FileID:    file.ID,
+			Version:   file.Version,
+			Size:      file.Size,
+			BlobPath:  file.BlobPath,
+			IV:        file.IV,
+			CreatedBy: userID,
+		})
+	}
 
 	newBlobPath, newEncryptedSize, err := s.storage.Save(userID, r)
 	if err != nil {
@@ -301,6 +306,10 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 	if newUsed > user.QuotaBytes {
 		_ = s.storage.Delete(newBlobPath)
 		return nil, fmt.Errorf("quota exceeded")
+	}
+	if err := s.checkServerCapacity(ctx, newEncryptedSize-file.EncryptedSize); err != nil {
+		_ = s.storage.Delete(newBlobPath)
+		return nil, err
 	}
 
 	oldBlobPath := file.BlobPath
@@ -331,6 +340,13 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 	}
 
 	_ = s.storage.Delete(oldBlobPath)
+	if adminsettings.VersioningEnabled() {
+		if removed, err := s.fileRepo.DeleteOldVersions(ctx, file.ID, adminsettings.KeepVersions()); err == nil {
+			for _, v := range removed {
+				_ = s.storage.Delete(v.BlobPath)
+			}
+		}
+	}
 	s.logActivity(ctx, userID, domain.ActionUpload, "file", file.ID, file.Name, `{"updated":true}`)
 
 	return file, nil
@@ -349,6 +365,17 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 		return nil, fmt.Errorf("access denied")
 	}
 
+	if adminsettings.VersioningEnabled() {
+		_ = s.fileRepo.CreateVersion(ctx, &domain.FileVersion{
+			FileID:    file.ID,
+			Version:   file.Version,
+			Size:      file.Size,
+			BlobPath:  file.BlobPath,
+			IV:        file.IV,
+			CreatedBy: userID,
+		})
+	}
+
 	v, err := s.fileRepo.GetVersion(ctx, fileID, version)
 	if err != nil {
 		return nil, err
@@ -356,15 +383,6 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 	if v == nil {
 		return nil, fmt.Errorf("version not found")
 	}
-
-	_ = s.fileRepo.CreateVersion(ctx, &domain.FileVersion{
-		FileID:    file.ID,
-		Version:   file.Version,
-		Size:      file.Size,
-		BlobPath:  file.BlobPath,
-		IV:        file.IV,
-		CreatedBy: userID,
-	})
 
 	reader, err := s.storage.Get(v.BlobPath)
 	if err != nil {
@@ -392,6 +410,10 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 		_ = s.storage.Delete(newBlobPath)
 		return nil, fmt.Errorf("quota exceeded")
 	}
+	if err := s.checkServerCapacity(ctx, newEncryptedSize-file.EncryptedSize); err != nil {
+		_ = s.storage.Delete(newBlobPath)
+		return nil, err
+	}
 
 	oldBlobPath := file.BlobPath
 	oldEncryptedSize := file.EncryptedSize
@@ -416,4 +438,19 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 	s.logActivity(ctx, userID, domain.ActionRestore, "file", file.ID, file.Name, fmt.Sprintf(`{"version":%d}`, version))
 
 	return file, nil
+}
+
+func (s *FileService) checkServerCapacity(ctx context.Context, additionalBytes int64) error {
+	cap := adminsettings.TotalCapacityBytes()
+	if cap <= 0 || additionalBytes <= 0 {
+		return nil
+	}
+	used, err := s.fileRepo.SumAllEncryptedSize(ctx)
+	if err != nil {
+		return err
+	}
+	if used+additionalBytes > cap {
+		return fmt.Errorf("server storage capacity exceeded")
+	}
+	return nil
 }

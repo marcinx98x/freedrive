@@ -554,6 +554,24 @@ body {
 
 .drive-settings-field-full { grid-column: 1 / -1; }
 
+.drive-settings-confirm-btn {
+  align-self: flex-start;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a73e8;
+}
+
+.drive-settings-confirm-btn:hover {
+  background: #e8f0fe;
+  border-color: #1a73e8;
+}
+
+.drive-settings-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .app:not(.admin-mode) .main-content {
   background: #fff !important;
 }
