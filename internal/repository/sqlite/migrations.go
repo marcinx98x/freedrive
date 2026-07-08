@@ -26,6 +26,7 @@ func runMigrations(db *sql.DB) error {
 		{3, migrationV3},
 		{4, migrationV4},
 		{5, migrationV5},
+		{6, migrationV6},
 	}
 
 	for _, m := range migrations {
@@ -252,4 +253,8 @@ CREATE TABLE IF NOT EXISTS file_approvals (
 CREATE INDEX IF NOT EXISTS idx_file_approvals_approver ON file_approvals(approver_id, status);
 CREATE INDEX IF NOT EXISTS idx_file_approvals_requester ON file_approvals(requested_by, status);
 ALTER TABLE comments ADD COLUMN assigned_to TEXT REFERENCES users(id);
+`
+
+const migrationV6 = `
+ALTER TABLE invite_links ADD COLUMN email TEXT NOT NULL DEFAULT '';
 `

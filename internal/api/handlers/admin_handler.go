@@ -235,9 +235,11 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 
 	// Generate random invite code
 	code := generateRandomString(8)
+	inviteEmail := strings.ToLower(strings.TrimSpace(req.Email))
 	invite := &domain.InviteLink{
 		Code:       code,
 		CreatedBy:  userID,
+		Email:      inviteEmail,
 		Role:       domain.Role(req.Role),
 		QuotaBytes: req.QuotaBytes,
 		MaxUses:    req.MaxUses,
@@ -248,7 +250,7 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recipient := strings.TrimSpace(req.Email)
+	recipient := inviteEmail
 	adminSettingsMu.RLock()
 	emailCfg, _ := adminSettings["email"].(map[string]interface{})
 	generalCfg, _ := adminSettings["general"].(map[string]interface{})
@@ -282,6 +284,9 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 
 	siteURL = siteBaseURL(siteURL, r)
 	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(invite.Code))
+	if inviteEmail != "" {
+		inviteURL = fmt.Sprintf("%s&email=%s", inviteURL, url.QueryEscape(inviteEmail))
+	}
 
 	emailSent := false
 	emailError := ""
@@ -294,16 +299,17 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 			message := strings.TrimSpace(req.Message)
 
 			body := fmt.Sprintf(
-				"Hello %s,\n\nYou've been invited to join FreeDrive.\n\nInvite link:\n%s\n\nRole: %s\nQuota: %.1f GB\n",
+				"Hello %s,\n\nYou've been invited to join FreeDrive.\n\nInvite link:\n%s\n\nSign in email (required): %s\nRole: %s\nQuota: %.1f GB\n",
 				displayName,
 				inviteURL,
+				inviteEmail,
 				strings.ToUpper(string(invite.Role)),
 				float64(invite.QuotaBytes)/(1024*1024*1024),
 			)
 			if message != "" {
 				body += fmt.Sprintf("\nMessage from admin:\n%s\n", message)
 			}
-			body += "\nIf the link does not open automatically, copy and paste it into your browser.\n"
+			body += "\nUse the email address above when creating your account and when signing in.\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
 			emailSent = true // Assume success for fast response
 			go func() {
@@ -318,6 +324,7 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		"id":          invite.ID,
 		"code":        invite.Code,
 		"created_by":  invite.CreatedBy,
+		"email":       invite.Email,
 		"role":        invite.Role,
 		"quota_bytes": invite.QuotaBytes,
 		"max_uses":    invite.MaxUses,
@@ -397,6 +404,10 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	siteURL = siteBaseURL(siteURL, r)
 
 	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(code))
+	recipientEmail := strings.ToLower(recipient)
+	if recipientEmail != "" {
+		inviteURL = fmt.Sprintf("%s&email=%s", inviteURL, url.QueryEscape(recipientEmail))
+	}
 	role := strings.TrimSpace(req.Role)
 	if role == "" {
 		role = "user"
@@ -407,16 +418,17 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	subject := "FreeDrive Invite Link (Resent)"
 	body := fmt.Sprintf(
-		"Hello %s,\n\nYour FreeDrive invite link has been resent.\n\nInvite link:\n%s\n\nRole: %s\nQuota: %.1f GB\n",
+		"Hello %s,\n\nYour FreeDrive invite link has been resent.\n\nInvite link:\n%s\n\nSign in email (required): %s\nRole: %s\nQuota: %.1f GB\n",
 		chooseDisplayName("", recipient),
 		inviteURL,
+		recipientEmail,
 		strings.ToUpper(role),
 		float64(quota)/(1024*1024*1024),
 	)
 	if strings.TrimSpace(req.Message) != "" {
 		body += fmt.Sprintf("\nMessage from admin:\n%s\n", strings.TrimSpace(req.Message))
 	}
-	body += "\nIf the link does not open automatically, copy and paste it into your browser.\n"
+	body += "\nUse the email address above when creating your account and when signing in.\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
 	go func() {
 		if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {

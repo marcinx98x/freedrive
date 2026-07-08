@@ -20,6 +20,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrUserExists         = errors.New("user with this email already exists")
 	ErrInvalidInvite      = errors.New("invalid or expired invite code")
+	ErrInviteEmailMismatch = errors.New("registration email must match the invite email")
 	ErrInvalidToken       = errors.New("invalid or expired token")
 )
 
@@ -70,6 +71,13 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 		}
 		if invite.ExpiresAt != nil && invite.ExpiresAt.Before(time.Now()) {
 			return nil, ErrInvalidInvite
+		}
+		inviteEmail := strings.ToLower(strings.TrimSpace(invite.Email))
+		if inviteEmail != "" && inviteEmail != email {
+			return nil, ErrInviteEmailMismatch
+		}
+		if inviteEmail != "" {
+			email = inviteEmail
 		}
 		role = invite.Role
 		if invite.QuotaBytes > 0 {

@@ -1258,6 +1258,22 @@ svg {
 .auth-error:not(:empty) {
   display: block;
 }
+.auth-link-btn {
+  display: block;
+  width: 100%;
+  margin-top: -4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #1a73e8;
+  font-size: 13px;
+  font-family: 'Google Sans', 'Roboto', Arial, sans-serif;
+  text-align: center;
+  cursor: pointer;
+}
+.auth-link-btn:hover {
+  text-decoration: underline;
+}
 
 /* ── Activity page ── */
 .activity-page { padding: 16px 0; }

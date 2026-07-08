@@ -180,9 +180,9 @@ func (r *UserRepo) CreateInvite(ctx context.Context, invite *domain.InviteLink) 
 	invite.CreatedAt = time.Now()
 
 	_, err := r.writer.ExecContext(ctx,
-		`INSERT INTO invite_links (id, code, created_by, role, quota_bytes, max_uses, used_count, expires_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		invite.ID, invite.Code, invite.CreatedBy, invite.Role, invite.QuotaBytes,
+		`INSERT INTO invite_links (id, code, created_by, email, role, quota_bytes, max_uses, used_count, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		invite.ID, invite.Code, invite.CreatedBy, invite.Email, invite.Role, invite.QuotaBytes,
 		invite.MaxUses, invite.UsedCount, invite.ExpiresAt, invite.CreatedAt,
 	)
 	return err
@@ -191,9 +191,9 @@ func (r *UserRepo) CreateInvite(ctx context.Context, invite *domain.InviteLink) 
 func (r *UserRepo) GetInviteByCode(ctx context.Context, code string) (*domain.InviteLink, error) {
 	inv := &domain.InviteLink{}
 	err := r.reader.QueryRowContext(ctx,
-		`SELECT id, code, created_by, role, quota_bytes, max_uses, used_count, expires_at, created_at
+		`SELECT id, code, created_by, email, role, quota_bytes, max_uses, used_count, expires_at, created_at
 		 FROM invite_links WHERE code = ?`, code,
-	).Scan(&inv.ID, &inv.Code, &inv.CreatedBy, &inv.Role, &inv.QuotaBytes,
+	).Scan(&inv.ID, &inv.Code, &inv.CreatedBy, &inv.Email, &inv.Role, &inv.QuotaBytes,
 		&inv.MaxUses, &inv.UsedCount, &inv.ExpiresAt, &inv.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -209,7 +209,7 @@ func (r *UserRepo) IncrementInviteUsage(ctx context.Context, id string) error {
 
 func (r *UserRepo) ListInvites(ctx context.Context) ([]domain.InviteLink, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		`SELECT id, code, created_by, role, quota_bytes, max_uses, used_count, expires_at, created_at
+		`SELECT id, code, created_by, email, role, quota_bytes, max_uses, used_count, expires_at, created_at
 		 FROM invite_links ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -219,7 +219,7 @@ func (r *UserRepo) ListInvites(ctx context.Context) ([]domain.InviteLink, error)
 	var invites []domain.InviteLink
 	for rows.Next() {
 		var inv domain.InviteLink
-		if err := rows.Scan(&inv.ID, &inv.Code, &inv.CreatedBy, &inv.Role, &inv.QuotaBytes,
+		if err := rows.Scan(&inv.ID, &inv.Code, &inv.CreatedBy, &inv.Email, &inv.Role, &inv.QuotaBytes,
 			&inv.MaxUses, &inv.UsedCount, &inv.ExpiresAt, &inv.CreatedAt); err != nil {
 			return nil, err
 		}

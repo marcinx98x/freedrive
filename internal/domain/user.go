@@ -40,6 +40,7 @@ type InviteLink struct {
 	ID         string     `json:"id"`
 	Code       string     `json:"code"`
 	CreatedBy  string     `json:"created_by"`
+	Email      string     `json:"email,omitempty"`
 	Role       Role       `json:"role"`
 	QuotaBytes int64      `json:"quota_bytes"`
 	MaxUses    int        `json:"max_uses"`

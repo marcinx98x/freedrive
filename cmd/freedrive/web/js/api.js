@@ -73,7 +73,12 @@ const API = (() => {
             throw new Error(err.message || 'Network error');
         }
 
-        if (res.status === 401 && !isRetry && refreshToken) {
+        // Public auth endpoints return 401 for bad credentials — never treat as session refresh.
+        const isPublicAuth = path === '/auth/login'
+            || path === '/auth/register'
+            || path === '/auth/refresh'
+            || path === '/auth/reset-password';
+        if (res.status === 401 && !isRetry && refreshToken && !isPublicAuth) {
             const refreshed = await tryRefresh();
             if (refreshed) return request(method, path, body, true, rlRetries);
             clearAuth();

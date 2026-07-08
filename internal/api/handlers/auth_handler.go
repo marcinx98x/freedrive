@@ -46,6 +46,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "user with this email already exists", http.StatusConflict)
 		case service.ErrInvalidInvite:
 			writeError(w, "invalid or expired invite code", http.StatusBadRequest)
+		case service.ErrInviteEmailMismatch:
+			writeError(w, "registration email must match the invite email", http.StatusBadRequest)
 		default:
 			writeError(w, "registration failed: "+err.Error(), http.StatusInternalServerError)
 		}

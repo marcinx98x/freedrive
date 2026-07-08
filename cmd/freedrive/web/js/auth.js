@@ -12,6 +12,12 @@ const Auth = (() => {
         if (lower.includes('session expired')) {
             return 'Session expired. Please sign in again.';
         }
+        if (lower.includes('invalid email or password')) {
+            return 'Invalid email or password. Use the exact email from account registration (Admin → Users if unsure).';
+        }
+        if (lower.includes('must match the invite email')) {
+            return 'This invite requires the email address it was sent to. Check the invite email or ask your admin for a new invite.';
+        }
         return raw || 'Something went wrong. Please try again.';
     }
 
@@ -23,6 +29,20 @@ const Auth = (() => {
 
     function clearFormError(id) {
         setFormError(id, '');
+    }
+
+    function showForgotPasswordHelp() {
+        Components.showModal(
+            'Forgot password',
+            `<p style="margin:0 0 12px;color:#5f6368;font-size:14px;line-height:1.45;">
+                Ask your FreeDrive admin to click <strong>Reset password</strong> for your user in the admin panel.
+                That sends a reset link to the email on your account (requires SMTP).
+            </p>
+            <p style="margin:0;color:#5f6368;font-size:14px;line-height:1.45;">
+                Sign in with the <strong>exact email</strong> saved on your account — it may differ from the address in the invite email.
+            </p>`,
+            [{ text: 'OK', class: 'btn-primary' }]
+        );
     }
 
     function init() {
@@ -40,13 +60,25 @@ const Auth = (() => {
             });
         });
 
-        // Parse ?invite= code from URL
+        document.getElementById('forgot-password-btn')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            showForgotPasswordHelp();
+        });
+
+        // Parse ?invite= / ?email= from URL
         const queryParams = new URLSearchParams(window.location.search);
         const inviteCodeParam = queryParams.get('invite');
+        const inviteEmailParam = String(queryParams.get('email') || '').trim().toLowerCase();
         if (inviteCodeParam) {
             document.querySelector('.auth-tab[data-tab="register"]')?.click();
             const regInput = document.getElementById('reg-invite');
             if (regInput) regInput.value = inviteCodeParam;
+            const emailInput = document.getElementById('reg-email');
+            if (emailInput && inviteEmailParam) {
+                emailInput.value = inviteEmailParam;
+                emailInput.readOnly = true;
+                emailInput.title = 'This invite requires this email address';
+            }
         }
 
         // Parse /reset-password link mode
@@ -166,12 +198,12 @@ const Auth = (() => {
                 // Auto-login after registration
                 const data = await API.auth.login(email, password);
                 if (!data?.tokens?.access_token || !data?.user) {
-                    throw new Error('Account created, but automatic sign-in failed. Please sign in manually.');
+                    throw new Error('Account created, but automatic sign-in failed. Please sign in with ' + email);
                 }
                 API.setTokens(data.tokens);
                 API.setUser(data.user);
 
-                Components.toast('Account created! Welcome ' + data.user.username, 'success');
+                Components.toast('Account created. Sign-in email: ' + email, 'success', { duration: 7000 });
                 App.showApp();
             } catch (err) {
                 const msg = friendlyAuthError(err);
