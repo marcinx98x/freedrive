@@ -104,3 +104,11 @@ func (r *ComputerRepo) IsInComputerTree(ctx context.Context, folderID string) (b
 	`, folderID).Scan(&count)
 	return count > 0, err
 }
+
+func (r *ComputerRepo) UpdateLastSeen(ctx context.Context, id string, at time.Time) error {
+	_, err := r.writer.ExecContext(ctx,
+		`UPDATE computers SET last_seen_at = ?, updated_at = ? WHERE id = ?`,
+		at, time.Now(), id,
+	)
+	return err
+}

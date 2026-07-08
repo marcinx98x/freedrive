@@ -19,6 +19,7 @@ const FileManager = (() => {
     let sortDir = 'desc';
     let searchDebounce = null;
     let usersCache = [];
+    let sharedItemIds = new Set();
     let shareDraft = [];
     let shareTarget = null;
     let editorState = null;
@@ -301,6 +302,36 @@ const FileManager = (() => {
         return API.getUser() || { id: '', username: 'User', email: '' };
     }
 
+    function canWriteFileItem(item) {
+        const me = getCurrentUser();
+        if (!me?.id || !item) return false;
+        if (item.owner_id === me.id) return true;
+        const role = item.share_role || permissionToRole(item.share?.permission);
+        return role === 'editor';
+    }
+
+    function lookupUserLabel(userId) {
+        if (!userId) return 'Unknown';
+        const me = getCurrentUser();
+        if (me?.id && userId === me.id) return me.username || me.email || 'You';
+        const hit = usersCache.find((u) => u.id === userId);
+        return hit?.label || hit?.email || hit?.username || userId.slice(0, 8);
+    }
+
+    async function requestApprovalForFile(file) {
+        const email = await Components.prompt('Request approval', '', 'Approver email');
+        if (!email || !String(email).trim()) return;
+        try {
+            await API.approvals.create(file.id, { approver_email: String(email).trim() });
+            Components.toast('Approval requested', 'success');
+            if (selectedPrimary?.type === 'file' && selectedPrimary.data?.id === file.id) {
+                await renderDetailsActivity(selectedPrimary);
+            }
+        } catch (err) {
+            Components.toast(err?.message || 'Failed to request approval', 'error');
+        }
+    }
+
     function currentUserLabel() {
         const u = getCurrentUser();
         return u.username || u.email || 'Me';
@@ -313,10 +344,38 @@ const FileManager = (() => {
         return item.shared_by_name || 'Admin';
     }
 
+    async function refreshSharedByMeCache() {
+        sharedItemIds = new Set();
+        try {
+            const data = await API.shares.sharedByMe();
+            (data.items || []).forEach((item) => {
+                if (item.item_id) sharedItemIds.add(item.item_id);
+            });
+        } catch {
+            sharedItemIds = new Set();
+        }
+    }
+
+    function isMyDrivePage() {
+        return currentPage === 'files' && !currentComputerContext;
+    }
+
+    function showSharedBadgeForItem(item) {
+        const me = getCurrentUser();
+        return isMyDrivePage()
+            && !!(me?.id && item.owner_id === me.id)
+            && sharedItemIds.has(item.id);
+    }
+
+    const SHARED_BADGE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg>';
+
+    function renderSharedBadge() {
+        return `<span class="file-shared-badge" title="Shared" style="display:inline-flex;align-items:center;margin-left:4px;color:#5f6368;vertical-align:middle;">${SHARED_BADGE_SVG}</span>`;
+    }
+
     function renderOwnerCell(item, options = {}) {
         const me = getCurrentUser();
         const isSharedWith = currentPage === 'shared-with';
-        const isSharedBy = currentPage === 'shared-by';
 
         let displayName;
         let isMe = false;
@@ -328,9 +387,6 @@ const FileManager = (() => {
         } else if (isSharedWith) {
             displayName = item.shared_by_name || item.shared_by_email || itemOwner(item);
             isMe = !!(item.shared_by_id && me.id && item.shared_by_id === me.id);
-        } else if (isSharedBy) {
-            displayName = item.shared_with_name || item.shared_with_email || itemOwner(item);
-            isMe = !!(item.shared_with_id && me.id && item.shared_with_id === me.id);
         } else {
             isMe = !!(item.owner_id && me.id && item.owner_id === me.id);
             displayName = isMe ? 'me' : itemOwner(item);
@@ -763,9 +819,9 @@ const FileManager = (() => {
         grid.classList.add('hidden');
         header?.classList.add('hidden');
         empty?.classList.remove('hidden');
-        document.getElementById('empty-title').textContent = 'Computers coming soon';
+        document.getElementById('empty-title').textContent = 'No computers registered';
         document.getElementById('empty-desc').textContent =
-            'Backing up and syncing files from your computer will be available in a future update.';
+            'Register a computer from the API or a future desktop client to back up files here.';
         updateSelectionUI();
     }
 
@@ -815,6 +871,7 @@ const FileManager = (() => {
             });
             filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
+            await refreshSharedByMeCache();
             renderItems(filteredFolders, filteredFiles);
             HOME_CHIP_DEFS.forEach((d) => setFilterSelect(d.select, '', d.anyLabel));
             renderSearchChipBar();
@@ -839,26 +896,75 @@ const FileManager = (() => {
         setBreadcrumbText('Computers');
 
         try {
-            registeredComputers = [];
-            allFolders = [];
+            const data = await API.computers.list();
+            registeredComputers = data.computers || [];
             allFiles = [];
-            filteredFolders = [];
+            allFolders = registeredComputers
+                .filter((c) => c.root_folder_id)
+                .map((c) => ({
+                    id: c.root_folder_id,
+                    name: c.name || c.hostname || 'Computer',
+                    mime_type: 'application/x-freedrive-computer',
+                    updated_at: c.last_seen_at || c.updated_at || c.created_at,
+                    created_at: c.created_at,
+                    computer_id: c.id,
+                }));
+            filteredFolders = [...allFolders];
             filteredFiles = [];
-            renderComputersEmptyState();
+
+            if (!allFolders.length) {
+                renderComputersEmptyState();
+            } else {
+                const grid = document.getElementById('file-grid');
+                const empty = document.getElementById('empty-state');
+                const header = document.getElementById('file-list-header');
+                grid?.classList.remove('hidden');
+                empty?.classList.add('hidden');
+                header?.classList.remove('hidden');
+                renderItems(filteredFolders, filteredFiles);
+            }
             await updateStorageInfo();
             syncTrashActionLabels();
         } catch (err) {
             Components.toast(`Failed to load computers: ${err.message}`, 'error');
+            renderComputersEmptyState();
         } finally {
             showLoading(false);
         }
     }
 
-    async function loadComputerFolder() {
-        if (window.location.hash !== '#/computers') {
-            window.location.hash = '#/computers';
+    async function loadComputerFolder(folderId) {
+        currentPage = 'computers';
+        currentFolderId = folderId || null;
+        clearSelection();
+        showFilesView();
+        showLoading(true);
+        syncPageActions();
+
+        if (!folderId) {
+            return loadComputers();
         }
-        return loadComputers();
+
+        await ensureComputerContext(folderId);
+        try {
+            const data = await API.folders.get(folderId);
+            allFolders = Array.isArray(data.folders) ? data.folders : [];
+            allFiles = Array.isArray(data.files) ? data.files : [];
+            filteredFolders = [...allFolders];
+            filteredFiles = [...allFiles];
+            renderItems(filteredFolders, filteredFiles);
+            await updateComputerBreadcrumb(folderId);
+            if (currentComputerContext?.id) {
+                API.computers.heartbeat(currentComputerContext.id).catch(() => {});
+            }
+            await updateStorageInfo();
+            syncTrashActionLabels();
+        } catch (err) {
+            Components.toast(`Failed to load computer folder: ${err.message}`, 'error');
+            await loadComputers();
+        } finally {
+            showLoading(false);
+        }
     }
 
     async function loadHome() {
@@ -1530,6 +1636,69 @@ const FileManager = (() => {
         }
     }
 
+    async function resolveSharedListings(items, mode) {
+        const fileResults = await Promise.all(items
+            .filter((item) => item.item_type === 'file' && item.item_id)
+            .map(async (item) => {
+                try {
+                    const f = await API.files.get(item.item_id);
+                    if (!f) return null;
+                    const base = {
+                        ...f,
+                        share_role: permissionToRole(item.share?.permission),
+                        shared_at: item.share?.created_at || f.updated_at || f.created_at,
+                    };
+                    if (mode === 'with-me') {
+                        return {
+                            ...base,
+                            shared_by_name: item.owner_name || 'User',
+                            shared_by_email: item.owner_email || '',
+                        };
+                    }
+                    const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
+                    return {
+                        ...base,
+                        shared_with_name: recipient?.label || recipient?.email || item.share?.shared_with || 'User',
+                        shared_with_email: recipient?.email || '',
+                    };
+                } catch {
+                    return null;
+                }
+            }));
+
+        const folderResults = items
+            .filter((item) => item.item_type === 'folder' && item.item_id)
+            .map((item) => {
+                const base = {
+                    id: item.item_id,
+                    name: item.item_name || 'Folder',
+                    updated_at: item.share?.created_at || new Date().toISOString(),
+                    created_at: item.share?.created_at || new Date().toISOString(),
+                    share_role: permissionToRole(item.share?.permission),
+                    shared_at: item.share?.created_at || new Date().toISOString(),
+                };
+                if (mode === 'with-me') {
+                    return {
+                        ...base,
+                        shared_by_name: item.owner_name || 'User',
+                        shared_by_email: item.owner_email || '',
+                    };
+                }
+                const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
+                return {
+                    ...base,
+                    shared_with_name: recipient?.label || recipient?.email || item.share?.shared_with || 'User',
+                    shared_with_email: recipient?.email || '',
+                };
+            });
+
+        const sortByShared = (a, b) => new Date(b.shared_at) - new Date(a.shared_at);
+        return {
+            files: fileResults.filter(Boolean).sort(sortByShared),
+            folders: folderResults.sort(sortByShared),
+        };
+    }
+
     async function loadSharedWithMe() {
         currentPage = 'shared-with';
         currentFolderId = null;
@@ -1538,41 +1707,11 @@ const FileManager = (() => {
         showLoading(true);
 
         try {
-            const me = getCurrentUser();
-            const shared = meta.shares.filter((s) => s.shared_with_email === me.email || s.shared_with_id === me.id);
-            // Ensure decryption keys for shared items are imported for this user session.
-            for (const s of shared) {
-                if (!s.shared_key || !s.item_id) continue;
-                try {
-                    const imported = await CryptoModule.importKey(s.shared_key);
-                    await CryptoModule.storeKey(s.item_id, imported);
-                } catch {
-                    // ignore bad/missing keys and continue
-                }
-            }
-
-            allFolders = [];
-            const resolved = await Promise.all(shared.map(async (s) => {
-                try {
-                    const f = await API.files.get(s.item_id);
-                    if (!f) return null;
-                    return {
-                        ...f,
-                        shared_by_name: s.shared_by_name || 'User',
-                        shared_by_email: s.shared_by_email || '',
-                        shared_with_name: s.shared_with_name || '',
-                        share_role: s.role || 'viewer',
-                        shared_at: s.created_at || f.updated_at || f.created_at,
-                    };
-                } catch {
-                    return null;
-                }
-            }));
-            allFiles = resolved
-                .filter(Boolean)
-                .sort((a, b) => new Date(b.shared_at) - new Date(a.shared_at));
-
-            filteredFolders = [];
+            const data = await API.shares.sharedWithMe();
+            const { files, folders } = await resolveSharedListings(data.items || [], 'with-me');
+            allFolders = folders;
+            allFiles = files;
+            filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles);
             setBreadcrumbText('Shared with me');
@@ -1583,50 +1722,6 @@ const FileManager = (() => {
             filteredFiles = [];
             renderItems([], []);
             setBreadcrumbText('Shared with me');
-        } finally {
-            showLoading(false);
-        }
-    }
-
-    async function loadSharedByMe() {
-        currentPage = 'shared-by';
-        currentFolderId = null;
-        clearSelection();
-        showFilesView();
-        showLoading(true);
-
-        try {
-            const me = getCurrentUser();
-            const shared = meta.shares.filter((s) => s.shared_by_id === me.id);
-            const data = await API.files.list({ page_size: '300' });
-            const filesMap = new Map((data.files || []).map((f) => [f.id, f]));
-            allFolders = [];
-            allFiles = shared
-                .map((s) => {
-                    const f = filesMap.get(s.item_id);
-                    if (!f) return null;
-                    return {
-                        ...f,
-                        shared_with_name: s.shared_with_name || s.shared_with_email || 'User',
-                        shared_with_email: s.shared_with_email || '',
-                        share_role: s.role || 'viewer',
-                        shared_at: s.created_at || f.updated_at || f.created_at,
-                    };
-                })
-                .filter(Boolean)
-                .sort((a, b) => new Date(b.shared_at) - new Date(a.shared_at));
-
-            filteredFolders = [];
-            filteredFiles = [...allFiles];
-            renderItems(filteredFolders, filteredFiles);
-            setBreadcrumbText('Shared by me');
-        } catch {
-            allFolders = [];
-            allFiles = [];
-            filteredFolders = [];
-            filteredFiles = [];
-            renderItems([], []);
-            setBreadcrumbText('Shared by me');
         } finally {
             showLoading(false);
         }
@@ -1741,18 +1836,14 @@ const FileManager = (() => {
             if (sortBy === 'owner') {
                 const ownerA = currentPage === 'shared-with'
                     ? (a.shared_by_name || a.shared_by_email || itemOwner(a))
-                    : (currentPage === 'shared-by'
-                        ? (a.shared_with_name || a.shared_with_email || itemOwner(a))
-                        : itemOwner(a));
+                    : itemOwner(a);
                 const ownerB = currentPage === 'shared-with'
                     ? (b.shared_by_name || b.shared_by_email || itemOwner(b))
-                    : (currentPage === 'shared-by'
-                        ? (b.shared_with_name || b.shared_with_email || itemOwner(b))
-                        : itemOwner(b));
+                    : itemOwner(b);
                 return ownerA.localeCompare(ownerB) * factor;
             }
             if (sortBy === 'size') {
-                if (currentPage === 'shared-with' || currentPage === 'shared-by') {
+                if (currentPage === 'shared-with') {
                     const roleA = String(a.share_role || 'viewer');
                     const roleB = String(b.share_role || 'viewer');
                     return roleA.localeCompare(roleB) * factor;
@@ -1767,10 +1858,10 @@ const FileManager = (() => {
                 return am.localeCompare(bm) * factor;
             }
 
-            const at = new Date((currentPage === 'shared-with' || currentPage === 'shared-by')
+            const at = new Date((currentPage === 'shared-with')
                 ? (a.shared_at || a.updated_at || a.created_at || 0)
                 : (a.updated_at || a.created_at || 0)).getTime();
-            const bt = new Date((currentPage === 'shared-with' || currentPage === 'shared-by')
+            const bt = new Date((currentPage === 'shared-with')
                 ? (b.shared_at || b.updated_at || b.created_at || 0)
                 : (b.updated_at || b.created_at || 0)).getTime();
             return (at - bt) * factor;
@@ -1935,7 +2026,6 @@ const FileManager = (() => {
 
         const isHomeSuggested = currentPage === 'home';
         const isSharedWith = currentPage === 'shared-with';
-        const isSharedBy = currentPage === 'shared-by';
 
         let owner = itemOwner(item);
         let modifiedBy = item.last_modified_by || owner || 'Admin';
@@ -1946,14 +2036,11 @@ const FileManager = (() => {
             modifiedText = Components.formatDate(item.shared_at || item.updated_at || item.created_at);
             sizeText = capitalizeRole(item.share_role || 'viewer');
         }
-        if (isSharedBy) {
-            modifiedText = Components.formatDate(item.shared_at || item.updated_at || item.created_at);
-            sizeText = capitalizeRole(item.share_role || 'viewer');
-        }
         if (isHomeSuggested) {
             locationText = resolveHomeLocationName(item.folder_id) || '…';
         }
         const lockBadge = '';
+        const sharedBadge = showSharedBadgeForItem(item) ? renderSharedBadge() : '';
         const folderIconSvg = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
         const reasonText = isHomeSuggested ? formatHomeReason(item) : '';
         const ownerCellHtml = renderOwnerCell(item);
@@ -1963,6 +2050,7 @@ const FileManager = (() => {
                 <input type="checkbox" class="file-checkbox" aria-label="Select">
                 <span class="file-icon">${getIcon(type, item.mime_type, item.name)}</span>
                 <span class="file-label">${esc(item.name)}</span>
+                ${sharedBadge}
                 ${lockBadge}
             </div>
             <div class="file-cell cell-owner">${isHomeSuggested
@@ -2000,9 +2088,10 @@ const FileManager = (() => {
             <button class="btn-icon action-more card-more-btn" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>`;
 
         if (type === 'folder') {
+            const folderSharedBadge = showSharedBadgeForItem(item) ? renderSharedBadge() : '';
             card.innerHTML = `
                 <span class="folder-chip-icon">${getIcon('folder', item.mime_type, item.name)}</span>
-                <span class="folder-chip-name" title="${esc(item.name)}">${esc(item.name)}</span>
+                <span class="folder-chip-name" title="${esc(item.name)}">${esc(item.name)}</span>${folderSharedBadge}
                 <button class="btn-icon action-more card-more-btn" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
             `;
             bindItemRowEvents(card, item, type, isTrash);
@@ -2015,6 +2104,7 @@ const FileManager = (() => {
             && new Date(item.updated_at).getTime() > new Date(item.created_at).getTime();
         const who = (item.owner_id && me.id && item.owner_id === me.id) ? 'You' : (itemOwner(item) || 'You');
         const reason = `${who} ${edited ? 'edited' : 'created'} \u00b7 ${Components.formatDate(item.updated_at || item.created_at)}`;
+        const fileSharedBadge = showSharedBadgeForItem(item) ? renderSharedBadge() : '';
 
         card.innerHTML = `
             <div class="card-thumb" id="thumb-${item.id}">${getIcon('file', item.mime_type, item.name)}</div>
@@ -2022,7 +2112,7 @@ const FileManager = (() => {
             <div class="card-meta">
                 <span class="card-type-icon">${getIcon('file', item.mime_type, item.name)}</span>
                 <div class="card-meta-text">
-                    <div class="card-name" title="${esc(item.name)}">${esc(item.name)}</div>
+                    <div class="card-name" title="${esc(item.name)}">${esc(item.name)}${fileSharedBadge}</div>
                     <div class="card-sub">${esc(reason)}</div>
                 </div>
             </div>
@@ -2304,6 +2394,11 @@ const FileManager = (() => {
             actionMap.info.textContent = infoLabel;
             setActionLabel(actionMap.info, infoLabel);
         }
+        if (actionMap.request_approval) {
+            const showApproval = !inTrash && target && target.type === 'file' && canWriteFileItem(target.data);
+            setElementHidden(actionMap.request_approval, !showApproval);
+            actionMap.request_approval.style.display = showApproval ? '' : 'none';
+        }
 
         if (inTrash) {
             ['open', 'restore', 'download', 'info', 'delete'].forEach((action) => {
@@ -2459,6 +2554,9 @@ const FileManager = (() => {
             case 'get_link':
                 await navigator.clipboard.writeText(buildShareLink(data.id));
                 Components.toast('Link copied to clipboard', 'success');
+                return;
+            case 'request_approval':
+                if (type === 'file') await requestApprovalForFile(data);
                 return;
             case 'move':
                 await moveItemPrompt(type, data);
@@ -2666,6 +2764,13 @@ const FileManager = (() => {
         refresh();
     }
 
+    function permissionToRole(permission) {
+        const p = String(permission || 'read').toLowerCase();
+        if (p === 'write' || p === 'upload') return 'editor';
+        if (p === 'commenter') return 'commenter';
+        return 'viewer';
+    }
+
     function openShareModal(payload) {
         shareTarget = payload;
         shareDraft = [];
@@ -2706,6 +2811,23 @@ const FileManager = (() => {
 
     async function copyCurrentShareLink() {
         if (!shareTarget) return;
+        const access = document.getElementById('share-general-access')?.value;
+        const role = document.getElementById('share-link-role')?.value || 'viewer';
+        if (access === 'link' || access === 'anyone') {
+            try {
+                const payload = shareTarget.type === 'folder'
+                    ? { folder_id: shareTarget.data.id, permission: role }
+                    : { file_id: shareTarget.data.id, permission: role };
+                const created = await API.shares.createLink(payload);
+                const link = `${location.origin}/api/v1/public/share/${created.token}/download`;
+                await navigator.clipboard.writeText(link);
+                Components.toast('Share link copied', 'success');
+                return;
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to create share link', 'error');
+                return;
+            }
+        }
         const me = getCurrentUser();
         const link = await buildShareLink(shareTarget.data.id);
         await navigator.clipboard.writeText(link);
@@ -2788,12 +2910,11 @@ const FileManager = (() => {
         wrap.appendChild(chip);
     }
 
-    function renderShareExisting() {
+    async function renderShareExisting() {
         if (!shareTarget) return;
         const existingWrap = document.getElementById('share-existing');
         existingWrap.innerHTML = '';
 
-        const entries = meta.shares.filter((s) => s.item_id === shareTarget.data.id && s.item_type === shareTarget.type);
         const me = getCurrentUser();
 
         const ownerRow = document.createElement('div');
@@ -2824,22 +2945,37 @@ const FileManager = (() => {
         `;
         existingWrap.appendChild(ownerRow);
 
-        entries.forEach((entry) => {
+        let entries = [];
+        try {
+            const data = await API.shares.sharedByMe();
+            entries = (data.items || []).filter((item) => {
+                if (shareTarget.type === 'file') {
+                    return item.item_type === 'file' && item.item_id === shareTarget.data.id;
+                }
+                return item.item_type === 'folder' && item.item_id === shareTarget.data.id;
+            });
+        } catch {
+            entries = [];
+        }
+
+        entries.forEach((item) => {
+            const share = item.share || {};
+            const recipient = usersCache.find((u) => u.id === share.shared_with);
+            const displayName = recipient?.label || recipient?.email || share.shared_with || 'User';
             const row = document.createElement('div');
             row.className = 'share-existing-entry';
             
-            let userAvatarHtml = Components.initials(entry.shared_with_name || entry.shared_with_email || 'U');
-            const cachedUser = usersCache.find(u => u.email === entry.shared_with_email);
-            if (cachedUser && cachedUser.avatar_url) {
-                userAvatarHtml = `<img src="${esc(cachedUser.avatar_url)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+            let userAvatarHtml = Components.initials(displayName);
+            if (recipient?.avatar_url) {
+                userAvatarHtml = `<img src="${esc(recipient.avatar_url)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
             }
 
             row.innerHTML = `
                 <div class="share-person">
                     <span class="share-avatar">${userAvatarHtml}</span>
                     <div>
-                        <div class="share-name">${esc(entry.shared_with_name || entry.shared_with_email)}</div>
-                        <div class="share-meta">Shared by ${esc(entry.shared_by_name || currentUserLabel())} · ${Components.formatDate(entry.created_at)}</div>
+                        <div class="share-name">${esc(displayName)}</div>
+                        <div class="share-meta">Shared · ${Components.formatDate(share.created_at)}</div>
                     </div>
                 </div>
                 <div class="share-existing-actions">
@@ -2852,15 +2988,28 @@ const FileManager = (() => {
                 </div>
             `;
             const sel = row.querySelector('select');
-            sel.value = entry.role;
-            sel.addEventListener('change', () => {
-                entry.role = sel.value;
-                saveMeta();
+            sel.value = permissionToRole(share.permission);
+            sel.addEventListener('change', async () => {
+                try {
+                    await API.shares.updateUserShare(share.id, { permission: sel.value });
+                    Components.toast('Permission updated', 'success');
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to update permission', 'error');
+                    sel.value = permissionToRole(share.permission);
+                }
             });
-            row.querySelector('button').addEventListener('click', () => {
-                meta.shares = meta.shares.filter((s) => s.id !== entry.id);
-                saveMeta();
-                renderShareExisting();
+            row.querySelector('button').addEventListener('click', async () => {
+                try {
+                    await API.shares.deleteUserShare(share.id);
+                    Components.toast('Share removed', 'success');
+                    await refreshSharedByMeCache();
+                    if (isMyDrivePage()) {
+                        renderItems(filteredFolders, filteredFiles);
+                    }
+                    renderShareExisting();
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to remove share', 'error');
+                }
             });
             existingWrap.appendChild(row);
         });
@@ -2877,40 +3026,31 @@ const FileManager = (() => {
     async function saveShareModal() {
         if (!shareTarget) return;
 
-        const me = getCurrentUser();
         const now = new Date().toISOString();
-        let exportedKey = '';
         try {
-            const key = await CryptoModule.getKey(shareTarget.data.id);
-            if (key) exportedKey = await CryptoModule.exportKey(key);
-        } catch {
-            exportedKey = '';
+            for (const d of shareDraft) {
+                const payload = {
+                    permission: d.role || 'viewer',
+                };
+                if (d.userId) payload.shared_with = d.userId;
+                if (d.email) payload.shared_email = d.email;
+                if (shareTarget.type === 'folder') payload.folder_id = shareTarget.data.id;
+                else payload.file_id = shareTarget.data.id;
+                await API.shares.createUserShare(payload);
+                createNotification(`${currentUserLabel()} shared a file with you: ${shareTarget.data.name}`, now, false, d.name || d.email);
+            }
+
+            addFileActivity(shareTarget.data.id, 'shared', shareTarget.data.name, now);
+            await refreshSharedByMeCache();
+            if (isMyDrivePage()) {
+                renderItems(filteredFolders, filteredFiles);
+            }
+            Components.toast('Sharing updated', 'success');
+            closeShareModal();
+            await copyCurrentShareLink();
+        } catch (err) {
+            Components.toast(err?.message || 'Failed to save sharing', 'error');
         }
-
-        shareDraft.forEach((d) => {
-            const row = {
-                id: Components.uuid(),
-                item_id: shareTarget.data.id,
-                item_type: shareTarget.type,
-                item_name: shareTarget.data.name,
-                shared_by_id: me.id,
-                shared_by_name: currentUserLabel(),
-                shared_by_email: me.email || '',
-                shared_with_id: d.userId || '',
-                shared_with_email: d.email,
-                shared_with_name: d.name,
-                shared_key: exportedKey,
-                role: d.role,
-                created_at: now,
-            };
-            meta.shares.push(row);
-            createNotification(`${currentUserLabel()} shared a file with you: ${shareTarget.data.name}`, now, false, d.name || d.email);
-        });
-
-        addFileActivity(shareTarget.data.id, 'shared', shareTarget.data.name, now);
-        saveMeta();
-        closeShareModal();
-        await copyCurrentShareLink();
     }
 
     function createNotification(text, createdAt = new Date().toISOString(), read = false, actor = '') {
@@ -2947,7 +3087,42 @@ const FileManager = (() => {
         document.querySelector('.app')?.classList.remove('details-open');
         panel.classList.toggle('hidden');
         if (!panel.classList.contains('hidden')) {
-            renderNotifications();
+            syncNotificationsFromServer().then(() => renderNotifications());
+        }
+    }
+
+    async function syncNotificationsFromServer() {
+        try {
+            const data = await API.activity.list(1, 40);
+            const me = getCurrentUser();
+            if (!me) return;
+            const known = new Set(meta.notifications.map((n) => n.id));
+            (data.activities || []).forEach((log) => {
+                const id = `srv-${log.id}`;
+                if (known.has(id)) return;
+                const action = String(log.action || '').toLowerCase();
+                if (!['login', 'failed_login', 'share', 'upload', 'download', 'delete'].some((k) => action.includes(k))) {
+                    return;
+                }
+                if (log.user_id && log.user_id !== me.id && !action.includes('share')) return;
+                const text = log.details || `${log.action} — ${log.target_name || log.target_type || 'item'}`;
+                meta.notifications.push({
+                    id,
+                    text,
+                    created_at: log.created_at || new Date().toISOString(),
+                    read: false,
+                    actor: log.username || '',
+                    source: 'server',
+                });
+                known.add(id);
+            });
+            if (meta.notifications.length > 200) {
+                meta.notifications = meta.notifications.slice(0, 200);
+            }
+            saveMeta();
+            updateNotificationsBadge();
+        } catch {
+            // keep local notifications if activity fetch fails
         }
     }
 
@@ -3071,28 +3246,24 @@ const FileManager = (() => {
         const role = await Components.prompt('Role (viewer/commenter/editor)', 'viewer');
         if (!role) return;
 
-        const me = getCurrentUser();
         const now = new Date().toISOString();
-        ids.forEach((id) => {
-            const payload = findSelectedPayload(id);
-            if (!payload) return;
-            meta.shares.push({
-                id: Components.uuid(),
-                item_id: id,
-                item_type: payload.type,
-                item_name: payload.data.name,
-                shared_by_id: me.id,
-                shared_by_name: currentUserLabel(),
-                shared_by_email: me.email || '',
-                shared_with_id: '',
-                shared_with_email: email,
-                shared_with_name: email,
-                role,
-                created_at: now,
-            });
-        });
-        saveMeta();
-        Components.toast('Shared selected items', 'success');
+        try {
+            for (const id of ids) {
+                const payload = findSelectedPayload(id);
+                if (!payload) continue;
+                const body = {
+                    permission: role,
+                    shared_email: email,
+                };
+                if (payload.type === 'folder') body.folder_id = id;
+                else body.file_id = id;
+                await API.shares.createUserShare(body);
+                addFileActivity(id, 'shared', payload.data.name, now);
+            }
+            Components.toast('Shared selected items', 'success');
+        } catch (err) {
+            Components.toast(err?.message || 'Failed to share items', 'error');
+        }
     }
 
     async function bulkDownload() {
@@ -3328,14 +3499,27 @@ const FileManager = (() => {
         document.querySelector('.app')?.classList.remove('details-open');
     }
 
-    function renderAccessAvatars(itemId, itemType) {
+    async function renderAccessAvatars(itemId, itemType) {
         const wrap = document.getElementById('access-avatars');
         if (!wrap) return;
         wrap.innerHTML = '';
 
         const me = getCurrentUser();
-        const entries = meta.shares.filter((s) => s.item_id === itemId && s.item_type === itemType);
-        const names = [currentUserLabel()].concat(entries.map((e) => e.shared_with_name || e.shared_with_email));
+        let entries = [];
+        try {
+            const data = await API.shares.sharedByMe();
+            entries = (data.items || []).filter((item) => {
+                if (itemType === 'file') return item.item_type === 'file' && item.item_id === itemId;
+                return item.item_type === 'folder' && item.item_id === itemId;
+            });
+        } catch {
+            entries = [];
+        }
+
+        const names = [currentUserLabel()].concat(entries.map((item) => {
+            const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
+            return recipient?.label || recipient?.email || 'User';
+        }));
 
         names.slice(0, 6).forEach((name) => {
             const el = document.createElement('div');
@@ -3376,11 +3560,7 @@ const FileManager = (() => {
             ? sharedPropRow(ICON_PERSON, 'Shared by',   esc(data.shared_by_name || 'User'))
               + sharedPropRow(ICON_CLOCK,  'Date shared', Components.formatAbsoluteDate(data.shared_at || data.updated_at || data.created_at))
               + sharedPropRow(ICON_KEY,    'Access',      esc(capitalizeRole(data.share_role || 'viewer')))
-            : (currentPage === 'shared-by'
-                ? sharedPropRow(ICON_PERSON, 'Shared with', esc(data.shared_with_name || data.shared_with_email || 'User'))
-                  + sharedPropRow(ICON_CLOCK,  'Date shared', Components.formatAbsoluteDate(data.shared_at || data.updated_at || data.created_at))
-                  + sharedPropRow(ICON_KEY,    'Access',      esc(capitalizeRole(data.share_role || 'viewer')))
-                : '');
+            : '';
 
         function formatMimeType(mime, filename) {
             if (!mime) return 'File';
@@ -3481,19 +3661,18 @@ const FileManager = (() => {
         }
     }
 
-    function renderDetailsActivity(payload) {
+    async function renderDetailsActivity(payload) {
         const box = document.getElementById('details-activity');
         if (!box) return;
-        const { data } = payload;
+        const { data, type } = payload;
         const list = meta.file_activity[data.id] || [];
+        const me = getCurrentUser();
 
+        let html = `<div class="details-section-title">Activity</div>`;
         if (!list.length) {
-            box.innerHTML = `<div class="details-section-title">Activity</div><div style="padding:16px;color:#5f6368;font-size:13px;font-family:'Roboto',Arial,sans-serif;">No activity yet.</div>`;
-            return;
-        }
-
-        box.innerHTML = `<div class="details-section-title">Activity</div>` + list.map((a) => {
-            return `
+            html += `<div style="padding:16px;color:#5f6368;font-size:13px;font-family:'Roboto',Arial,sans-serif;">No local activity yet.</div>`;
+        } else {
+            html += list.map((a) => `
                 <div class="activity-item">
                     <div class="activity-avatar">${Components.initials(a.text)}</div>
                     <div class="activity-body">
@@ -3501,8 +3680,149 @@ const FileManager = (() => {
                         <div class="activity-time">${Components.formatDate(a.created_at)}</div>
                     </div>
                 </div>
-            `;
-        }).join('');
+            `).join('');
+        }
+
+        if (type === 'file') {
+            html += `<div class="details-section-title" style="margin-top:16px;">Comments</div>`;
+            let comments = [];
+            try {
+                const res = await API.comments.list(data.id);
+                comments = res.comments || [];
+                if (!comments.length) {
+                    html += `<div style="padding:8px 16px;color:#5f6368;font-size:13px;">No comments yet.</div>`;
+                } else {
+                    html += comments.map((c) => {
+                        const canDelete = me && (c.user_id === me.id || canWriteFileItem(data));
+                        const assigneeBadge = c.assigned_to_username || c.assigned_to
+                            ? `<span style="font-size:11px;color:#5f6368;margin-left:6px;">→ ${esc(c.assigned_to_username || lookupUserLabel(c.assigned_to))}</span>`
+                            : '';
+                        return `
+                        <div class="activity-item" data-comment-id="${esc(c.id)}">
+                            <div class="activity-avatar">${Components.initials(c.username || 'U')}</div>
+                            <div class="activity-body" style="flex:1;">
+                                <div class="activity-text">${esc(c.content)}${assigneeBadge}</div>
+                                <div class="activity-time">${Components.formatDate(c.created_at)}</div>
+                            </div>
+                            ${canDelete ? `<button class="btn-icon comment-delete-btn" data-id="${esc(c.id)}" title="Delete comment" aria-label="Delete comment" style="align-self:flex-start;">✕</button>` : ''}
+                        </div>`;
+                    }).join('');
+                }
+                html += `
+                    <div style="padding:16px;">
+                        <textarea id="detail-comment-input" placeholder="Add a comment..." style="width:100%;min-height:64px;border-radius:8px;border:1px solid var(--fd-border);padding:8px;font-family:inherit;"></textarea>
+                        <input id="detail-comment-assignee" type="email" placeholder="Assign to (email, optional)" style="width:100%;margin-top:8px;border-radius:8px;border:1px solid var(--fd-border);padding:8px;font-family:inherit;" autocomplete="off">
+                        <button class="btn btn-primary btn-sm" id="detail-comment-submit" style="margin-top:8px;">Comment</button>
+                    </div>`;
+            } catch {
+                html += `<div style="padding:8px 16px;color:#5f6368;font-size:13px;">Comments unavailable.</div>`;
+            }
+
+            try {
+                const approvalRes = await API.approvals.list('');
+                const fileApprovals = (approvalRes.approvals || []).filter((a) => a.file_id === data.id);
+                const hasPending = fileApprovals.some((a) => a.status === 'pending');
+                const canRequest = canWriteFileItem(data) && !hasPending;
+
+                html += `<div class="details-section-title" style="margin-top:16px;">Approvals</div>`;
+                if (!fileApprovals.length) {
+                    html += `<div style="padding:8px 16px;color:#5f6368;font-size:13px;">No approval requests yet.</div>`;
+                } else {
+                    fileApprovals.forEach((a) => {
+                        const status = String(a.status || 'pending').toLowerCase();
+                        const canResolve = me && a.approver_id === me.id && status === 'pending';
+                        const isRequester = me && a.requested_by === me.id;
+                        let statusText = status.charAt(0).toUpperCase() + status.slice(1);
+                        if (status === 'pending' && isRequester) {
+                            statusText = `Awaiting ${esc(lookupUserLabel(a.approver_id))}`;
+                        } else if (status === 'pending') {
+                            statusText = `Pending — approver: ${esc(lookupUserLabel(a.approver_id))}`;
+                        }
+                        html += `
+                            <div class="activity-item" data-approval-id="${esc(a.id)}">
+                                <div class="activity-body">
+                                    <div class="activity-text">${statusText}</div>
+                                    <div class="activity-time">${Components.formatDate(a.created_at)}</div>
+                                    ${canResolve ? `
+                                        <div style="margin-top:8px;display:flex;gap:8px;">
+                                            <button class="btn btn-primary btn-sm approval-approve-btn" data-id="${esc(a.id)}">Approve</button>
+                                            <button class="btn btn-secondary btn-sm approval-reject-btn" data-id="${esc(a.id)}">Reject</button>
+                                        </div>` : ''}
+                                </div>
+                            </div>`;
+                    });
+                }
+                if (canRequest) {
+                    html += `
+                        <div style="padding:8px 16px 16px;">
+                            <button class="btn btn-secondary btn-sm" id="detail-request-approval-btn">Request approval</button>
+                        </div>`;
+                }
+            } catch {
+                // approvals optional
+            }
+        }
+
+        box.innerHTML = html;
+
+        document.getElementById('detail-comment-submit')?.addEventListener('click', async () => {
+            const input = document.getElementById('detail-comment-input');
+            const assigneeInput = document.getElementById('detail-comment-assignee');
+            const content = String(input?.value || '').trim();
+            if (!content) return;
+            const body = { content };
+            const assigneeEmail = String(assigneeInput?.value || '').trim();
+            if (assigneeEmail) body.assigned_to_email = assigneeEmail;
+            try {
+                await API.comments.create(data.id, body);
+                input.value = '';
+                if (assigneeInput) assigneeInput.value = '';
+                await renderDetailsActivity(payload);
+                Components.toast('Comment added', 'success');
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to add comment', 'error');
+            }
+        });
+
+        box.querySelectorAll('.comment-delete-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await API.comments.delete(data.id, btn.dataset.id);
+                    Components.toast('Comment deleted', 'success');
+                    await renderDetailsActivity(payload);
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to delete comment', 'error');
+                }
+            });
+        });
+
+        document.getElementById('detail-request-approval-btn')?.addEventListener('click', async () => {
+            await requestApprovalForFile(data);
+            await renderDetailsActivity(payload);
+        });
+
+        box.querySelectorAll('.approval-approve-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await API.approvals.update(btn.dataset.id, { status: 'approved' });
+                    Components.toast('Approval granted', 'success');
+                    await renderDetailsActivity(payload);
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to approve', 'error');
+                }
+            });
+        });
+        box.querySelectorAll('.approval-reject-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await API.approvals.update(btn.dataset.id, { status: 'rejected' });
+                    Components.toast('Approval rejected', 'success');
+                    await renderDetailsActivity(payload);
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to reject', 'error');
+                }
+            });
+        });
     }
 
     function buildLocationLabel(folderId) {
@@ -4128,13 +4448,6 @@ const FileManager = (() => {
         if (currentPage === 'shared-with') {
             setSortColLabel('.col-name', 'Name');
             setSortColLabel('.col-owner', 'Shared by');
-            setSortColLabel('.col-date', 'Date shared');
-            setSortColLabel('.col-size', 'Access');
-            return;
-        }
-        if (currentPage === 'shared-by') {
-            setSortColLabel('.col-name', 'Name');
-            setSortColLabel('.col-owner', 'Shared with');
             setSortColLabel('.col-date', 'Date shared');
             setSortColLabel('.col-size', 'Access');
             return;
@@ -5053,62 +5366,28 @@ const FileManager = (() => {
         wrap.innerHTML = `
             <div class="pdf-toolbar">
                 <div class="row-inline">
-                    <button class="btn btn-secondary btn-sm" id="pdf-prev">◀</button>
-                    <span id="pdf-page-ind">1 / 24</span>
-                    <button class="btn btn-secondary btn-sm" id="pdf-next">▶</button>
-                </div>
-                <div class="row-inline">
-                    <select id="pdf-zoom"><option>50%</option><option>75%</option><option selected>100%</option><option>125%</option><option>150%</option><option>Fit to page</option></select>
-                    <input id="pdf-search" placeholder="Search (Ctrl+F)" style="height:32px;border-radius:8px;border:1px solid var(--fd-border);background:var(--fd-bg-soft);color:var(--fd-text);padding:0 8px;">
-                    <button class="btn btn-secondary btn-sm" id="pdf-toggle-thumbs">Thumbnails</button>
                     <button class="btn btn-secondary btn-sm" id="pdf-print">Print</button>
+                    <button class="btn btn-secondary btn-sm" id="pdf-download">Download</button>
                 </div>
             </div>
             <div class="pdf-content">
-                <div class="pdf-thumbs" id="pdf-thumbs">${Array.from({ length: 24 }).map((_, i) => `<button data-page="${i + 1}">Page ${i + 1}</button>`).join('')}</div>
-                <iframe class="pdf-view" id="pdf-view" src="${url}#page=1&zoom=100"></iframe>
+                <iframe class="pdf-view" id="pdf-view" src="${url}" title="${esc(file.name)}"></iframe>
             </div>
         `;
         shell.appendChild(wrap);
 
-        let page = 1;
-        let zoom = '100';
-
-        const renderPDF = () => {
-            const src = `${url}#page=${page}&zoom=${zoom}`;
-            document.getElementById('pdf-view').src = src;
-            document.getElementById('pdf-page-ind').textContent = `${page} / 24`;
-        };
-
-        document.getElementById('pdf-prev').addEventListener('click', () => { page = Math.max(1, page - 1); renderPDF(); });
-        document.getElementById('pdf-next').addEventListener('click', () => { page = Math.min(24, page + 1); renderPDF(); });
-        document.getElementById('pdf-zoom').addEventListener('change', (e) => {
-            zoom = e.target.value === 'Fit to page' ? 'page-fit' : e.target.value.replace('%', '');
-            renderPDF();
-        });
-        document.getElementById('pdf-search').addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') e.preventDefault();
-            if (e.key === 'Enter') {
-                const q = e.currentTarget.value.trim();
-                document.getElementById('pdf-view').src = `${url}#search=${encodeURIComponent(q)}&page=${page}&zoom=${zoom}`;
-            }
-        });
-        document.getElementById('pdf-toggle-thumbs').addEventListener('click', () => {
-            document.getElementById('pdf-thumbs').classList.toggle('hidden');
-        });
         document.getElementById('pdf-print').addEventListener('click', () => {
-            const frame = document.getElementById('pdf-view');
-            frame.contentWindow?.print();
+            document.getElementById('pdf-view')?.contentWindow?.print();
         });
-        document.querySelectorAll('#pdf-thumbs button').forEach((b) => {
-            b.addEventListener('click', () => {
-                page = Number(b.dataset.page);
-                renderPDF();
-            });
+        document.getElementById('pdf-download').addEventListener('click', () => {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name || 'document.pdf';
+            a.click();
         });
 
         editorState.onSave = async () => true;
-        editorState.onReset = () => renderPDF();
+        editorState.onReset = () => {};
     }
 
     async function openVideoPlayer(file) {
@@ -5837,6 +6116,10 @@ const FileManager = (() => {
             e.preventDefault();
             document.getElementById('search-input')?.focus();
         }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            document.getElementById('search-input')?.focus();
+        }
 
         // --- New folder ---
         if (e.key.toLowerCase() === 'n' && !e.ctrlKey && !e.metaKey) {
@@ -6069,11 +6352,17 @@ const FileManager = (() => {
             return AdminPanel.load(section);
         }
         if (h === '#/home') return loadHome();
-        if (h === '#/computers' || h.startsWith('#/computers/')) return loadComputers();
+        if (h === '#/computers' || h.startsWith('#/computers/')) {
+            const folderId = h.startsWith('#/computers/') ? h.split('/')[2] : null;
+            return loadComputerFolder(folderId);
+        }
         if (h === '#/recent') return loadRecent();
         if (h === '#/starred') return loadStarred();
         if (h === '#/shared-with') return loadSharedWithMe();
-        if (h === '#/shared-by') return loadSharedByMe();
+        if (h === '#/shared-by') {
+            window.location.replace('#/files');
+            return loadFolder(null);
+        }
         if (h === '#/offline') return loadOffline();
         if (h === '#/trash') return loadTrash();
         if (h === '#/activity') return loadActivity();
@@ -6138,7 +6427,6 @@ const FileManager = (() => {
         loadRecent,
         loadStarred,
         loadSharedWithMe,
-        loadSharedByMe,
         loadOffline,
         loadTrash,
         loadActivity,

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 )
@@ -85,6 +86,7 @@ type ComputerRepository interface {
 	Create(ctx context.Context, computer *domain.Computer) error
 	GetByID(ctx context.Context, id string) (*domain.Computer, error)
 	ListByOwner(ctx context.Context, ownerID string) ([]domain.Computer, error)
+	UpdateLastSeen(ctx context.Context, id string, at time.Time) error
 	IsComputerRoot(ctx context.Context, folderID string) (bool, error)
 	IsInComputerTree(ctx context.Context, folderID string) (bool, error)
 }
@@ -102,6 +104,8 @@ type FolderRepository interface {
 	MoveToTrash(ctx context.Context, id string) error
 	RestoreFromTrash(ctx context.Context, id string) error
 	GetTrashedFolders(ctx context.Context, ownerID string) ([]domain.Folder, error)
+	PurgeAllTrashed(ctx context.Context) ([]domain.Folder, error)
+	PurgeOldTrashed(ctx context.Context, days int) ([]domain.Folder, error)
 	ListSubtreeIDs(ctx context.Context, id string) ([]string, error)
 }
 
@@ -116,6 +120,8 @@ type ShareRepository interface {
 	IncrementDownloadCount(ctx context.Context, id string) error
 
 	CreateUserShare(ctx context.Context, share *domain.UserShare) error
+	UpdateUserShare(ctx context.Context, share *domain.UserShare) error
+	GetUserShareByID(ctx context.Context, id string) (*domain.UserShare, error)
 	DeleteUserShare(ctx context.Context, id string) error
 	ListSharedByUser(ctx context.Context, userID string) ([]domain.UserShare, error)
 	ListSharedWithUser(ctx context.Context, userID string) ([]domain.UserShare, error)
@@ -126,6 +132,14 @@ type CommentRepository interface {
 	Create(ctx context.Context, comment *domain.Comment) error
 	GetByFileID(ctx context.Context, fileID string) ([]domain.Comment, error)
 	Delete(ctx context.Context, id string) error
+}
+
+// PasswordResetRepository defines data access for password reset tokens.
+type PasswordResetRepository interface {
+	Create(ctx context.Context, token *domain.PasswordResetToken) error
+	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.PasswordResetToken, error)
+	DeleteByUserID(ctx context.Context, userID string) error
+	DeleteByID(ctx context.Context, id string) error
 }
 
 // ActivityRepository defines data access for activity logs.

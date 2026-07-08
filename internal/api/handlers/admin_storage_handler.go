@@ -75,9 +75,27 @@ func (h *AdminHandler) PurgeTrash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	removed, freed := h.purgeTrashedFiles(r.Context(), files)
+
+	var foldersRemoved int
+	if h.folderRepo != nil {
+		var folders []domain.Folder
+		var folderErr error
+		if days == 0 {
+			folders, folderErr = h.folderRepo.PurgeAllTrashed(r.Context())
+		} else {
+			folders, folderErr = h.folderRepo.PurgeOldTrashed(r.Context(), days)
+		}
+		if folderErr != nil {
+			writeError(w, "failed to purge trashed folders", http.StatusInternalServerError)
+			return
+		}
+		foldersRemoved = len(folders)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"removed_files": removed,
-		"freed_bytes":   freed,
+		"removed_files":   removed,
+		"removed_folders": foldersRemoved,
+		"freed_bytes":     freed,
 	})
 }
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
@@ -63,6 +64,20 @@ func (s *ComputerService) Register(ctx context.Context, ownerID, name, hostname 
 	if err := s.computerRepo.Create(ctx, computer); err != nil {
 		return nil, err
 	}
+	return computer, nil
+}
+
+// Heartbeat updates last_seen_at for a registered computer.
+func (s *ComputerService) Heartbeat(ctx context.Context, ownerID, computerID string) (*domain.Computer, error) {
+	computer, err := s.Get(ctx, ownerID, computerID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if err := s.computerRepo.UpdateLastSeen(ctx, computerID, now); err != nil {
+		return nil, err
+	}
+	computer.LastSeenAt = &now
 	return computer, nil
 }
 

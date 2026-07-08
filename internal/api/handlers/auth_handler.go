@@ -14,10 +14,11 @@ import (
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	authService     *service.AuthService
-	emailChangeRepo repository.EmailChangeRepository
-	userRepo        repository.UserRepository
-	activityRepo    repository.ActivityRepository
+	authService          *service.AuthService
+	emailChangeRepo      repository.EmailChangeRepository
+	userRepo             repository.UserRepository
+	activityRepo         repository.ActivityRepository
+	passwordResetService *service.PasswordResetService
 }
 
 // NewAuthHandler creates a new auth handler.
@@ -26,12 +27,14 @@ func NewAuthHandler(
 	emailChangeRepo repository.EmailChangeRepository,
 	userRepo repository.UserRepository,
 	activityRepo repository.ActivityRepository,
+	passwordResetService *service.PasswordResetService,
 ) *AuthHandler {
 	return &AuthHandler{
-		authService:     authService,
-		emailChangeRepo: emailChangeRepo,
-		userRepo:        userRepo,
-		activityRepo:    activityRepo,
+		authService:          authService,
+		emailChangeRepo:      emailChangeRepo,
+		userRepo:             userRepo,
+		activityRepo:         activityRepo,
+		passwordResetService: passwordResetService,
 	}
 }
 
@@ -280,7 +283,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "password must be at least 6 characters", http.StatusBadRequest)
 		return
 	}
-	if !consumePasswordResetToken(req.Token, req.Email) {
+	if !h.passwordResetService.ConsumeResetToken(r.Context(), req.Token, req.Email) {
 		writeError(w, "invalid or expired reset link", http.StatusBadRequest)
 		return
 	}
@@ -290,4 +293,40 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Password updated"})
+}
+
+// ForgotPassword handles POST /api/v1/auth/forgot-password
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	emailAddr := strings.ToLower(strings.TrimSpace(req.Email))
+	if emailAddr == "" {
+		writeError(w, "email is required", http.StatusBadRequest)
+		return
+	}
+
+	raw, err := h.passwordResetService.CreateResetLink(r.Context(), emailAddr)
+	if err != nil {
+		writeError(w, "failed to process request", http.StatusInternalServerError)
+		return
+	}
+
+	siteURL := adminsettings.SiteURL()
+	if raw != "" && adminsettings.SMTPConfigured() {
+		_ = h.passwordResetService.SendResetEmail(r.Context(), emailAddr, siteURL, raw)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "If an account exists for this email, a reset link has been sent.",
+	})
 }

@@ -70,20 +70,24 @@ func saveSettings() {
 
 // AdminHandler handles admin endpoints.
 type AdminHandler struct {
-	userRepo     repository.UserRepository
-	fileRepo     repository.FileRepository
-	activityRepo repository.ActivityRepository
-	authService  *service.AuthService
-	diskStorage  *storage.DiskStorage
-	dataDir      string
+	userRepo             repository.UserRepository
+	fileRepo             repository.FileRepository
+	folderRepo           repository.FolderRepository
+	activityRepo         repository.ActivityRepository
+	authService          *service.AuthService
+	passwordResetService *service.PasswordResetService
+	diskStorage          *storage.DiskStorage
+	dataDir              string
 }
 
 // NewAdminHandler creates a new admin handler.
 func NewAdminHandler(
 	userRepo repository.UserRepository,
 	fileRepo repository.FileRepository,
+	folderRepo repository.FolderRepository,
 	activityRepo repository.ActivityRepository,
 	authService *service.AuthService,
+	passwordResetService *service.PasswordResetService,
 	diskStorage *storage.DiskStorage,
 	dataDir string,
 ) *AdminHandler {
@@ -94,12 +98,14 @@ func NewAdminHandler(
 		loadSettings()
 	}
 	return &AdminHandler{
-		userRepo:     userRepo,
-		fileRepo:     fileRepo,
-		activityRepo: activityRepo,
-		authService:  authService,
-		diskStorage:  diskStorage,
-		dataDir:      dataDir,
+		userRepo:             userRepo,
+		fileRepo:             fileRepo,
+		folderRepo:           folderRepo,
+		activityRepo:         activityRepo,
+		authService:          authService,
+		passwordResetService: passwordResetService,
+		diskStorage:          diskStorage,
+		dataDir:              dataDir,
 	}
 }
 
@@ -706,7 +712,11 @@ func (h *AdminHandler) SendPasswordReset(w http.ResponseWriter, r *http.Request)
 
 	siteURL = siteBaseURL(siteURL, r)
 
-	token := createPasswordResetToken(user.Email)
+	token, err := h.passwordResetService.CreateResetLink(r.Context(), user.Email)
+	if err != nil {
+		writeError(w, "failed to create reset token", http.StatusInternalServerError)
+		return
+	}
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s&email=%s", siteURL, token, url.QueryEscape(user.Email))
 	subject := "FreeDrive Password Reset"
 	body := fmt.Sprintf(

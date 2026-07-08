@@ -79,7 +79,8 @@ const API = (() => {
             || path === '/auth/refresh'
             || path === '/auth/reset-password'
             || path === '/auth/confirm-email'
-            || path === '/auth/verify-2fa';
+            || path === '/auth/verify-2fa'
+            || path === '/auth/forgot-password';
         if (res.status === 401 && !isRetry && refreshToken && !isPublicAuth) {
             const refreshed = await tryRefresh();
             if (refreshed) return request(method, path, body, true, rlRetries);
@@ -159,6 +160,7 @@ const API = (() => {
         register: (email, username, password, invite_code) => request('POST', '/auth/register', { email, username, password, invite_code }),
         logout: () => request('POST', '/auth/logout', { refresh_token: refreshToken }),
         resetPassword: (token, email, new_password) => request('POST', '/auth/reset-password', { token, email, new_password }),
+        forgotPassword: (email) => request('POST', '/auth/forgot-password', { email }),
         confirmEmail: (token) => request('POST', '/auth/confirm-email', { token }),
     };
 
@@ -196,6 +198,24 @@ const API = (() => {
         list: () => request('GET', '/computers'),
         get: (id) => request('GET', `/computers/${id}`),
         register: (name, hostname) => request('POST', '/computers/register', { name, hostname }),
+        heartbeat: (id) => request('POST', `/computers/${id}/heartbeat`),
+    };
+
+    const shares = {
+        sharedWithMe: () => request('GET', '/shares/with-me'),
+        sharedByMe: () => request('GET', '/shares/by-me'),
+        createUserShare: (data) => request('POST', '/shares/users', data),
+        updateUserShare: (id, data) => request('PATCH', `/shares/users/${id}`, data),
+        deleteUserShare: (id) => request('DELETE', `/shares/users/${id}`),
+        listLinks: () => request('GET', '/shares/links'),
+        createLink: (data) => request('POST', '/shares/links', data),
+        deleteLink: (id) => request('DELETE', `/shares/links/${id}`),
+    };
+
+    const comments = {
+        list: (fileId) => request('GET', `/files/${fileId}/comments`),
+        create: (fileId, data) => request('POST', `/files/${fileId}/comments`, data),
+        delete: (fileId, commentId) => request('DELETE', `/files/${fileId}/comments/${commentId}`),
     };
 
     const diskStats = () => request('GET', '/disk-stats');
@@ -267,6 +287,7 @@ const API = (() => {
     const approvals = {
         list: (status = '') => request('GET', `/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
         create: (fileId, data) => request('POST', `/files/${fileId}/approvals`, data),
+        update: (id, data) => request('PATCH', `/approvals/${id}`, data),
     };
 
     return {
@@ -279,6 +300,8 @@ const API = (() => {
         files,
         folders,
         computers,
+        shares,
+        comments,
         admin,
         activity,
         search,

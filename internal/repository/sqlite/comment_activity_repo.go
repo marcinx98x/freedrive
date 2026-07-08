@@ -28,16 +28,18 @@ func (r *CommentRepo) Create(ctx context.Context, comment *domain.Comment) error
 	comment.UpdatedAt = now
 
 	_, err := r.writer.ExecContext(ctx,
-		`INSERT INTO comments (id, file_id, user_id, content, parent_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		comment.ID, comment.FileID, comment.UserID, comment.Content, comment.ParentID, comment.CreatedAt, comment.UpdatedAt)
+		`INSERT INTO comments (id, file_id, user_id, content, parent_id, assigned_to, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		comment.ID, comment.FileID, comment.UserID, comment.Content, comment.ParentID, comment.AssignedTo, comment.CreatedAt, comment.UpdatedAt)
 	return err
 }
 
 func (r *CommentRepo) GetByFileID(ctx context.Context, fileID string) ([]domain.Comment, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		`SELECT c.id, c.file_id, c.user_id, u.username, c.content, c.parent_id, c.created_at, c.updated_at
-		 FROM comments c JOIN users u ON c.user_id = u.id
+		`SELECT c.id, c.file_id, c.user_id, u.username, c.content, c.parent_id, c.assigned_to, au.username, c.created_at, c.updated_at
+		 FROM comments c
+		 JOIN users u ON c.user_id = u.id
+		 LEFT JOIN users au ON c.assigned_to = au.id
 		 WHERE c.file_id = ? ORDER BY c.created_at ASC`, fileID)
 	if err != nil {
 		return nil, err
@@ -47,8 +49,16 @@ func (r *CommentRepo) GetByFileID(ctx context.Context, fileID string) ([]domain.
 	var comments []domain.Comment
 	for rows.Next() {
 		var c domain.Comment
-		if err := rows.Scan(&c.ID, &c.FileID, &c.UserID, &c.Username, &c.Content, &c.ParentID, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var assignedTo, assignedToUsername sql.NullString
+		if err := rows.Scan(&c.ID, &c.FileID, &c.UserID, &c.Username, &c.Content, &c.ParentID, &assignedTo, &assignedToUsername, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if assignedTo.Valid {
+			v := assignedTo.String
+			c.AssignedTo = &v
+		}
+		if assignedToUsername.Valid {
+			c.AssignedToUsername = assignedToUsername.String
 		}
 		comments = append(comments, c)
 	}

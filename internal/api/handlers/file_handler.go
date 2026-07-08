@@ -181,9 +181,10 @@ func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /api/v1/files/{id}
 func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	fileID := chi.URLParam(r, "id")
-	file, err := h.fileRepo.GetByID(r.Context(), fileID)
-	if err != nil || file == nil {
-		writeError(w, "file not found", http.StatusNotFound)
+	userID := middleware.GetUserID(r.Context())
+	file, err := h.fileService.Get(r.Context(), fileID, userID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	writeJSON(w, http.StatusOK, file)

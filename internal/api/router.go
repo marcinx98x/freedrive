@@ -26,9 +26,14 @@ func NewRouter(
 	fileService *service.FileService,
 	folderService *service.FolderService,
 	computerService *service.ComputerService,
+	shareService *service.ShareService,
+	passwordResetService *service.PasswordResetService,
+	accessService *service.AccessService,
 	fileRepo repository.FileRepository,
 	userRepo repository.UserRepository,
+	folderRepo repository.FolderRepository,
 	emailChangeRepo repository.EmailChangeRepository,
+	commentRepo repository.CommentRepository,
 	activityRepo repository.ActivityRepository,
 	searchRepo *sqlite.SearchRepo,
 	approvalRepo *sqlite.ApprovalRepo,
@@ -38,7 +43,6 @@ func NewRouter(
 ) http.Handler {
 	r := chi.NewRouter()
 
-	// Global middleware
 	r.Use(chiMiddleware.RequestID)
 	r.Use(chiMiddleware.RealIP)
 	r.Use(chiMiddleware.Logger)
@@ -46,55 +50,68 @@ func NewRouter(
 	r.Use(chiMiddleware.Compress(5))
 	r.Use(middleware.CORS)
 
-	// Rate limiter: 100 requests/second, burst of 200
 	limiter := middleware.NewRateLimiter(100, 400)
 	r.Use(limiter.Limit)
 
-	// Create handlers
-	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo, activityRepo)
+	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
 	computerHandler := handlers.NewComputerHandler(computerService)
-	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService, diskStorage, dataDir)
+	shareHandler := handlers.NewShareHandler(shareService, fileRepo, userRepo, diskStorage)
+	commentHandler := handlers.NewCommentHandler(commentRepo, accessService, userRepo)
+	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, folderRepo, activityRepo, authService, passwordResetService, diskStorage, dataDir)
 	userHandler := handlers.NewUserHandler(userRepo, fileRepo, emailChangeRepo, authService)
 	searchHandler := handlers.NewSearchHandler(searchRepo)
-	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo)
+	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo, accessService)
 
-	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Public auth routes
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
 			r.Post("/verify-2fa", authHandler.Verify2FA)
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
+			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)
 			r.Post("/confirm-email", authHandler.ConfirmEmail)
 		})
 
-		// Protected routes
+		r.Get("/public/share/{token}", shareHandler.PublicLinkInfo)
+		r.Get("/public/share/{token}/download", shareHandler.PublicLinkDownload)
+
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(authService))
 
-			// Current user profile + storage
 			r.Get("/me", userHandler.GetMe)
 			r.Patch("/me", userHandler.UpdateMe)
 			r.Get("/me/storage", userHandler.MyStorage)
 			r.Post("/me/email-change/request", userHandler.RequestEmailChange)
 			r.Get("/me/email-change/status", userHandler.EmailChangeStatus)
 
-			// Advanced search
 			r.Get("/search", searchHandler.Search)
 			r.Get("/approvals", approvalHandler.List)
+			r.Patch("/approvals/{id}", approvalHandler.Update)
 
-			// Files
+			r.Route("/shares", func(r chi.Router) {
+				r.Get("/with-me", shareHandler.SharedWithMe)
+				r.Get("/by-me", shareHandler.SharedByMe)
+				r.Post("/users", shareHandler.CreateUserShare)
+				r.Patch("/users/{id}", shareHandler.UpdateUserShare)
+				r.Delete("/users/{id}", shareHandler.DeleteUserShare)
+				r.Get("/links", shareHandler.ListLinks)
+				r.Post("/links", shareHandler.CreateLink)
+				r.Delete("/links/{id}", shareHandler.DeleteLink)
+			})
+
 			r.Route("/files", func(r chi.Router) {
 				r.Post("/upload", fileHandler.Upload)
 				r.Get("/", fileHandler.List)
 				r.Get("/trash", fileHandler.Trash)
 				r.Get("/{id}", fileHandler.Get)
 				r.Post("/{id}/approvals", approvalHandler.Create)
+				r.Get("/{id}/comments", commentHandler.List)
+				r.Post("/{id}/comments", commentHandler.Create)
+				r.Delete("/{id}/comments/{commentId}", commentHandler.Delete)
 				r.Get("/{id}/download", fileHandler.Download)
 				r.Patch("/{id}", fileHandler.Update)
 				r.Post("/{id}/content", fileHandler.UpdateContent)
@@ -105,7 +122,6 @@ func NewRouter(
 				r.Post("/{id}/versions/{version}/restore", fileHandler.RestoreVersion)
 			})
 
-			// Folders
 			r.Route("/folders", func(r chi.Router) {
 				r.Post("/", folderHandler.Create)
 				r.Get("/root", folderHandler.GetRoot)
@@ -119,22 +135,19 @@ func NewRouter(
 				r.Get("/{id}/breadcrumb", folderHandler.GetBreadcrumb)
 			})
 
-			// Computers (desktop sync devices)
 			r.Route("/computers", func(r chi.Router) {
 				r.Get("/", computerHandler.List)
 				r.Post("/register", computerHandler.Register)
 				r.Get("/{id}", computerHandler.Get)
+				r.Post("/{id}/heartbeat", computerHandler.Heartbeat)
 			})
 
-			// Activity
 			r.Get("/activity", func(w http.ResponseWriter, r *http.Request) {
 				adminHandler.MyActivity(w, r)
 			})
 
-			// Disk stats — real system disk usage
 			r.Get("/disk-stats", handlers.DiskStats)
 
-			// Admin routes
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)
 
@@ -167,31 +180,25 @@ func NewRouter(
 			})
 		})
 
-		// Health check
 		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"status":"ok"}`))
 		})
 	})
 
-	// Serve embedded frontend
 	webRoot, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic("failed to get web sub filesystem: " + err.Error())
 	}
 
-	// SPA fallback: serve index.html for all non-API, non-static routes.
-	// Assets are served with an ETag (content hash) and Cache-Control: no-cache
-	// so browsers always revalidate and fetch fresh files after an image update.
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if path == "/" {
 			path = "/index.html"
 		}
 
-		data, err := webRoot.(fs.ReadFileFS).ReadFile(path[1:]) // strip leading /
+		data, err := webRoot.(fs.ReadFileFS).ReadFile(path[1:])
 		if err != nil {
-			// Serve index.html for SPA routes
 			data, err = webRoot.(fs.ReadFileFS).ReadFile("index.html")
 			if err != nil {
 				http.NotFound(w, r)
@@ -205,8 +212,6 @@ func NewRouter(
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", "no-cache")
 
-		// ServeContent detects Content-Type from the file extension and
-		// handles If-None-Match (304) / range requests using the ETag above.
 		http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(data))
 	})
 

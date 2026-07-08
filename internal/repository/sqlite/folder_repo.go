@@ -263,3 +263,58 @@ func (r *FolderRepo) ListSubtreeIDs(ctx context.Context, id string) ([]string, e
 	}
 	return ids, nil
 }
+
+// PurgeOldTrashed permanently deletes folder rows trashed before the cutoff.
+func (r *FolderRepo) PurgeOldTrashed(ctx context.Context, days int) ([]domain.Folder, error) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
+		 FROM folders WHERE is_trashed = 1 AND trashed_at < ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var folders []domain.Folder
+	for rows.Next() {
+		var f domain.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+	if len(folders) > 0 {
+		_, err = r.writer.ExecContext(ctx, "DELETE FROM folders WHERE is_trashed = 1 AND trashed_at < ?", cutoff)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return folders, nil
+}
+
+// PurgeAllTrashed permanently deletes all trashed folder rows.
+func (r *FolderRepo) PurgeAllTrashed(ctx context.Context) ([]domain.Folder, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
+		 FROM folders WHERE is_trashed = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var folders []domain.Folder
+	for rows.Next() {
+		var f domain.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+	if len(folders) > 0 {
+		_, err = r.writer.ExecContext(ctx, "DELETE FROM folders WHERE is_trashed = 1")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return folders, nil
+}

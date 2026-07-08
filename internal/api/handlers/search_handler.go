@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/repository/sqlite"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -85,11 +87,12 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 type ApprovalHandler struct {
 	approvalRepo *sqlite.ApprovalRepo
 	userRepo     repository.UserRepository
+	access       *service.AccessService
 }
 
 // NewApprovalHandler creates an approval handler.
-func NewApprovalHandler(approvalRepo *sqlite.ApprovalRepo, userRepo repository.UserRepository) *ApprovalHandler {
-	return &ApprovalHandler{approvalRepo: approvalRepo, userRepo: userRepo}
+func NewApprovalHandler(approvalRepo *sqlite.ApprovalRepo, userRepo repository.UserRepository, access *service.AccessService) *ApprovalHandler {
+	return &ApprovalHandler{approvalRepo: approvalRepo, userRepo: userRepo, access: access}
 }
 
 // Create handles POST /api/v1/files/{id}/approvals
@@ -119,6 +122,10 @@ func (h *ApprovalHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "approver_id or approver_email required", http.StatusBadRequest)
 		return
 	}
+	if err := h.access.CanWriteFile(r.Context(), fileID, userID); err != nil {
+		writeError(w, "access denied", http.StatusForbidden)
+		return
+	}
 
 	approval := &domain.FileApproval{
 		FileID:      fileID,
@@ -143,4 +150,44 @@ func (h *ApprovalHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"approvals": list})
+}
+
+// Update handles PATCH /api/v1/approvals/{id}
+func (h *ApprovalHandler) Update(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	approvalID := chi.URLParam(r, "id")
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	if status != "approved" && status != "rejected" {
+		writeError(w, "status must be approved or rejected", http.StatusBadRequest)
+		return
+	}
+
+	approval, err := h.approvalRepo.GetByID(r.Context(), approvalID)
+	if err != nil || approval == nil {
+		writeError(w, "approval not found", http.StatusNotFound)
+		return
+	}
+	if approval.ApproverID != userID {
+		writeError(w, "access denied", http.StatusForbidden)
+		return
+	}
+	if approval.Status != "pending" {
+		writeError(w, "approval already resolved", http.StatusBadRequest)
+		return
+	}
+
+	approval.Status = status
+	if err := h.approvalRepo.Update(r.Context(), approval); err != nil {
+		writeError(w, "failed to update approval", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, approval)
 }

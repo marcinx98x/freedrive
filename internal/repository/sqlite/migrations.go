@@ -30,6 +30,7 @@ func runMigrations(db *sql.DB) error {
 		{7, migrationV7},
 		{8, migrationV8},
 		{9, migrationV9},
+		{10, migrationV10},
 	}
 
 	for _, m := range migrations {
@@ -289,4 +290,16 @@ CREATE TABLE IF NOT EXISTS email_2fa_challenges (
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_email_2fa_user ON email_2fa_challenges(user_id);
+`
+
+const migrationV10 = `
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email       TEXT NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  DATETIME NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id);
 `

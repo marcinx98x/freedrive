@@ -199,10 +199,11 @@ func (h *FolderHandler) Trash(w http.ResponseWriter, r *http.Request) {
 // GetBreadcrumb handles GET /api/v1/folders/{id}/breadcrumb
 func (h *FolderHandler) GetBreadcrumb(w http.ResponseWriter, r *http.Request) {
 	folderID := chi.URLParam(r, "id")
+	userID := middleware.GetUserID(r.Context())
 
-	crumbs, err := h.folderService.GetBreadcrumb(r.Context(), folderID)
+	crumbs, err := h.folderService.GetBreadcrumb(r.Context(), folderID, userID)
 	if err != nil {
-		writeError(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 

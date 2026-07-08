@@ -17,10 +17,19 @@ type FolderService struct {
 	storage      *storage.DiskStorage
 	activityRepo repository.ActivityRepository
 	computerRepo repository.ComputerRepository
+	access       *AccessService
 }
 
 // NewFolderService creates a new folder service.
-func NewFolderService(folderRepo repository.FolderRepository, fileRepo repository.FileRepository, userRepo repository.UserRepository, store *storage.DiskStorage, activityRepo repository.ActivityRepository, computerRepo repository.ComputerRepository) *FolderService {
+func NewFolderService(
+	folderRepo repository.FolderRepository,
+	fileRepo repository.FileRepository,
+	userRepo repository.UserRepository,
+	store *storage.DiskStorage,
+	activityRepo repository.ActivityRepository,
+	computerRepo repository.ComputerRepository,
+	access *AccessService,
+) *FolderService {
 	return &FolderService{
 		folderRepo:   folderRepo,
 		fileRepo:     fileRepo,
@@ -28,11 +37,17 @@ func NewFolderService(folderRepo repository.FolderRepository, fileRepo repositor
 		storage:      store,
 		activityRepo: activityRepo,
 		computerRepo: computerRepo,
+		access:       access,
 	}
 }
 
 // Create creates a new folder.
 func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error {
+	if folder.ParentID != nil && *folder.ParentID != "" {
+		if err := s.access.CanWriteFolder(ctx, *folder.ParentID, folder.OwnerID); err != nil {
+			return err
+		}
+	}
 	if err := s.folderRepo.Create(ctx, folder); err != nil {
 		return err
 	}
@@ -50,6 +65,7 @@ func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error
 // GetContents returns a folder's children (folders + files).
 func (s *FolderService) GetContents(ctx context.Context, folderID *string, ownerID string) (*domain.FolderContents, error) {
 	var folder *domain.Folder
+	listOwner := ownerID
 	if folderID != nil {
 		var err error
 		folder, err = s.folderRepo.GetByID(ctx, *folderID)
@@ -59,14 +75,18 @@ func (s *FolderService) GetContents(ctx context.Context, folderID *string, owner
 		if folder == nil {
 			return nil, fmt.Errorf("folder not found")
 		}
+		if err := s.access.CanReadFolder(ctx, *folderID, ownerID); err != nil {
+			return nil, err
+		}
+		listOwner = folder.OwnerID
 	}
 
-	folders, err := s.folderRepo.GetChildren(ctx, folderID, ownerID)
+	folders, err := s.folderRepo.GetChildren(ctx, folderID, listOwner)
 	if err != nil {
 		return nil, err
 	}
 
-	files, err := s.fileRepo.GetByFolderID(ctx, folderID, ownerID)
+	files, err := s.fileRepo.GetByFolderID(ctx, folderID, listOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -85,11 +105,14 @@ func (s *FolderService) ListAll(ctx context.Context, ownerID, search string) ([]
 
 // Rename renames a folder.
 func (s *FolderService) Rename(ctx context.Context, folderID, ownerID, newName string) error {
+	if err := s.access.CanWriteFolder(ctx, folderID, ownerID); err != nil {
+		return err
+	}
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
 		return err
 	}
-	if folder == nil || folder.OwnerID != ownerID {
+	if folder == nil {
 		return fmt.Errorf("folder not found")
 	}
 
@@ -99,12 +122,21 @@ func (s *FolderService) Rename(ctx context.Context, folderID, ownerID, newName s
 
 // Move moves a folder to a new parent.
 func (s *FolderService) Move(ctx context.Context, folderID, ownerID string, newParentID *string) error {
+	if err := s.access.CanWriteFolder(ctx, folderID, ownerID); err != nil {
+		return err
+	}
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
 		return err
 	}
-	if folder == nil || folder.OwnerID != ownerID {
+	if folder == nil {
 		return fmt.Errorf("folder not found")
+	}
+
+	if newParentID != nil && *newParentID != "" {
+		if err := s.access.CanWriteFolder(ctx, *newParentID, ownerID); err != nil {
+			return err
+		}
 	}
 
 	isComputerRoot, err := s.computerRepo.IsComputerRoot(ctx, folderID)
@@ -149,11 +181,14 @@ func (s *FolderService) Move(ctx context.Context, folderID, ownerID string, newP
 
 // Delete moves a folder and all its contents to trash.
 func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) error {
+	if err := s.access.CanWriteFolder(ctx, folderID, ownerID); err != nil {
+		return err
+	}
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
 		return err
 	}
-	if folder == nil || folder.OwnerID != ownerID {
+	if folder == nil {
 		return fmt.Errorf("folder not found")
 	}
 
@@ -257,11 +292,14 @@ func (s *FolderService) PermanentDelete(ctx context.Context, folderID, ownerID s
 
 // ToggleStar toggles starred status.
 func (s *FolderService) ToggleStar(ctx context.Context, folderID, ownerID string) error {
+	if err := s.access.CanWriteFolder(ctx, folderID, ownerID); err != nil {
+		return err
+	}
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
 		return err
 	}
-	if folder == nil || folder.OwnerID != ownerID {
+	if folder == nil {
 		return fmt.Errorf("folder not found")
 	}
 
@@ -271,11 +309,14 @@ func (s *FolderService) ToggleStar(ctx context.Context, folderID, ownerID string
 
 // SetColor sets a folder's color label.
 func (s *FolderService) SetColor(ctx context.Context, folderID, ownerID, color string) error {
+	if err := s.access.CanWriteFolder(ctx, folderID, ownerID); err != nil {
+		return err
+	}
 	folder, err := s.folderRepo.GetByID(ctx, folderID)
 	if err != nil {
 		return err
 	}
-	if folder == nil || folder.OwnerID != ownerID {
+	if folder == nil {
 		return fmt.Errorf("folder not found")
 	}
 
@@ -284,6 +325,9 @@ func (s *FolderService) SetColor(ctx context.Context, folderID, ownerID, color s
 }
 
 // GetBreadcrumb returns the path from root to the given folder.
-func (s *FolderService) GetBreadcrumb(ctx context.Context, folderID string) ([]domain.Breadcrumb, error) {
+func (s *FolderService) GetBreadcrumb(ctx context.Context, folderID, userID string) ([]domain.Breadcrumb, error) {
+	if err := s.access.CanReadFolder(ctx, folderID, userID); err != nil {
+		return nil, err
+	}
 	return s.folderRepo.GetBreadcrumb(ctx, folderID)
 }

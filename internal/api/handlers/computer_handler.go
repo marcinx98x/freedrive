@@ -71,3 +71,17 @@ func (h *ComputerHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, computer)
 }
+
+// Heartbeat handles POST /api/v1/computers/{id}/heartbeat
+func (h *ComputerHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	computerID := chi.URLParam(r, "id")
+
+	computer, err := h.computerService.Heartbeat(r.Context(), userID, computerID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, computer)
+}

@@ -667,8 +667,12 @@ const App = (() => {
         });
 
         document.getElementById('help-shortcuts')?.addEventListener('click', () => FileManager.showShortcuts());
-        document.getElementById('help-feedback')?.addEventListener('click', () => Components.toast('Feedback form opened', 'info'));
-        document.getElementById('help-center')?.addEventListener('click', () => Components.toast('Help center is available in-app', 'info'));
+        document.getElementById('help-feedback')?.addEventListener('click', () => {
+            Components.showModal('Send feedback', '<p style="margin:0;color:#5f6368;font-size:14px;line-height:1.45;">Email your administrator or open an issue in the FreeDrive repository with steps to reproduce and screenshots.</p>', [{ text: 'OK', class: 'btn-primary' }]);
+        });
+        document.getElementById('help-center')?.addEventListener('click', () => {
+            window.open('https://github.com/abdullaabdullazade/freedrive', '_blank', 'noopener');
+        });
 
         document.getElementById('shortcuts-close')?.addEventListener('click', () => {
             document.getElementById('shortcuts-modal-overlay')?.classList.add('hidden');
@@ -965,10 +969,8 @@ const App = (() => {
         }
         if (hash === '#/computers' || hash.startsWith('#/computers/')) {
             setActiveNav('computers');
-            if (hash !== '#/computers') {
-                window.location.hash = '#/computers';
-            }
-            FileManager.loadComputers();
+            const folderId = hash.startsWith('#/computers/') ? hash.split('/')[2] : null;
+            FileManager.loadComputerFolder(folderId);
             return;
         }
         if (hash === '#/starred') {
@@ -982,8 +984,7 @@ const App = (() => {
             return;
         }
         if (hash === '#/shared-by') {
-            setActiveNav('shared-by');
-            FileManager.loadSharedByMe();
+            window.location.replace('#/files');
             return;
         }
         if (hash === '#/offline') {

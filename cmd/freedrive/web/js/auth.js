@@ -111,17 +111,38 @@ const Auth = (() => {
     }
 
     function showForgotPasswordHelp() {
+        const loginEmail = String(document.getElementById('login-email')?.value || '').trim();
         Components.showModal(
             'Forgot password',
             `<p style="margin:0 0 12px;color:#5f6368;font-size:14px;line-height:1.45;">
-                Ask your FreeDrive admin to click <strong>Reset password</strong> for your user in the admin panel.
-                That sends a reset link to the email on your account (requires SMTP).
+                Enter the email on your FreeDrive account. If it exists, we will send a reset link (requires SMTP).
             </p>
-            <p style="margin:0;color:#5f6368;font-size:14px;line-height:1.45;">
-                Sign in with the <strong>exact email</strong> saved on your account — it may differ from the address in the invite email.
-            </p>`,
-            [{ text: 'OK', class: 'btn-primary' }]
+            <input id="forgot-email-input" type="email" autocomplete="email"
+                style="width:100%;height:48px;padding:0 14px;border-radius:8px;border:1px solid #dadce0;font-size:15px;box-sizing:border-box;"
+                value="${Components.escapeHtml(loginEmail)}" placeholder="you@example.com">`,
+            [
+                { text: 'Cancel', class: 'btn-secondary' },
+                {
+                    text: 'Send reset link',
+                    class: 'btn-primary',
+                    action: async () => {
+                        const email = String(document.getElementById('forgot-email-input')?.value || '').trim().toLowerCase();
+                        if (!email) {
+                            Components.toast('Enter your account email', 'error');
+                            return false;
+                        }
+                        try {
+                            await API.auth.forgotPassword(email);
+                            Components.toast('If that account exists, a reset link was sent.', 'success');
+                        } catch (err) {
+                            Components.toast(err?.message || 'Failed to send reset link', 'error');
+                            return false;
+                        }
+                    },
+                },
+            ]
         );
+        setTimeout(() => document.getElementById('forgot-email-input')?.focus(), 50);
     }
 
     function init() {

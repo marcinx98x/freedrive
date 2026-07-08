@@ -35,6 +35,30 @@ func (r *ApprovalRepo) Create(ctx context.Context, approval *domain.FileApproval
 	return err
 }
 
+func (r *ApprovalRepo) GetByID(ctx context.Context, id string) (*domain.FileApproval, error) {
+	row := r.reader.QueryRowContext(ctx,
+		`SELECT id, file_id, requested_by, approver_id, status, created_at
+		 FROM file_approvals WHERE id = ?`, id,
+	)
+	var a domain.FileApproval
+	err := row.Scan(&a.ID, &a.FileID, &a.RequestedBy, &a.ApproverID, &a.Status, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (r *ApprovalRepo) Update(ctx context.Context, approval *domain.FileApproval) error {
+	_, err := r.writer.ExecContext(ctx,
+		`UPDATE file_approvals SET status = ? WHERE id = ?`,
+		approval.Status, approval.ID,
+	)
+	return err
+}
+
 func (r *ApprovalRepo) List(ctx context.Context, userID, status string) ([]domain.FileApproval, error) {
 	rows, err := r.reader.QueryContext(ctx,
 		`SELECT id, file_id, requested_by, approver_id, status, created_at

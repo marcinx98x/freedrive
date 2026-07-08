@@ -83,7 +83,7 @@ FreeDrive is ideal for:
 ### 1. Drive-like File Management UX
 
 - Folder-based navigation and root view
-- Unified page headers across Home, My Drive, Recent, Starred, Shared, Trash, and other tabs
+- Unified page headers across Home, My Drive, Recent, Starred, Shared with me, Trash, and other tabs
 - Home Suggested files: list view with Name / Reason suggested / Owner / Location (parent folder name), or grid tiles
 - List/grid view switching with Recent and Starred collections
 - Owner column shows avatar + `me` for your own items, or avatar + owner name for others
@@ -102,9 +102,10 @@ FreeDrive is ideal for:
 - Upload files via web UI
 - Download encrypted blob payloads with metadata headers
 - Rename and move files between folders
-- Soft delete to Trash
-- Restore from Trash
-- Permanent delete
+- Soft delete to Trash (files and folders, including folder subtrees)
+- Restore from Trash (files and folders)
+- Permanent delete (files and folders)
+- Scheduled and admin trash purge removes old trashed **files** (blobs + rows) and **folders** (metadata rows)
 
 ### 4. Versioning Support
 
@@ -116,30 +117,42 @@ FreeDrive is ideal for:
 ### 5. User Profile & Security
 
 - Profile settings modal (name, avatar photo)
+- Forgot-password flow with SQLite-persisted reset tokens (survives server restart; single-use)
 - Secure email change with confirmation link sent to the new address
 - Security center for per-user email 2FA toggle
 - When admin enables global `require_2fa`, all users must verify a 6-digit code at sign-in
 
 ### 6. Sharing Model
 
-- User-to-user sharing data model (`user_shares`)
-- Share-link data model (`share_links`)
-- "Shared with me" and "Shared by me" listing paths
+- User-to-user sharing data model (`user_shares`) with role-based access control enforced on read/write mutations
+- Share-link data model (`share_links`) with optional password, expiry, and download limits
+- **Shared with me** sidebar view for inbound shares (Google Drive-style — no separate “Shared by me” tab)
+- Outbound shares stay in **My Drive**; manage recipients in the Share dialog; shared items show a people icon in the file list
+- Find items you shared via advanced search: **Owner: Me** + **Shared to** (email)
+- `GET /shares/by-me` API supports Share dialog, details panel, and search (not a separate nav view)
+- Update share permission (`PATCH /shares/users/{id}`) and folder shares in shared listings
 
-### 7. Storage & Quota Awareness
+### 7. Comments & Approvals
+
+- File comments with optional assignee (`assigned_to_email`) — visible in the details Activity tab
+- Advanced search follow-ups: “Comments assigned to me only”, approval awaiting / requested filters
+- Request approval from context menu or file details; approver can approve/reject in Activity tab
+- `GET /approvals`, `POST /files/{id}/approvals`, `PATCH /approvals/{id}` workflow
+
+### 8. Storage & Quota Awareness
 
 - Per-user quota enforcement during uploads/content updates
 - Server-wide capacity limit (`total_capacity_gb`) enforced from admin settings
 - Used-bytes accounting on delete/restore/permanent-delete paths
 - Disk usage endpoint for runtime visibility
 
-### 8. Activity Logging
+### 9. Activity Logging
 
 - File/folder actions are recorded in activity logs
 - Login and failed-login events with client IP
 - User and admin activity listing endpoints
 
-### 9. Embedded App Delivery
+### 10. Embedded App Delivery
 
 - Frontend is embedded with `go:embed`
 - Single process serves API + SPA + static assets
@@ -176,7 +189,8 @@ Admin routes are role-protected and available under `/api/v1/admin/*`.
 - Save/retrieve admin settings (persisted to `data/settings.json`)
 - Run backup snapshot for admin settings
 - Scheduled settings backup (daily / weekly / monthly)
-- Storage tools: purge trash, list/purge duplicate blobs, wipe all data (danger zone)
+- Storage tools: purge trash (files + folders), list/purge duplicate blobs, wipe all data (danger zone)
+- Trash auto-empty scheduler (`storage.trash_auto_empty`: 7 / 30 / 90 days or never)
 
 ### Security & Access Policy
 
@@ -469,7 +483,8 @@ Base path: `/api/v1`
 - `POST /auth/verify-2fa` — complete login with `{ challenge_id, code }`
 - `POST /auth/refresh`
 - `POST /auth/logout`
-- `POST /auth/reset-password`
+- `POST /auth/forgot-password` — `{ email }` — sends reset link if account exists (requires SMTP); generic response either way
+- `POST /auth/reset-password` — `{ token, email, new_password }` — consumes SQLite-stored token (survives server restart)
 - `POST /auth/confirm-email` — confirm pending email change from link
 
 ### Protected (Authenticated)
@@ -481,8 +496,22 @@ Base path: `/api/v1`
 - `GET /me/storage`
 - `GET /activity`
 - `GET /disk-stats`
-- `GET /search` — advanced search (query + filters: type, owner, location, trash, starred, modified, approvals, …)
-- `GET /approvals`
+- `GET /search` — advanced search (query + filters: type, owner, location, trash, starred, modified, approvals, follow-ups, …)
+- `GET /approvals` — list approvals for current user (`?status=pending` optional)
+- `PATCH /approvals/{id}` — `{ status: "approved" | "rejected" }` (approver only)
+
+#### Shares
+
+User-to-user sharing and public links. Permissions: `viewer`/`commenter` → read; `editor` → write. Access is enforced on file/folder get, download, breadcrumb, and mutations.
+
+- `GET /shares/with-me` — items shared with the current user (sidebar **Shared with me**)
+- `GET /shares/by-me` — items the current user has shared (used by Share dialog and advanced search; no separate nav view)
+- `POST /shares/users` — `{ file_id?, folder_id?, shared_with?, shared_email?, permission }`
+- `PATCH /shares/users/{id}` — `{ permission }`
+- `DELETE /shares/users/{id}`
+- `GET /shares/links` — list share links created by the user
+- `POST /shares/links` — `{ file_id?, folder_id?, permission, password?, expires_at?, max_downloads? }`
+- `DELETE /shares/links/{id}`
 
 #### Files
 
@@ -490,7 +519,10 @@ Base path: `/api/v1`
 - `GET /files`
 - `GET /files/trash`
 - `GET /files/{id}`
-- `POST /files/{id}/approvals`
+- `GET /files/{id}/comments`
+- `POST /files/{id}/comments` — `{ content, parent_id?, assigned_to_email? }`
+- `DELETE /files/{id}/comments/{commentId}`
+- `POST /files/{id}/approvals` — `{ approver_id?, approver_email? }` (requires write access)
 - `GET /files/{id}/download`
 - `PATCH /files/{id}`
 - `POST /files/{id}/content`
@@ -518,6 +550,12 @@ Base path: `/api/v1`
 - `GET /computers`
 - `GET /computers/{id}`
 - `POST /computers/register`
+- `POST /computers/{id}/heartbeat`
+
+### Public (no auth)
+
+- `GET /public/share/{token}` — share link metadata (`?password=` if protected)
+- `GET /public/share/{token}/download` — download file via share link (`?password=` if protected)
 
 ### Admin (Requires `admin` role)
 
@@ -543,7 +581,7 @@ Base path: `/api/v1`
 - `GET /admin/backup/download/{filename}`
 - `POST /admin/backup/restore`
 - `DELETE /admin/backup/{filename}`
-- `POST /admin/storage/purge-trash`
+- `POST /admin/storage/purge-trash?days=30` — permanently delete trashed files (blobs + rows) and folder rows older than N days; `days=0` purges all trash. Response: `{ removed_files, removed_folders, freed_bytes }`. Background auto-empty uses the `storage.trash_auto_empty` setting (7 / 30 / 90 / never).
 - `GET /admin/storage/duplicates`
 - `POST /admin/storage/duplicates/purge`
 - `POST /admin/danger/wipe`

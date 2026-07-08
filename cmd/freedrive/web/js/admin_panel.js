@@ -122,6 +122,12 @@ const AdminPanel = (() => {
         return Components.escapeHtml(value || '');
     }
 
+    function formatPurgeTrashResult(res, prefix = 'Purged') {
+        const files = res?.removed_files || 0;
+        const folders = res?.removed_folders || 0;
+        return `${prefix} ${files} file(s) and ${folders} folder(s)`;
+    }
+
     function initials(name) {
         return Components.initials(name || 'U');
     }
@@ -1034,7 +1040,7 @@ const AdminPanel = (() => {
                         </div>
                         <div class="gd-cleanup-actions">
                             <div class="gd-cleanup-item">
-                                <span>Trash older than 30 days</span>
+                                <span>Trashed items older than 30 days</span>
                                 <button class="gd-btn-outline" data-admin-action="cleanup-trash">Review</button>
                             </div>
                             <div class="gd-cleanup-item">
@@ -2408,11 +2414,11 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'cleanup-trash') {
-                    const ok = await Components.confirm('Empty trash older than 30 days', 'Trashed files older than 30 days will be permanently deleted.', 'Empty');
+                    const ok = await Components.confirm('Empty trash older than 30 days', 'Trashed files and folders older than 30 days will be permanently deleted.', 'Empty');
                     if (!ok) return;
                     try {
                         const res = await API.admin.purgeTrash(30);
-                        Components.toast(`Purged ${res.removed_files || 0} file(s)`, 'success');
+                        Components.toast(formatPurgeTrashResult(res), 'success');
                         await load('storage');
                     } catch (err) {
                         Components.toast(err?.message || 'Trash cleanup failed', 'error');
@@ -2485,7 +2491,8 @@ const AdminPanel = (() => {
                 }
                 if (action === 'open-admin-profile') {
                     document.getElementById('admin-profile-menu')?.classList.add('hidden');
-                    Components.toast('Profile panel coming soon', 'info');
+                    window.location.href = '/#/files';
+                    Components.toast('Use My Drive profile settings for your account', 'info');
                     return;
                 }
                 if (action === 'open-admin-settings') {
@@ -2856,11 +2863,11 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'danger-clear-trash') {
-                    const ok = await Components.confirm('Clear all trash', 'This cannot be undone and all trashed files will be permanently deleted.', 'Clear');
+                    const ok = await Components.confirm('Clear all trash', 'This cannot be undone and all trashed files and folders will be permanently deleted.', 'Clear');
                     if (!ok) return;
                     try {
                         const res = await API.admin.purgeTrash(0);
-                        Components.toast(`Cleared ${res.removed_files || 0} trashed file(s)`, 'success');
+                        Components.toast(formatPurgeTrashResult(res, 'Cleared'), 'success');
                         await load('storage');
                     } catch (err) {
                         Components.toast(err?.message || 'Failed to clear trash', 'error');

@@ -23,20 +23,17 @@ import (
 var webFS embed.FS
 
 func main() {
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Initialize database
 	db, err := sqlite.New(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
 
-	// Run migrations
 	if err := db.Migrate(); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
@@ -44,13 +41,11 @@ func main() {
 
 	adminsettings.SetDataDir(cfg.DataDir)
 
-	// Initialize storage
 	diskStorage, err := storage.NewDiskStorage(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 
-	// Initialize repositories
 	userRepo := sqlite.NewUserRepo(db)
 	fileRepo := sqlite.NewFileRepo(db)
 	folderRepo := sqlite.NewFolderRepo(db)
@@ -60,14 +55,19 @@ func main() {
 	approvalRepo := sqlite.NewApprovalRepo(db)
 	emailChangeRepo := sqlite.NewEmailChangeRepo(db)
 	email2faRepo := sqlite.NewEmail2FARepo(db)
+	shareRepo := sqlite.NewShareRepo(db)
+	commentRepo := sqlite.NewCommentRepo(db)
+	passwordResetRepo := sqlite.NewPasswordResetRepo(db)
 
-	// Initialize services
+	accessService := service.NewAccessService(shareRepo, fileRepo, folderRepo)
+	shareService := service.NewShareService(shareRepo, fileRepo, folderRepo, userRepo, accessService)
+	passwordResetService := service.NewPasswordResetService(userRepo, passwordResetRepo)
+
 	authService := service.NewAuthService(userRepo, email2faRepo, cfg.JWTSecret)
-	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo)
+	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo, accessService, folderRepo)
 	computerService := service.NewComputerService(computerRepo, folderRepo)
-	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo)
+	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo, accessService)
 
-	// Create admin user if no users exist
 	if err := authService.EnsureAdmin(context.Background(), cfg.AdminEmail, cfg.AdminPassword); err != nil {
 		log.Printf("Warning: Could not create admin user: %v", err)
 	} else {
@@ -77,22 +77,25 @@ func main() {
 		}
 	}
 
-	// Start background tasks
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fileService.StartTrashPurge(ctx)
 	adminsettings.StartBackupScheduler(ctx)
 
-	// Create router
 	router := api.NewRouter(
 		webFS,
 		authService,
 		fileService,
 		folderService,
 		computerService,
+		shareService,
+		passwordResetService,
+		accessService,
 		fileRepo,
 		userRepo,
+		folderRepo,
 		emailChangeRepo,
+		commentRepo,
 		activityRepo,
 		searchRepo,
 		approvalRepo,
@@ -101,7 +104,6 @@ func main() {
 		cfg.DataDir,
 	)
 
-	// Start server
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,
@@ -110,7 +112,6 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
@@ -138,6 +139,6 @@ func main() {
 		log.Fatalf("Server forced shutdown: %v", err)
 	}
 
-	cancel() // Stop background tasks
+	cancel()
 	log.Println("Server stopped gracefully")
 }

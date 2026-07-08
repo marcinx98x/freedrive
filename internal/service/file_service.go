@@ -19,15 +19,26 @@ type FileService struct {
 	userRepo     repository.UserRepository
 	storage      *storage.DiskStorage
 	activityRepo repository.ActivityRepository
+	access       *AccessService
+	folderRepo   repository.FolderRepository
 }
 
 // NewFileService creates a new file service.
-func NewFileService(fileRepo repository.FileRepository, userRepo repository.UserRepository, store *storage.DiskStorage, activityRepo repository.ActivityRepository) *FileService {
+func NewFileService(
+	fileRepo repository.FileRepository,
+	userRepo repository.UserRepository,
+	store *storage.DiskStorage,
+	activityRepo repository.ActivityRepository,
+	access *AccessService,
+	folderRepo repository.FolderRepository,
+) *FileService {
 	return &FileService{
 		fileRepo:     fileRepo,
 		userRepo:     userRepo,
 		storage:      store,
 		activityRepo: activityRepo,
+		access:       access,
+		folderRepo:   folderRepo,
 	}
 }
 
@@ -67,6 +78,10 @@ func (s *FileService) Upload(ctx context.Context, file *domain.File, blobPath st
 
 // Download returns a file's blob reader.
 func (s *FileService) Download(ctx context.Context, fileID, userID string) (*domain.File, func() (interface{}, error), error) {
+	if err := s.access.CanReadFile(ctx, fileID, userID); err != nil {
+		return nil, nil, err
+	}
+
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return nil, nil, err
@@ -87,17 +102,32 @@ func (s *FileService) Download(ctx context.Context, fileID, userID string) (*dom
 	return file, getReader, nil
 }
 
+// Get returns file metadata when the user may read the file.
+func (s *FileService) Get(ctx context.Context, fileID, userID string) (*domain.File, error) {
+	if err := s.access.CanReadFile(ctx, fileID, userID); err != nil {
+		return nil, err
+	}
+	file, err := s.fileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if file == nil {
+		return nil, fmt.Errorf("file not found")
+	}
+	return file, nil
+}
+
 // Delete moves a file to trash.
 func (s *FileService) Delete(ctx context.Context, fileID, userID string) error {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return err
+	}
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return err
 	}
 	if file == nil {
 		return fmt.Errorf("file not found")
-	}
-	if file.OwnerID != userID {
-		return fmt.Errorf("access denied")
 	}
 
 	if err := s.fileRepo.MoveToTrash(ctx, fileID); err != nil {
@@ -164,11 +194,14 @@ func (s *FileService) Restore(ctx context.Context, fileID, userID string) error 
 
 // Rename renames a file.
 func (s *FileService) Rename(ctx context.Context, fileID, userID, newName string) error {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return err
+	}
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return err
 	}
-	if file == nil || file.OwnerID != userID {
+	if file == nil {
 		return fmt.Errorf("file not found")
 	}
 
@@ -184,11 +217,19 @@ func (s *FileService) Rename(ctx context.Context, fileID, userID, newName string
 
 // Move moves a file to another folder.
 func (s *FileService) Move(ctx context.Context, fileID, userID string, folderID *string) error {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return err
+	}
+	if folderID != nil && *folderID != "" {
+		if err := s.access.CanWriteFolder(ctx, *folderID, userID); err != nil {
+			return err
+		}
+	}
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return err
 	}
-	if file == nil || file.OwnerID != userID {
+	if file == nil {
 		return fmt.Errorf("file not found")
 	}
 
@@ -203,11 +244,14 @@ func (s *FileService) Move(ctx context.Context, fileID, userID string, folderID 
 
 // ToggleStar toggles the starred state of a file.
 func (s *FileService) ToggleStar(ctx context.Context, fileID, userID string) error {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return err
+	}
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return err
 	}
-	if file == nil || file.OwnerID != userID {
+	if file == nil {
 		return fmt.Errorf("file not found")
 	}
 
@@ -238,6 +282,14 @@ func (s *FileService) StartTrashPurge(ctx context.Context) {
 					_ = s.storage.Delete(f.BlobPath)
 					_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
 				}
+				if s.folderRepo != nil {
+					folders, err := s.folderRepo.PurgeOldTrashed(ctx, days)
+					if err != nil {
+						log.Printf("folder trash purge error: %v", err)
+					} else if len(folders) > 0 {
+						log.Printf("purged %d old trashed folders", len(folders))
+					}
+				}
 				if len(files) > 0 {
 					log.Printf("purged %d old trash items", len(files))
 				}
@@ -264,15 +316,15 @@ func (s *FileService) logActivity(ctx context.Context, userID string, action dom
 
 // UpdateContent replaces the encrypted blob for an existing file and creates a version snapshot.
 func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, mimeType, iv string, originalSize int64, r io.Reader) (*domain.File, error) {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return nil, err
+	}
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return nil, err
 	}
 	if file == nil {
 		return nil, fmt.Errorf("file not found")
-	}
-	if file.OwnerID != userID {
-		return nil, fmt.Errorf("access denied")
 	}
 
 	// Create a snapshot of current state before replacing content.
@@ -354,15 +406,15 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 
 // RestoreVersion restores a historical version as the latest file content.
 func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string, version int) (*domain.File, error) {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return nil, err
+	}
 	file, err := s.fileRepo.GetByID(ctx, fileID)
 	if err != nil {
 		return nil, err
 	}
 	if file == nil {
 		return nil, fmt.Errorf("file not found")
-	}
-	if file.OwnerID != userID {
-		return nil, fmt.Errorf("access denied")
 	}
 
 	if adminsettings.VersioningEnabled() {
