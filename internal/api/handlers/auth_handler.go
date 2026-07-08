@@ -4,17 +4,28 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
 )
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	authService *service.AuthService
+	authService     *service.AuthService
+	emailChangeRepo repository.EmailChangeRepository
+	userRepo        repository.UserRepository
 }
 
 // NewAuthHandler creates a new auth handler.
-func NewAuthHandler(authService *service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(
+	authService *service.AuthService,
+	emailChangeRepo repository.EmailChangeRepository,
+	userRepo repository.UserRepository,
+) *AuthHandler {
+	return &AuthHandler{
+		authService:     authService,
+		emailChangeRepo: emailChangeRepo,
+		userRepo:        userRepo,
+	}
 }
 
 // Register handles POST /api/v1/auth/register

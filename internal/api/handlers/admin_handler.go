@@ -1,15 +1,12 @@
 package handlers
 
 import (
-	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
-	"net/smtp"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,8 +15,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/email"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
 	"github.com/abdullaabdullazade/freedrive/internal/storage"
@@ -393,7 +392,8 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 
 			emailSent = true // Assume success for fast response
 			go func() {
-				if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
+				cfg := smtpConfig(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, useTLS)
+				if err := email.Send(cfg, recipient, subject, body); err != nil {
 					fmt.Fprintf(os.Stderr, "failed to send invite email to %s: %v\n", recipient, err)
 				}
 			}()
@@ -511,7 +511,8 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	body += "\nUse the email address above when creating your account and when signing in.\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
 	go func() {
-		if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, recipient, subject, body, useTLS); err != nil {
+		cfg := smtpConfig(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, useTLS)
+		if err := email.Send(cfg, recipient, subject, body); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to resend invite email to %s: %v\n", recipient, err)
 		}
 	}()
@@ -683,7 +684,8 @@ func (h *AdminHandler) SendPasswordReset(w http.ResponseWriter, r *http.Request)
 	)
 
 	go func() {
-		if err := sendSMTPEmail(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, user.Email, subject, body, useTLS); err != nil {
+		cfg := smtpConfig(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, useTLS)
+		if err := email.Send(cfg, user.Email, subject, body); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to send reset email to %s: %v\n", user.Email, err)
 		}
 	}()
@@ -714,17 +716,12 @@ func (h *AdminHandler) TestEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := sendSMTPEmail(
-		req.SMTPServer,
-		req.SMTPPort,
-		req.SMTPUser,
-		req.SMTPPass,
-		req.FromAddress,
-		req.FromName,
+	cfg := smtpConfig(req.SMTPServer, req.SMTPPort, req.SMTPUser, req.SMTPPass, req.FromAddress, req.FromName, req.TLS)
+	if err := email.Send(
+		cfg,
 		req.ToAddress,
 		"FreeDrive Test Email",
 		"This is a test email sent from your FreeDrive Admin Panel.\nIf you received this, your SMTP configuration is correct!\n",
-		req.TLS,
 	); err != nil {
 		writeError(w, "failed to send email: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -733,122 +730,16 @@ func (h *AdminHandler) TestEmail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Email sent successfully"})
 }
 
-func sendSMTPEmail(smtpServer string, smtpPort int, smtpUser, smtpPass, fromAddress, fromName, toAddress, subject, body string, useTLS bool) error {
-	if smtpPort == 443 || strings.HasPrefix(smtpServer, "https://") || strings.HasPrefix(smtpServer, "http://") || strings.Contains(smtpServer, "api.mailersend.com") || strings.Contains(smtpServer, "api.zeptomail.") {
-		return sendHTTPEmail(smtpServer, smtpPass, fromAddress, fromName, toAddress, subject, body)
+func smtpConfig(server string, port int, user, pass, fromAddr, fromName string, useTLS bool) adminsettings.SMTPConfig {
+	return adminsettings.SMTPConfig{
+		Server:      server,
+		Port:        port,
+		User:        user,
+		Pass:        pass,
+		FromAddress: fromAddr,
+		FromName:    fromName,
+		TLS:         useTLS,
 	}
-
-	fromHeader := fromAddress
-	if strings.TrimSpace(fromName) != "" {
-		fromHeader = fmt.Sprintf("%s <%s>", fromName, fromAddress)
-	}
-
-	msg := []byte(
-		"Subject: " + subject + "\r\n" +
-			"From: " + fromHeader + "\r\n" +
-			"To: " + toAddress + "\r\n" +
-			"MIME-Version: 1.0\r\n" +
-			"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
-			"\r\n" +
-			body,
-	)
-
-	addr := fmt.Sprintf("%s:%d", smtpServer, smtpPort)
-	var auth smtp.Auth
-	if smtpUser != "" || smtpPass != "" {
-		auth = smtp.PlainAuth("", smtpUser, smtpPass, smtpServer)
-	}
-
-	// Implicit TLS (typically port 465)
-	if useTLS && smtpPort == 465 {
-		tlsconfig := &tls.Config{
-			InsecureSkipVerify: true,
-			ServerName:         smtpServer,
-		}
-		conn, errConn := tls.Dial("tcp", addr, tlsconfig)
-		if errConn != nil {
-			return fmt.Errorf("failed to connect via TLS: %w", errConn)
-		}
-		client, errClient := smtp.NewClient(conn, smtpServer)
-		if errClient != nil {
-			return fmt.Errorf("failed to create SMTP client: %w", errClient)
-		}
-		defer client.Close()
-
-		if auth != nil {
-			if err := client.Auth(auth); err != nil {
-				return fmt.Errorf("smtp auth failed: %w", err)
-			}
-		}
-		if err := client.Mail(fromAddress); err != nil {
-			return fmt.Errorf("smtp mail failed: %w", err)
-		}
-		if err := client.Rcpt(toAddress); err != nil {
-			return fmt.Errorf("smtp rcpt failed: %w", err)
-		}
-		writer, errWriter := client.Data()
-		if errWriter != nil {
-			return fmt.Errorf("smtp data failed: %w", errWriter)
-		}
-		if _, err := writer.Write(msg); err != nil {
-			return fmt.Errorf("failed to write email body: %w", err)
-		}
-		if err := writer.Close(); err != nil {
-			return fmt.Errorf("failed to close email body writer: %w", err)
-		}
-		_ = client.Quit()
-		return nil
-	}
-
-	// Explicit SMTP flow (supports STARTTLS, commonly port 587).
-	client, err := smtp.Dial(addr)
-	if err != nil {
-		return fmt.Errorf("failed to dial SMTP server: %w", err)
-	}
-	defer client.Close()
-
-	if useTLS {
-		if ok, _ := client.Extension("STARTTLS"); ok {
-			tlsConfig := &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         smtpServer,
-			}
-			if err := client.StartTLS(tlsConfig); err != nil {
-				return fmt.Errorf("starttls failed: %w", err)
-			}
-		} else {
-			return fmt.Errorf("smtp server does not support STARTTLS")
-		}
-	}
-
-	if auth != nil {
-		if ok, _ := client.Extension("AUTH"); ok {
-			if err := client.Auth(auth); err != nil {
-				return fmt.Errorf("smtp auth failed: %w", err)
-			}
-		} else if smtpUser != "" || smtpPass != "" {
-			return fmt.Errorf("smtp auth is required but not supported by server")
-		}
-	}
-
-	if err := client.Mail(fromAddress); err != nil {
-		return fmt.Errorf("smtp mail failed: %w", err)
-	}
-	if err := client.Rcpt(toAddress); err != nil {
-		return fmt.Errorf("smtp rcpt failed: %w", err)
-	}
-	writer, errWriter := client.Data()
-	if errWriter != nil {
-		return fmt.Errorf("smtp data failed: %w", errWriter)
-	}
-	if _, err := writer.Write(msg); err != nil {
-		return fmt.Errorf("failed to write email body: %w", err)
-	}
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("failed to close email body writer: %w", err)
-	}
-	_ = client.Quit()
-	return nil
 }
 
 func asString(v interface{}) string {
@@ -925,95 +816,4 @@ func formatBytes(n int64) string {
 	}
 	gb := mb / 1024
 	return fmt.Sprintf("%.2f GB", gb)
-}
-
-func sendHTTPEmail(apiUrl, apiToken, fromAddress, fromName, toAddress, subject, body string) error {
-	if !strings.HasPrefix(apiUrl, "http") {
-		apiUrl = "https://" + apiUrl
-	}
-
-	var payload []byte
-	var err error
-
-	// Auto-detect Provider
-	isZepto := false
-	if strings.Contains(apiUrl, "mailersend") {
-		if !strings.Contains(apiUrl, "/v1/email") {
-			apiUrl = strings.TrimRight(apiUrl, "/") + "/v1/email"
-		}
-		
-		reqBody := map[string]interface{}{
-			"from":    map[string]string{"email": fromAddress, "name": fromName},
-			"to":      []map[string]string{{"email": toAddress}},
-			"subject": subject,
-			"text":    body,
-		}
-		payload, err = json.Marshal(reqBody)
-	} else if strings.Contains(apiUrl, "zeptomail") {
-		isZepto = true
-		if !strings.Contains(apiUrl, "/v1.1/email") {
-			apiUrl = strings.TrimRight(apiUrl, "/") + "/v1.1/email"
-		}
-
-		reqBody := map[string]interface{}{
-			"from": map[string]string{"address": fromAddress, "name": fromName},
-			"to": []map[string]interface{}{
-				{
-					"email_address": map[string]string{"address": toAddress, "name": toAddress},
-				},
-			},
-			"subject":  subject,
-			"textbody": body,
-		}
-		payload, err = json.Marshal(reqBody)
-	} else {
-		// Generic JSON payload
-		reqBody := map[string]string{
-			"from_email": fromAddress,
-			"from_name":  fromName,
-			"to_email":   toAddress,
-			"subject":    subject,
-			"body":       body,
-		}
-		payload, err = json.Marshal(reqBody)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("POST", apiUrl, bytes.NewBuffer(payload))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if apiToken != "" {
-		if isZepto {
-			if !strings.HasPrefix(apiToken, "Zoho-enczapikey ") {
-				apiToken = "Zoho-enczapikey " + apiToken
-			}
-			req.Header.Set("Authorization", apiToken)
-		} else {
-			if !strings.HasPrefix(apiToken, "Bearer ") {
-				apiToken = "Bearer " + apiToken
-			}
-			req.Header.Set("Authorization", apiToken)
-		}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
 }

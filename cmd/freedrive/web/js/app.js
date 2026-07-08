@@ -114,7 +114,18 @@ const App = (() => {
         document.body.dataset.fdTheme = t;
     }
 
-    function openDriveSettings() {
+    function formatEmailExpiry(iso) {
+        if (!iso) return 'soon';
+        try {
+            const d = new Date(iso);
+            if (Number.isNaN(d.getTime())) return 'soon';
+            return d.toLocaleString();
+        } catch {
+            return 'soon';
+        }
+    }
+
+    async function openDriveSettings() {
         const user = API.getUser() || {};
         const prefs = getUserPrefs();
         const esc = Components.escapeHtml;
@@ -123,6 +134,19 @@ const App = (() => {
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || '';
         const previewAvatar = resolveAvatar(user, prefs);
+        const currentEmail = String(user.email || '').trim().toLowerCase();
+
+        let pendingStatus = { pending: false };
+        try {
+            pendingStatus = await API.emailChangeStatus();
+        } catch { /* ignore */ }
+
+        const pendingBanner = pendingStatus.pending
+            ? `<div id="settings-email-pending" style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#e8f0fe;color:#174ea6;font-size:13px;line-height:1.45;">
+                Check your inbox at <strong>${esc(pendingStatus.new_email_masked || 'your new address')}</strong>.
+                The confirmation link expires ${esc(formatEmailExpiry(pendingStatus.expires_at))}.
+            </div>`
+            : '';
 
         Components.showModal('Settings', `
             <div class="drive-settings-modal" style="padding: 8px 0;">
@@ -146,6 +170,17 @@ const App = (() => {
                         <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Last name</span>
                         <input id="settings-last-name" type="text" value="${esc(lastName)}" placeholder="Last name" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
                     </label>
+                    <label class="drive-settings-field drive-settings-field-full">
+                        <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Email</span>
+                        <input id="settings-email" type="email" value="${esc(user.email || '')}" placeholder="Email" autocomplete="email" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
+                        <span style="display:block;margin-top:6px;font-size:12px;color:#5f6368;">Confirmation link will be sent to the new address.</span>
+                    </label>
+                    <label class="drive-settings-field drive-settings-field-full hidden" id="settings-email-password-wrap">
+                        <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Current password</span>
+                        <input id="settings-email-password" type="password" placeholder="Required to change email" autocomplete="current-password" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
+                    </label>
+                    <button type="button" class="btn btn-secondary" id="settings-send-email-confirm" style="align-self:flex-start;">Send confirmation</button>
+                    ${pendingBanner}
                 </div>
                 <input id="settings-avatar-input" type="file" accept="image/*" hidden>
             </div>
@@ -217,6 +252,54 @@ const App = (() => {
             avatarPreview.style.backgroundImage = '';
             avatarPreview.classList.remove('has-photo');
             if (fileInput) fileInput.value = '';
+        });
+
+        const emailInput = document.getElementById('settings-email');
+        const passwordWrap = document.getElementById('settings-email-password-wrap');
+        const passwordInput = document.getElementById('settings-email-password');
+        const sendConfirmBtn = document.getElementById('settings-send-email-confirm');
+
+        function syncEmailPasswordVisibility() {
+            const nextEmail = String(emailInput?.value || '').trim().toLowerCase();
+            const changing = Boolean(nextEmail && nextEmail !== currentEmail);
+            passwordWrap?.classList.toggle('hidden', !changing);
+            if (!changing && passwordInput) passwordInput.value = '';
+        }
+
+        emailInput?.addEventListener('input', syncEmailPasswordVisibility);
+        syncEmailPasswordVisibility();
+
+        sendConfirmBtn?.addEventListener('click', async () => {
+            const newEmail = String(emailInput?.value || '').trim().toLowerCase();
+            const password = String(passwordInput?.value || '');
+            if (!newEmail || !newEmail.includes('@')) {
+                Components.toast('Enter a valid email address', 'error');
+                return;
+            }
+            if (newEmail === currentEmail) {
+                Components.toast('Enter a different email address', 'error');
+                return;
+            }
+            if (!password) {
+                Components.toast('Current password is required to change email', 'error');
+                return;
+            }
+
+            sendConfirmBtn.disabled = true;
+            const prevLabel = sendConfirmBtn.textContent;
+            sendConfirmBtn.textContent = 'Sending...';
+            try {
+                const result = await API.requestEmailChange(newEmail, password);
+                Components.toast(`Confirmation link sent to ${result.new_email_masked || newEmail}`, 'success', { duration: 7000 });
+                if (passwordInput) passwordInput.value = '';
+                Components.hideModal();
+                openDriveSettings();
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to request email change', 'error');
+            } finally {
+                sendConfirmBtn.disabled = false;
+                sendConfirmBtn.textContent = prevLabel;
+            }
         });
     }
 
@@ -594,23 +677,34 @@ const App = (() => {
             document.getElementById('profile-photo-input')?.click();
         });
 
-        document.getElementById('profile-photo-input')?.addEventListener('change', (e) => {
+        document.getElementById('profile-photo-input')?.addEventListener('change', async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = (ev) => {
-                const dataUrl = ev.target.result;
-                localStorage.setItem('fd_profile_photo', dataUrl);
-                // Update all avatars
-                document.getElementById('profile-avatar-lg').innerHTML = `<img src="${dataUrl}" alt="Profile">`;
-                const topAvatar = document.getElementById('topbar-avatar');
-                if (topAvatar) {
-                    topAvatar.innerHTML = `<img src="${dataUrl}" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+            reader.onload = async (ev) => {
+                try {
+                    const result = await resizeAvatarDataURL(String(ev.target?.result || ''));
+                    const updated = await API.updateMe({ avatar_url: result });
+                    API.setUser(updated);
+                    syncAvatarCache(updated.avatar_url || result);
+                    refreshUserUI();
+
+                    const lgAvatar = document.getElementById('profile-avatar-lg');
+                    if (lgAvatar) {
+                        lgAvatar.innerHTML = '';
+                        lgAvatar.style.backgroundImage = `url(${updated.avatar_url || result})`;
+                        lgAvatar.style.backgroundSize = 'cover';
+                        lgAvatar.style.backgroundPosition = 'center';
+                    }
+
+                    Components.toast('Profile photo updated', 'success');
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to update profile photo', 'error');
                 }
-                Components.toast('Profile photo updated', 'success');
             };
             reader.readAsDataURL(file);
             profileDropdown?.classList.add('hidden');
+            e.target.value = '';
         });
 
         // ── Keyboard shortcuts ──

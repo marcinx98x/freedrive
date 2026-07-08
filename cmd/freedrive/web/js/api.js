@@ -77,7 +77,8 @@ const API = (() => {
         const isPublicAuth = path === '/auth/login'
             || path === '/auth/register'
             || path === '/auth/refresh'
-            || path === '/auth/reset-password';
+            || path === '/auth/reset-password'
+            || path === '/auth/confirm-email';
         if (res.status === 401 && !isRetry && refreshToken && !isPublicAuth) {
             const refreshed = await tryRefresh();
             if (refreshed) return request(method, path, body, true, rlRetries);
@@ -156,6 +157,7 @@ const API = (() => {
         register: (email, username, password, invite_code) => request('POST', '/auth/register', { email, username, password, invite_code }),
         logout: () => request('POST', '/auth/logout', { refresh_token: refreshToken }),
         resetPassword: (token, email, new_password) => request('POST', '/auth/reset-password', { token, email, new_password }),
+        confirmEmail: (token) => request('POST', '/auth/confirm-email', { token }),
     };
 
     const files = {
@@ -198,6 +200,8 @@ const API = (() => {
     const myStorage = () => request('GET', '/me/storage');
     const me = () => request('GET', '/me');
     const updateMe = (payload) => request('PATCH', '/me', payload);
+    const requestEmailChange = (new_email, password) => request('POST', '/me/email-change/request', { new_email, password });
+    const emailChangeStatus = () => request('GET', '/me/email-change/status');
 
     const admin = {
         users: () => request('GET', '/admin/users'),
@@ -280,6 +284,8 @@ const API = (() => {
         myStorage,
         me,
         updateMe,
+        requestEmailChange,
+        emailChangeStatus,
         request,
         uploadFile: uploadXHR.bind(null, '/files/upload'),
         downloadBlob,

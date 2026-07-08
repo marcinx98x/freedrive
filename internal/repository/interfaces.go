@@ -34,6 +34,15 @@ type UserRepository interface {
 	WipeAllDataExcept(ctx context.Context, keepUserID string) error
 }
 
+// EmailChangeRepository defines data access for email change tokens.
+type EmailChangeRepository interface {
+	Create(ctx context.Context, token *domain.EmailChangeToken) error
+	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.EmailChangeToken, error)
+	GetPendingByUserID(ctx context.Context, userID string) (*domain.EmailChangeToken, error)
+	DeleteByUserID(ctx context.Context, userID string) error
+	DeleteByID(ctx context.Context, id string) error
+}
+
 // FileRepository defines data access for files.
 type FileRepository interface {
 	Create(ctx context.Context, file *domain.File) error

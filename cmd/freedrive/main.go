@@ -58,6 +58,7 @@ func main() {
 	activityRepo := sqlite.NewActivityRepo(db)
 	searchRepo := sqlite.NewSearchRepo(db)
 	approvalRepo := sqlite.NewApprovalRepo(db)
+	emailChangeRepo := sqlite.NewEmailChangeRepo(db)
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.JWTSecret)
@@ -89,6 +90,7 @@ func main() {
 		computerService,
 		fileRepo,
 		userRepo,
+		emailChangeRepo,
 		activityRepo,
 		searchRepo,
 		approvalRepo,

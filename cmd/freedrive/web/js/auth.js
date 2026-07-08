@@ -89,6 +89,7 @@ const Auth = (() => {
 
         // Parse /reset-password link mode
         const inResetMode = window.location.pathname.startsWith('/reset-password');
+        const inConfirmEmailMode = window.location.pathname.startsWith('/confirm-email');
         if (inResetMode) {
             const token = queryParams.get('token') || '';
             const email = queryParams.get('email') || '';
@@ -148,6 +149,62 @@ const Auth = (() => {
                     btn.querySelector('.btn-loader').classList.add('hidden');
                     btn.querySelector('span').textContent = 'Reset password';
                 }
+            });
+        }
+
+        if (inConfirmEmailMode) {
+            const token = queryParams.get('token') || '';
+            document.getElementById('login-form')?.classList.add('hidden');
+            document.getElementById('register-form')?.classList.add('hidden');
+            document.getElementById('reset-form')?.classList.add('hidden');
+            document.getElementById('confirm-email-form')?.classList.remove('hidden');
+            document.querySelector('.auth-tabs')?.classList.add('hidden');
+            const titleEl = document.querySelector('.auth-logo h1');
+            const subtitleEl = document.querySelector('.auth-logo .tagline');
+            if (titleEl) titleEl.textContent = 'Confirm email';
+            if (subtitleEl) subtitleEl.textContent = 'verify your new FreeDrive address';
+
+            const messageEl = document.getElementById('confirm-email-message');
+            const loginBtn = document.getElementById('confirm-email-login-btn');
+
+            if (!token) {
+                const msg = 'Invalid confirmation link';
+                setFormError('confirm-email-error', msg);
+                if (messageEl) messageEl.textContent = msg;
+                Components.toast(msg, 'error');
+                return;
+            }
+
+            (async () => {
+                try {
+                    const data = await API.auth.confirmEmail(token);
+                    const newEmail = String(data?.email || '').trim();
+                    const successMsg = newEmail
+                        ? `Email updated to ${newEmail}. Sign in with your new address.`
+                        : 'Email updated. Please sign in with your new address.';
+                    if (messageEl) messageEl.textContent = successMsg;
+                    clearFormError('confirm-email-error');
+                    Components.toast('Email confirmed. Please sign in.', 'success');
+                    API.clearAuth();
+                    loginBtn?.classList.remove('hidden');
+                    history.replaceState(null, '', '/');
+                } catch (err) {
+                    const msg = friendlyAuthError(err);
+                    if (/invalid|expired/i.test(msg)) {
+                        setFormError('confirm-email-error', 'This confirmation link is invalid or has expired.');
+                        if (messageEl) messageEl.textContent = 'This confirmation link is invalid or has expired.';
+                    } else {
+                        setFormError('confirm-email-error', msg);
+                        if (messageEl) messageEl.textContent = msg;
+                    }
+                    Components.toast(msg, 'error');
+                }
+            })();
+
+            loginBtn?.addEventListener('click', () => {
+                history.replaceState(null, '', '/');
+                window.location.hash = '#/login';
+                window.location.reload();
             });
         }
 

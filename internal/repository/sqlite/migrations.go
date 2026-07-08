@@ -28,6 +28,7 @@ func runMigrations(db *sql.DB) error {
 		{5, migrationV5},
 		{6, migrationV6},
 		{7, migrationV7},
+		{8, migrationV8},
 	}
 
 	for _, m := range migrations {
@@ -262,4 +263,16 @@ ALTER TABLE invite_links ADD COLUMN email TEXT NOT NULL DEFAULT '';
 
 const migrationV7 = `
 ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;
+`
+
+const migrationV8 = `
+CREATE TABLE IF NOT EXISTS email_change_tokens (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    new_email   TEXT NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  DATETIME NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_change_user ON email_change_tokens(user_id);
 `

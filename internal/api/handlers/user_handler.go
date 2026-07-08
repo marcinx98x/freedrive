@@ -9,6 +9,7 @@ import (
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/service"
 )
 
 // Max avatar data-URL length (~500 KB of base64 payload + header).
@@ -16,13 +17,25 @@ const maxAvatarURLLen = 700_000
 
 // UserHandler handles user-specific endpoints.
 type UserHandler struct {
-	userRepo repository.UserRepository
-	fileRepo repository.FileRepository
+	userRepo        repository.UserRepository
+	fileRepo        repository.FileRepository
+	emailChangeRepo repository.EmailChangeRepository
+	authService     *service.AuthService
 }
 
 // NewUserHandler creates a new user handler.
-func NewUserHandler(userRepo repository.UserRepository, fileRepo repository.FileRepository) *UserHandler {
-	return &UserHandler{userRepo: userRepo, fileRepo: fileRepo}
+func NewUserHandler(
+	userRepo repository.UserRepository,
+	fileRepo repository.FileRepository,
+	emailChangeRepo repository.EmailChangeRepository,
+	authService *service.AuthService,
+) *UserHandler {
+	return &UserHandler{
+		userRepo:        userRepo,
+		fileRepo:        fileRepo,
+		emailChangeRepo: emailChangeRepo,
+		authService:     authService,
+	}
 }
 
 // GetMe handles GET /api/v1/me — returns the current authenticated user.

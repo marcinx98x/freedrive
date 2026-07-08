@@ -162,6 +162,17 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Token
 	return tokens, user, nil
 }
 
+// CheckPassword verifies a user's password.
+func (s *AuthService) CheckPassword(user *domain.User, password string) error {
+	if user == nil {
+		return ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
 // Refresh generates a new access token from a valid refresh token.
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
 	tokenHash := hashToken(refreshToken)

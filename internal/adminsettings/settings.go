@@ -142,3 +142,53 @@ func EffectiveMaxUploadBytes(configLimit int64) int64 {
 	}
 	return configLimit
 }
+
+// SMTPConfig holds outbound mail settings from admin settings.
+type SMTPConfig struct {
+	Server      string
+	Port        int
+	User        string
+	Pass        string
+	FromAddress string
+	FromName    string
+	TLS         bool
+}
+
+// SMTP returns configured SMTP settings (empty if unset).
+func SMTP() SMTPConfig {
+	emailCfg := email(load())
+	return SMTPConfig{
+		Server:      asString(emailCfg["smtp_server"]),
+		Port:        asInt(emailCfg["smtp_port"], 0),
+		User:        asString(emailCfg["smtp_user"]),
+		Pass:        asString(emailCfg["smtp_pass"]),
+		FromAddress: asString(emailCfg["from_address"]),
+		FromName:    asString(emailCfg["from_name"]),
+		TLS:         asBool(emailCfg["tls"], false),
+	}
+}
+
+func email(data map[string]interface{}) map[string]interface{} {
+	e, _ := data["email"].(map[string]interface{})
+	if e == nil {
+		return map[string]interface{}{}
+	}
+	return e
+}
+
+func asBool(v interface{}, fallback bool) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		s := strings.ToLower(strings.TrimSpace(x))
+		return s == "1" || s == "true" || s == "yes" || s == "on"
+	default:
+		return fallback
+	}
+}
+
+// SiteURL returns configured site URL from general settings.
+func SiteURL() string {
+	return strings.TrimSpace(asString(general(load())["site_url"]))
+}

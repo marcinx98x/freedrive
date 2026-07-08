@@ -28,6 +28,7 @@ func NewRouter(
 	computerService *service.ComputerService,
 	fileRepo repository.FileRepository,
 	userRepo repository.UserRepository,
+	emailChangeRepo repository.EmailChangeRepository,
 	activityRepo repository.ActivityRepository,
 	searchRepo *sqlite.SearchRepo,
 	approvalRepo *sqlite.ApprovalRepo,
@@ -50,12 +51,12 @@ func NewRouter(
 	r.Use(limiter.Limit)
 
 	// Create handlers
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
 	computerHandler := handlers.NewComputerHandler(computerService)
 	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService, diskStorage, dataDir)
-	userHandler := handlers.NewUserHandler(userRepo, fileRepo)
+	userHandler := handlers.NewUserHandler(userRepo, fileRepo, emailChangeRepo, authService)
 	searchHandler := handlers.NewSearchHandler(searchRepo)
 	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo)
 
@@ -68,6 +69,7 @@ func NewRouter(
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
 			r.Post("/reset-password", authHandler.ResetPassword)
+			r.Post("/confirm-email", authHandler.ConfirmEmail)
 		})
 
 		// Protected routes
@@ -78,6 +80,8 @@ func NewRouter(
 			r.Get("/me", userHandler.GetMe)
 			r.Patch("/me", userHandler.UpdateMe)
 			r.Get("/me/storage", userHandler.MyStorage)
+			r.Post("/me/email-change/request", userHandler.RequestEmailChange)
+			r.Get("/me/email-change/status", userHandler.EmailChangeStatus)
 
 			// Advanced search
 			r.Get("/search", searchHandler.Search)
