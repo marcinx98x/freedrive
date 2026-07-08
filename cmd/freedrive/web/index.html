@@ -146,31 +146,112 @@
                         </button>
                     </div>
                     <div class="search-live-dropdown hidden" id="search-live-dropdown"></div>
-                    <div class="search-filter-panel hidden" id="search-filter-panel">
-                        <div class="filter-grid">
-                            <label class="filter-chip">Type
-                                <select id="filter-type">
-                                    <option value="">Any</option>
-                                    <option>Folders</option><option>Documents</option><option>Spreadsheets</option><option>PDFs</option><option>Images</option><option>Videos</option><option>Audio</option>
-                                </select>
-                            </label>
-                            <label class="filter-chip">Owner
-                                <select id="filter-owner">
-                                    <option>Anyone</option><option>Me</option><option>Not me</option><option>Specific person...</option>
-                                </select>
-                            </label>
-                            <label class="filter-chip">Modified
-                                <select id="filter-modified">
-                                    <option>Any time</option><option>Today</option><option>Last 7 days</option><option>Last 30 days</option><option>Custom range</option>
-                                </select>
-                            </label>
-                            <label class="filter-chip">Location
-                                <select id="filter-location">
-                                    <option>Anywhere</option><option>My Drive</option><option>Shared with me</option><option>Trash</option>
-                                </select>
-                            </label>
+                    <div class="search-filter-panel adv-search-panel hidden" id="search-filter-panel">
+                        <div class="adv-search-header">
+                            <h2 class="adv-search-title">Advanced search</h2>
+                            <button type="button" class="adv-search-close btn-icon" id="adv-search-close" aria-label="Close advanced search">&times;</button>
                         </div>
-                        <button class="btn btn-primary" id="search-filter-apply">Search</button>
+                        <div class="adv-search-body">
+                            <div class="adv-search-row">
+                                <label class="adv-search-label" for="filter-type">Type</label>
+                                <select id="filter-type" class="adv-search-control">
+                                    <option value="">Any</option>
+                                    <option value="Photos">Photos &amp; images</option>
+                                    <option value="PDFs">PDFs</option>
+                                    <option value="Documents">Documents</option>
+                                    <option value="Spreadsheets">Spreadsheets</option>
+                                    <option value="Presentations">Presentations</option>
+                                    <option value="Forms">Forms</option>
+                                    <option value="Audio">Audio</option>
+                                    <option value="Videos">Videos</option>
+                                    <option value="Archives">Archives (zip)</option>
+                                    <option value="Folders">Folders</option>
+                                </select>
+                            </div>
+                            <div class="adv-search-row">
+                                <label class="adv-search-label" for="filter-owner">Owner</label>
+                                <div class="adv-search-control-wrap">
+                                    <select id="filter-owner" class="adv-search-control">
+                                        <option value="Anyone">Anyone</option>
+                                        <option value="Me">Owned by me</option>
+                                        <option value="Not me">Not owned by me</option>
+                                        <option value="Specific person">Specific person...</option>
+                                    </select>
+                                    <input type="email" id="filter-owner-email" class="adv-search-control adv-search-sub hidden" placeholder="Enter a name or email address..." autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="adv-search-row">
+                                <label class="adv-search-label" for="filter-words">Includes the words</label>
+                                <input type="text" id="filter-words" class="adv-search-control" placeholder="Enter words found in the file" autocomplete="off">
+                            </div>
+                            <div class="adv-search-row">
+                                <label class="adv-search-label" for="filter-item-name">Item name</label>
+                                <input type="text" id="filter-item-name" class="adv-search-control" placeholder="Enter a term that matches part of the file name" autocomplete="off">
+                            </div>
+                            <div class="adv-search-row adv-search-row-stack">
+                                <label class="adv-search-label" for="filter-location">Location</label>
+                                <div class="adv-search-control-wrap">
+                                    <select id="filter-location" class="adv-search-control">
+                                        <option value="Anywhere">Anywhere</option>
+                                        <option value="My Drive">My Drive</option>
+                                        <option value="Shared with me">Shared with me</option>
+                                        <option value="Computers">Computers</option>
+                                        <option value="More locations">More locations...</option>
+                                    </select>
+                                    <div class="adv-search-checks">
+                                        <label class="adv-search-check"><input type="checkbox" id="filter-location-bin"> In bin</label>
+                                        <label class="adv-search-check"><input type="checkbox" id="filter-location-starred"> Starred</label>
+                                        <label class="adv-search-check"><input type="checkbox" id="filter-location-encrypted"> Encrypted</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="adv-search-row adv-search-row-stack">
+                                <label class="adv-search-label" for="filter-modified">Date modified</label>
+                                <div class="adv-search-control-wrap">
+                                    <select id="filter-modified" class="adv-search-control">
+                                        <option value="Any time">Any time</option>
+                                        <option value="Today">Today</option>
+                                        <option value="Yesterday">Yesterday</option>
+                                        <option value="Last 7 days">Last 7 days</option>
+                                        <option value="Last 30 days">Last 30 days</option>
+                                        <option value="Last 90 days">Last 90 days</option>
+                                        <option value="Custom">Custom...</option>
+                                    </select>
+                                    <div class="adv-search-dates hidden" id="filter-modified-custom">
+                                        <input type="date" id="filter-modified-from" class="adv-search-control" aria-label="Modified from">
+                                        <span class="adv-search-date-sep">–</span>
+                                        <input type="date" id="filter-modified-to" class="adv-search-control" aria-label="Modified to">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="adv-search-row adv-search-row-stack">
+                                <label class="adv-search-label">Approvals and eSignatures</label>
+                                <div class="adv-search-checks">
+                                    <label class="adv-search-check"><input type="checkbox" id="filter-approval-awaiting"> Awaiting my approval</label>
+                                    <label class="adv-search-check"><input type="checkbox" id="filter-approval-requested"> Requested by me</label>
+                                </div>
+                            </div>
+                            <div class="adv-search-row">
+                                <label class="adv-search-label" for="filter-shared-to">Shared to</label>
+                                <input type="text" id="filter-shared-to" class="adv-search-control" placeholder="Enter a name or email address..." autocomplete="off">
+                            </div>
+                            <div class="adv-search-row">
+                                <label class="adv-search-label" for="filter-followups">Follow-ups</label>
+                                <select id="filter-followups" class="adv-search-control">
+                                    <option value="-">-</option>
+                                    <option value="Any">Any</option>
+                                    <option value="Suggestions only">Suggestions only</option>
+                                    <option value="Comments assigned to me only">Comments assigned to me only</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="adv-search-footer">
+                            <a href="#" class="adv-search-learn" id="adv-search-learn">Learn more</a>
+                            <div class="adv-search-actions">
+                                <button type="button" class="adv-search-reset" id="adv-search-reset">Reset</button>
+                                <button type="button" class="adv-search-submit" id="search-filter-apply">Search</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

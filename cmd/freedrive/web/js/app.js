@@ -292,7 +292,7 @@ const App = (() => {
             if (target.closest('#details-panel, #notifications-panel, #notifications-btn, #info-btn')) return true;
             if (target.closest('.file-row, .file-card')) return true;
             if (target.closest('.modal-overlay:not(.hidden), #editor-overlay:not(.hidden), #context-menu')) return true;
-            if (target.closest('#new-dropdown, #help-dropdown, .sidebar, #profile-dropdown, #topbar-profile-wrap')) return true;
+            if (target.closest('#new-dropdown, #help-dropdown, .sidebar, #profile-dropdown, #topbar-profile-wrap, .search-wrap')) return true;
             return false;
         };
 
@@ -384,14 +384,8 @@ const App = (() => {
             });
         }
 
-        document.getElementById('content-area')?.addEventListener('contextmenu', (e) => {
-            if (e.target.closest('.file-row') || e.target.closest('.file-card')) return;
-            e.preventDefault();
-            closeTransientPanels();
-            newDropdown?.style.setProperty('position', 'fixed');
-            newDropdown?.style.setProperty('left', `${Math.min(e.clientX, window.innerWidth - 260)}px`);
-            newDropdown?.style.setProperty('top', `${Math.min(e.clientY, window.innerHeight - 260)}px`);
-            newDropdown?.classList.remove('hidden');
+        document.querySelector('.search-wrap')?.addEventListener('click', (e) => {
+            e.stopPropagation();
         });
 
         document.getElementById('search-options')?.addEventListener('click', (e) => {
@@ -400,10 +394,38 @@ const App = (() => {
             helpDropdown?.classList.add('hidden');
             FileManager.hideSearchDropdown();
             searchFilterPanel?.classList.toggle('hidden');
+            if (!searchFilterPanel?.classList.contains('hidden')) {
+                FileManager.syncAdvancedSearchDependentFields();
+            }
         });
 
         searchFilterPanel?.addEventListener('click', (e) => {
             e.stopPropagation();
+        });
+
+        document.getElementById('adv-search-close')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            searchFilterPanel?.classList.add('hidden');
+        });
+
+        document.getElementById('adv-search-reset')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            FileManager.resetAdvancedSearchForm();
+        });
+
+        document.getElementById('adv-search-learn')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            FileManager.showAdvancedSearchHelp();
+        });
+
+        document.getElementById('filter-owner')?.addEventListener('change', () => {
+            FileManager.syncAdvancedSearchDependentFields();
+        });
+
+        document.getElementById('filter-modified')?.addEventListener('change', () => {
+            FileManager.syncAdvancedSearchDependentFields();
         });
 
         document.getElementById('search-filter-apply')?.addEventListener('click', () => {

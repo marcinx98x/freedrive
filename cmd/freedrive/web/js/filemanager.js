@@ -313,6 +313,41 @@ const FileManager = (() => {
         return item.shared_by_name || 'Admin';
     }
 
+    function renderOwnerCell(item, options = {}) {
+        const me = getCurrentUser();
+        const isSharedWith = currentPage === 'shared-with';
+        const isSharedBy = currentPage === 'shared-by';
+
+        let displayName;
+        let isMe = false;
+
+        if (options.labelOverride !== undefined) {
+            displayName = options.labelOverride;
+            isMe = String(displayName).toLowerCase() === 'me'
+                || !!(item.owner_id && me.id && item.owner_id === me.id);
+        } else if (isSharedWith) {
+            displayName = item.shared_by_name || item.shared_by_email || itemOwner(item);
+            isMe = !!(item.shared_by_id && me.id && item.shared_by_id === me.id);
+        } else if (isSharedBy) {
+            displayName = item.shared_with_name || item.shared_with_email || itemOwner(item);
+            isMe = !!(item.shared_with_id && me.id && item.shared_with_id === me.id);
+        } else {
+            isMe = !!(item.owner_id && me.id && item.owner_id === me.id);
+            displayName = isMe ? 'me' : itemOwner(item);
+        }
+
+        if (isMe) displayName = 'me';
+
+        const showPhoto = isMe && !!getMyProfileAvatar();
+        const seed = isMe
+            ? (me.username || me.email || 'me')
+            : String(displayName || 'U');
+        const hue = (seed.length * 137) % 360;
+        const initials = esc(Components.initials(isMe ? (me.username || me.email || 'me') : displayName));
+
+        return `<span class="owner-avatar${showPhoto ? ' has-avatar' : ''}"${showPhoto ? '' : ` style="background-color:hsl(${hue},60%,50%)"`}>${showPhoto ? '' : initials}</span><span class="owner-name">${esc(displayName)}</span>`;
+    }
+
     function getMyProfileAvatar() {
         try {
             return JSON.parse(localStorage.getItem('fd_user_prefs') || '{}').profileAvatar || '';
@@ -411,6 +446,8 @@ const FileManager = (() => {
         if (mt.startsWith('video/')) return 'video';
         if (mt.startsWith('audio/')) return 'audio';
         if (mt === 'application/pdf' || ext === 'pdf') return 'pdf';
+        if (mt.includes('presentation') || mt.includes('powerpoint') || ['ppt', 'pptx', 'odp', 'key'].includes(ext)) return 'presentation';
+        if (mt.includes('zip') || mt.includes('rar') || mt.includes('gzip') || ['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
         if (isSpreadsheetMimeOrName(mt, name)) return 'sheet';
         if (isJsonMimeOrName(mt, name)) return 'text';
         if (mt.startsWith('text/')) return 'text';
@@ -876,11 +913,96 @@ const FileManager = (() => {
     // Filter chips shown under the Home search box. They mirror the hidden
     // #filter-* <select> elements used by applyAdvancedSearch().
     const HOME_CHIP_DEFS = [
-        { key: 'type', label: 'Type', select: 'filter-type', anyLabel: 'Any', options: ['Folders', 'Documents', 'Spreadsheets', 'PDFs', 'Images', 'Videos', 'Audio'] },
+        { key: 'type', label: 'Type', select: 'filter-type', anyLabel: 'Any', options: ['Photos', 'Documents', 'Spreadsheets', 'PDFs', 'Presentations', 'Videos', 'Audio', 'Archives', 'Folders'] },
         { key: 'people', label: 'People', select: 'filter-owner', anyLabel: 'Anyone', options: ['Me', 'Not me'] },
-        { key: 'modified', label: 'Modified', select: 'filter-modified', anyLabel: 'Any time', options: ['Today', 'Last 7 days', 'Last 30 days'] },
-        { key: 'location', label: 'Location', select: 'filter-location', anyLabel: 'Anywhere', options: ['My Drive', 'Shared with me', 'Trash'] },
+        { key: 'modified', label: 'Modified', select: 'filter-modified', anyLabel: 'Any time', options: ['Today', 'Yesterday', 'Last 7 days', 'Last 30 days', 'Last 90 days'] },
+        { key: 'location', label: 'Location', select: 'filter-location', anyLabel: 'Anywhere', options: ['My Drive', 'Shared with me', 'Computers'] },
     ];
+
+    function resetAdvancedSearchForm() {
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) searchInput.value = '';
+        setFilterSelect('filter-type', '', 'Any');
+        setFilterSelect('filter-owner', 'Anyone', 'Anyone');
+        setFilterSelect('filter-modified', 'Any time', 'Any time');
+        setFilterSelect('filter-location', 'Anywhere', 'Anywhere');
+        setFilterSelect('filter-followups', '-', '-');
+        const words = document.getElementById('filter-words');
+        const itemName = document.getElementById('filter-item-name');
+        const ownerEmail = document.getElementById('filter-owner-email');
+        const sharedTo = document.getElementById('filter-shared-to');
+        const modFrom = document.getElementById('filter-modified-from');
+        const modTo = document.getElementById('filter-modified-to');
+        if (words) words.value = '';
+        if (itemName) itemName.value = '';
+        if (ownerEmail) ownerEmail.value = '';
+        if (sharedTo) sharedTo.value = '';
+        if (modFrom) modFrom.value = '';
+        if (modTo) modTo.value = '';
+        ['filter-location-bin', 'filter-location-starred', 'filter-location-encrypted', 'filter-approval-awaiting', 'filter-approval-requested'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = false;
+        });
+        syncAdvancedSearchDependentFields();
+    }
+
+    function syncAdvancedSearchDependentFields() {
+        const owner = document.getElementById('filter-owner')?.value || 'Anyone';
+        const modified = document.getElementById('filter-modified')?.value || 'Any time';
+        document.getElementById('filter-owner-email')?.classList.toggle('hidden', owner !== 'Specific person');
+        document.getElementById('filter-modified-custom')?.classList.toggle('hidden', modified !== 'Custom');
+    }
+
+    function showAdvancedSearchHelp() {
+        Components.toast(
+            'Includes the words searches file names and comments, not encrypted file contents. Approvals use a simplified workflow. More locations folder picker is coming soon.',
+            'info',
+        );
+    }
+
+    function collectAdvancedSearchParams() {
+        const q = document.getElementById('search-input')?.value?.trim() || '';
+        const name = document.getElementById('filter-item-name')?.value?.trim() || '';
+        const words = document.getElementById('filter-words')?.value?.trim() || '';
+        const type = document.getElementById('filter-type')?.value || '';
+        const owner = document.getElementById('filter-owner')?.value || 'Anyone';
+        const ownerEmail = document.getElementById('filter-owner-email')?.value?.trim() || '';
+        const location = document.getElementById('filter-location')?.value || 'Anywhere';
+        const modified = document.getElementById('filter-modified')?.value || 'Any time';
+        const sharedTo = document.getElementById('filter-shared-to')?.value?.trim() || '';
+        const followups = document.getElementById('filter-followups')?.value || '-';
+
+        const params = {
+            page_size: '100',
+        };
+        if (q) params.q = q;
+        if (name) params.name = name;
+        if (words) params.words = words;
+        if (type) params.type = type;
+        if (owner && owner !== 'Anyone') params.owner = owner;
+        if (owner === 'Specific person' && ownerEmail) params.owner_email = ownerEmail;
+        if (location && location !== 'Anywhere') params.location = location;
+        if (sharedTo) params.shared_to = sharedTo;
+        if (followups && followups !== '-') params.followups = followups;
+
+        if (document.getElementById('filter-location-bin')?.checked) params.in_trash = 'true';
+        if (document.getElementById('filter-location-starred')?.checked) params.starred = 'true';
+        if (document.getElementById('filter-location-encrypted')?.checked) params.encrypted = 'true';
+        if (document.getElementById('filter-approval-awaiting')?.checked) params.approval_awaiting = 'true';
+        if (document.getElementById('filter-approval-requested')?.checked) params.approval_requested = 'true';
+
+        if (modified === 'Custom') {
+            const from = document.getElementById('filter-modified-from')?.value || '';
+            const to = document.getElementById('filter-modified-to')?.value || '';
+            params.modified = 'Custom';
+            if (from) params.modified_from = from;
+            if (to) params.modified_to = to;
+        } else if (modified !== 'Any time') {
+            params.modified = modified;
+        }
+
+        return params;
+    }
 
     function homeChipHtml(defs, options = {}) {
         const withClear = !!options.withClear;
@@ -905,19 +1027,49 @@ const FileManager = (() => {
         }).join('');
     }
 
+    function formatHomeReason(item) {
+        const created = item.created_at ? new Date(item.created_at).getTime() : 0;
+        const accessed = item.accessed_at ? new Date(item.accessed_at).getTime() : 0;
+        const opened = accessed > created + 60000;
+        const when = new Date(opened
+            ? (item.accessed_at || item.updated_at || item.created_at)
+            : (item.created_at || item.updated_at || item.accessed_at));
+        return `${opened ? 'You opened' : 'You created'} \u00b7 ${formatHomeReasonDate(when)}`;
+    }
+
+    function formatHomeReasonDate(d) {
+        if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
+        const now = new Date();
+        const sameDay = d.getFullYear() === now.getFullYear()
+            && d.getMonth() === now.getMonth()
+            && d.getDate() === now.getDate();
+        if (sameDay) {
+            return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const day = d.getDate();
+        const mon = months[d.getMonth()];
+        if (d.getFullYear() !== now.getFullYear()) return `${day} ${mon} ${d.getFullYear()}`;
+        return `${day} ${mon}`;
+    }
+
     function renderHomeItems(files, folders) {
         const homePage = document.getElementById('home-page');
         if (!homePage) return;
 
+        document.getElementById('file-list-header')?.classList.add('hidden');
+
         const justFiles = files.filter(f => f.mime_type !== 'folder' && !f.isDir);
         const suggestedFiles = [...justFiles].sort((a, b) =>
-            new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+            new Date(b.accessed_at || b.updated_at || b.created_at || 0)
+            - new Date(a.accessed_at || a.updated_at || a.created_at || 0));
         const suggestedFolders = (Array.isArray(folders) ? folders : []).slice(0, 6);
 
         homeSuggestedFiles = suggestedFiles;
         homeSuggestedVisible = HOME_SUGGESTED_INITIAL;
         const initialCards = suggestedFiles.slice(0, HOME_SUGGESTED_INITIAL);
         const showViewMore = suggestedFiles.length > HOME_SUGGESTED_INITIAL;
+        const useList = currentView === 'list';
 
         let html = '';
 
@@ -929,11 +1081,30 @@ const FileManager = (() => {
         }
 
         if (initialCards.length > 0) {
-            html += `
-                <h3 class="gd-home-section-title collapsible" data-target="gd-home-suggested-cards"><span class="caret">▾</span> Suggested files</h3>
-                <div class="file-grid grid-view" id="gd-home-suggested-cards"></div>
-                ${showViewMore ? '<div class="gd-home-viewmore"><button type="button" class="gd-viewmore-link" id="home-view-more-btn">View more</button></div>' : ''}
-            `;
+            if (useList) {
+                html += `
+                    <h3 class="gd-home-section-title collapsible" data-target="gd-home-suggested-wrap"><span class="caret">▾</span> Suggested files</h3>
+                    <div id="gd-home-suggested-wrap">
+                        <div class="file-list-header gd-home-list-header">
+                            <div class="col-name">Name</div>
+                            <div class="col-owner">Reason suggested</div>
+                            <div class="col-date">Owner</div>
+                            <div class="col-size">Location</div>
+                            <div class="col-actions"></div>
+                        </div>
+                        <div class="file-grid gd-home-recent-list" id="gd-home-suggested-list"></div>
+                        ${showViewMore ? '<div class="gd-home-viewmore"><button type="button" class="gd-viewmore-link" id="home-view-more-btn">View more</button></div>' : ''}
+                    </div>
+                `;
+            } else {
+                html += `
+                    <h3 class="gd-home-section-title collapsible" data-target="gd-home-suggested-wrap"><span class="caret">▾</span> Suggested files</h3>
+                    <div id="gd-home-suggested-wrap">
+                        <div class="file-grid grid-view" id="gd-home-suggested-cards"></div>
+                        ${showViewMore ? '<div class="gd-home-viewmore"><button type="button" class="gd-viewmore-link" id="home-view-more-btn">View more</button></div>' : ''}
+                    </div>
+                `;
+            }
         }
 
         if (!suggestedFiles.length && !suggestedFolders.length) {
@@ -966,10 +1137,20 @@ const FileManager = (() => {
         }
 
         if (initialCards.length > 0) {
-            const gridContainer = document.getElementById('gd-home-suggested-cards');
-            initialCards.forEach(f => {
-                gridContainer.appendChild(createGridCard(f, 'file', false));
-            });
+            if (useList) {
+                const listContainer = document.getElementById('gd-home-suggested-list');
+                const myAvatar = getMyProfileAvatar();
+                listContainer.style.setProperty('--fd-me-avatar', myAvatar ? `url("${myAvatar}")` : 'none');
+                initialCards.forEach((f) => {
+                    listContainer.appendChild(createRow(f, 'file', false));
+                });
+                resolveHomeListLocations(initialCards, listContainer);
+            } else {
+                const gridContainer = document.getElementById('gd-home-suggested-cards');
+                initialCards.forEach((f) => {
+                    gridContainer.appendChild(createGridCard(f, 'file', false));
+                });
+            }
             document.getElementById('home-view-more-btn')?.addEventListener('click', expandHomeSuggestedFiles);
         }
 
@@ -988,10 +1169,20 @@ const FileManager = (() => {
     }
 
     function expandHomeSuggestedFiles() {
-        const grid = document.getElementById('gd-home-suggested-cards');
-        if (!grid) return;
+        const useList = currentView === 'list';
+        const container = useList
+            ? document.getElementById('gd-home-suggested-list')
+            : document.getElementById('gd-home-suggested-cards');
+        if (!container) return;
+        if (useList) {
+            const myAvatar = getMyProfileAvatar();
+            container.style.setProperty('--fd-me-avatar', myAvatar ? `url("${myAvatar}")` : 'none');
+        }
         const next = homeSuggestedFiles.slice(homeSuggestedVisible, homeSuggestedVisible + HOME_SUGGESTED_STEP);
-        next.forEach((f) => grid.appendChild(createGridCard(f, 'file', false)));
+        next.forEach((f) => {
+            container.appendChild(useList ? createRow(f, 'file', false) : createGridCard(f, 'file', false));
+        });
+        if (useList) resolveHomeListLocations(next, container);
         homeSuggestedVisible += next.length;
         if (homeSuggestedVisible >= homeSuggestedFiles.length) {
             document.getElementById('home-view-more-btn')?.closest('.gd-home-viewmore')?.classList.add('hidden');
@@ -1069,23 +1260,41 @@ const FileManager = (() => {
         return folderNameCache.get(folderId) || '';
     }
 
-    async function resolveUnknownLocations(items, dropdown) {
-        const missing = [...new Set(items
-            .map((f) => f.folder_id)
-            .filter((id) => id && !folderNameCache.has(id)))];
+    async function ensureFolderNames(ids, onResolved) {
+        const missing = [...new Set((ids || []).filter((id) => id && !folderNameCache.has(id)))];
         for (const id of missing) {
+            let name = 'My Drive';
             try {
                 const data = await API.folders.breadcrumb(id);
                 const crumbs = data.breadcrumb || [];
-                const name = crumbs.length ? crumbs[crumbs.length - 1].name : 'My Drive';
-                folderNameCache.set(id, name);
+                name = crumbs.length ? crumbs[crumbs.length - 1].name : 'My Drive';
+            } catch { /* keep fallback */ }
+            folderNameCache.set(id, name);
+            onResolved?.(id, name);
+        }
+    }
+
+    async function resolveUnknownLocations(items, dropdown) {
+        await ensureFolderNames(
+            items.map((f) => f.folder_id),
+            (id, name) => {
                 dropdown.querySelectorAll(`.gd-sr-row[data-folder="${id}"] .gd-sr-loc-text`).forEach((el) => {
                     el.textContent = name;
                 });
-            } catch {
-                folderNameCache.set(id, 'My Drive');
             }
-        }
+        );
+    }
+
+    async function resolveHomeListLocations(items, listContainer) {
+        if (!listContainer) return;
+        await ensureFolderNames(
+            items.map((f) => f.folder_id),
+            (id, name) => {
+                listContainer.querySelectorAll(`.home-location-cell[data-folder="${id}"] .home-location-text`).forEach((el) => {
+                    el.textContent = name;
+                });
+            }
+        );
     }
 
     // Apply the Type/People/Modified filter selects to a live search list.
@@ -1100,12 +1309,15 @@ const FileManager = (() => {
             out = out.filter((f) => {
                 const g = getMimeGroup(f.mime_type, f.mime_type === 'folder' ? 'folder' : 'file', f.name);
                 if (type === 'Folders') return f.mime_type === 'folder';
+                if (type === 'Photos') return g === 'image';
                 if (type === 'Documents') return g === 'document' || g === 'text';
                 if (type === 'Spreadsheets') return g === 'sheet';
+                if (type === 'Presentations') return g === 'presentation';
                 if (type === 'PDFs') return g === 'pdf';
                 if (type === 'Images') return g === 'image';
                 if (type === 'Videos') return g === 'video';
                 if (type === 'Audio') return g === 'audio';
+                if (type === 'Archives') return g === 'archive';
                 return true;
             });
         }
@@ -1116,8 +1328,10 @@ const FileManager = (() => {
             out = out.filter((f) => {
                 const diffDays = (now - new Date(f.updated_at || f.created_at).getTime()) / (1000 * 60 * 60 * 24);
                 if (modified === 'Today') return diffDays < 1;
+                if (modified === 'Yesterday') return diffDays >= 1 && diffDays < 2;
                 if (modified === 'Last 7 days') return diffDays <= 7;
                 if (modified === 'Last 30 days') return diffDays <= 30;
+                if (modified === 'Last 90 days') return diffDays <= 90;
                 return true;
             });
         }
@@ -1208,8 +1422,11 @@ const FileManager = (() => {
     function openAdvancedSearchPanel(query) {
         hideSearchDropdown();
         const topInput = document.getElementById('search-input');
+        const itemName = document.getElementById('filter-item-name');
         if (topInput) topInput.value = query;
+        if (itemName && query) itemName.value = query;
         document.getElementById('search-filter-panel')?.classList.remove('hidden');
+        syncAdvancedSearchDependentFields();
         topInput?.focus();
     }
 
@@ -1489,88 +1706,16 @@ const FileManager = (() => {
 
     async function applyAdvancedSearch() {
         hideSearchDropdown();
-        const query = (document.getElementById('search-input')?.value?.trim() || '');
-        const type = document.getElementById('filter-type')?.value || '';
-        const owner = document.getElementById('filter-owner')?.value || 'Anyone';
-        const modified = document.getElementById('filter-modified')?.value || 'Any time';
-        const location = document.getElementById('filter-location')?.value || 'Anywhere';
+        const params = collectAdvancedSearchParams();
 
         currentPage = 'search';
         showFilesView();
         showLoading(true);
 
-        const withinModified = (item) => {
-            if (modified === 'Any time') return true;
-            const now = Date.now();
-            const t = new Date(item.updated_at || item.created_at).getTime();
-            const diffDays = (now - t) / (1000 * 60 * 60 * 24);
-            if (modified === 'Today') return diffDays < 1;
-            if (modified === 'Last 7 days') return diffDays <= 7;
-            if (modified === 'Last 30 days') return diffDays <= 30;
-            return true;
-        };
-
         try {
-            const data = await API.files.list({ search: query, page_size: '500' });
-            let list = data.files || [];
-            const me = getCurrentUser();
-
-            if (type && type !== 'Any') {
-                list = list.filter((f) => {
-                    const g = getMimeGroup(f.mime_type, 'file', f.name);
-                    if (type === 'Folders') return false;
-                    if (type === 'Documents') return g === 'document' || g === 'text';
-                    if (type === 'Spreadsheets') return g === 'sheet';
-                    if (type === 'PDFs') return g === 'pdf';
-                    if (type === 'Images') return g === 'image';
-                    if (type === 'Videos') return g === 'video';
-                    if (type === 'Audio') return g === 'audio';
-                    return true;
-                });
-            }
-
-            if (owner === 'Me') {
-                list = list.filter((f) => f.owner_id === me.id);
-            } else if (owner === 'Not me') {
-                list = list.filter((f) => f.owner_id !== me.id);
-            }
-
-            list = list.filter(withinModified);
-
-            if (location === 'Trash') {
-                const trashData = await API.files.trash();
-                const trashIds = new Set((trashData.files || []).map((f) => f.id));
-                list = list.filter((f) => trashIds.has(f.id));
-            }
-            if (location === 'My Drive') {
-                list = list.filter((f) => !f.is_trashed);
-            }
-            if (location === 'Shared with me') {
-                const meId = me.id;
-                const sharedIds = new Set(meta.shares.filter((s) => s.shared_with_id === meId || s.shared_with_email === me.email).map((s) => s.item_id));
-                list = list.filter((f) => sharedIds.has(f.id));
-            }
-
-            // Include folders when the type filter allows them (Any or Folders)
-            // and the location isn't file-only (Shared with me / Trash).
-            let folderList = [];
-            const includeFolders = (type === '' || type === 'Any' || type === 'Folders')
-                && location !== 'Shared with me' && location !== 'Trash';
-            if (includeFolders) {
-                try {
-                    const fdata = await API.folders.all(query);
-                    folderList = fdata.folders || [];
-                    if (owner === 'Me') {
-                        folderList = folderList.filter((f) => f.owner_id === me.id);
-                    } else if (owner === 'Not me') {
-                        folderList = [];
-                    }
-                    folderList = folderList.filter(withinModified);
-                } catch { folderList = []; }
-            }
-
-            allFolders = folderList;
-            allFiles = list;
+            const data = await API.search.advanced(params);
+            allFolders = data.folders || [];
+            allFiles = data.files || [];
             filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles);
@@ -1798,26 +1943,20 @@ const FileManager = (() => {
         let modifiedText = `${Components.formatDate(item.updated_at || item.created_at)}${type === 'file' ? ` by ${modifiedBy}` : ''}`;
         let locationText = buildLocationLabel(item.folder_id);
         if (isSharedWith) {
-            owner = item.shared_by_name || owner;
             modifiedText = Components.formatDate(item.shared_at || item.updated_at || item.created_at);
             sizeText = capitalizeRole(item.share_role || 'viewer');
         }
         if (isSharedBy) {
-            owner = item.shared_with_name || item.shared_with_email || owner;
             modifiedText = Components.formatDate(item.shared_at || item.updated_at || item.created_at);
             sizeText = capitalizeRole(item.share_role || 'viewer');
         }
         if (isHomeSuggested) {
-            owner = itemOwner(item) || 'Admin';
-            modifiedBy = item.last_modified_by || owner || 'Admin';
-            modifiedText = Components.formatAbsoluteDate(item.updated_at || item.created_at);
-            locationText = buildLocationLabel(item.folder_id) || 'My Drive';
+            locationText = resolveHomeLocationName(item.folder_id) || '…';
         }
         const lockBadge = '';
-
-        const currentUser = getCurrentUser();
-        const isMeOwner = !!(item.owner_id && currentUser.id && item.owner_id === currentUser.id) && !isSharedWith && !isSharedBy;
-        const showOwnerPhoto = isMeOwner && !!getMyProfileAvatar();
+        const folderIconSvg = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+        const reasonText = isHomeSuggested ? formatHomeReason(item) : '';
+        const ownerCellHtml = renderOwnerCell(item);
 
         row.innerHTML = `
             <div class="file-cell file-name">
@@ -1827,21 +1966,19 @@ const FileManager = (() => {
                 ${lockBadge}
             </div>
             <div class="file-cell cell-owner">${isHomeSuggested
-                ? esc(modifiedText)
-                : `<span class="owner-avatar${showOwnerPhoto ? ' has-avatar' : ''}"${showOwnerPhoto ? '' : ` style="background-color:hsl(${(String(owner).length * 137) % 360},60%,50%)"`}>${showOwnerPhoto ? '' : esc(Components.initials(owner))}</span><span class="owner-name">${esc(owner)}</span>`}</div>
-            <div class="file-cell cell-date">${esc(isHomeSuggested ? owner : modifiedText)}</div>
-            <div class="file-cell cell-size">${isHomeSuggested ? `<a class="home-location-link" href="#/files${item.folder_id ? `/${item.folder_id}` : ''}">${esc(locationText)}</a>` : sizeText}</div>
-            ${isHomeSuggested
-                ? `<div class="file-cell file-actions home-size-cell">
-                    <span class="home-size-text">${esc(sizeText)}</span>
-                    <button class="btn-icon action-more" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
-                </div>`
-                : `<div class="file-cell file-actions">
-                    <button class="btn-icon action-share" title="Share"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg></button>
-                    <button class="btn-icon action-download" title="Download"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
-                    <button class="btn-icon action-more" title="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
-                </div>`
-            }
+                ? `<span class="home-reason-cell">${esc(reasonText)}</span>`
+                : ownerCellHtml}</div>
+            <div class="file-cell cell-date">${isHomeSuggested
+                ? ownerCellHtml
+                : esc(modifiedText)}</div>
+            <div class="file-cell cell-size">${isHomeSuggested
+                ? `<a class="home-location-cell" data-folder="${esc(item.folder_id || '')}" href="#/files${item.folder_id ? `/${item.folder_id}` : ''}">${folderIconSvg}<span class="home-location-text">${esc(locationText)}</span></a>`
+                : sizeText}</div>
+            <div class="file-cell file-actions">
+                <button class="btn-icon action-share" title="Share"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg></button>
+                <button class="btn-icon action-download" title="Download"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
+                <button class="btn-icon action-more" title="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
+            </div>
         `;
 
         bindItemRowEvents(row, item, type, isTrash);
@@ -5844,6 +5981,12 @@ const FileManager = (() => {
         const header = document.getElementById('file-list-header');
         const grid = document.getElementById('file-grid');
 
+        if (currentPage === 'home') {
+            header?.classList.add('hidden');
+            renderHomeItems(filteredFiles, homeSuggestedFolders);
+            return;
+        }
+
         if (view === 'grid') {
             grid.classList.add('grid-view');
             header.classList.add('hidden');
@@ -6003,6 +6146,10 @@ const FileManager = (() => {
         loadAdminPanel,
         applyAdvancedSearch,
         hideSearchDropdown,
+        resetAdvancedSearchForm,
+        syncAdvancedSearchDependentFields,
+        showAdvancedSearchHelp,
+        collectAdvancedSearchParams,
         bulkShare,
         bulkDownload,
         bulkMove,

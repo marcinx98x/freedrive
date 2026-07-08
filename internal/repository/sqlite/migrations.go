@@ -25,6 +25,7 @@ func runMigrations(db *sql.DB) error {
 		{2, migrationV2},
 		{3, migrationV3},
 		{4, migrationV4},
+		{5, migrationV5},
 	}
 
 	for _, m := range migrations {
@@ -237,4 +238,18 @@ const migrationV4 = `
 ALTER TABLE folders ADD COLUMN is_trashed BOOLEAN NOT NULL DEFAULT 0;
 ALTER TABLE folders ADD COLUMN trashed_at DATETIME;
 CREATE INDEX IF NOT EXISTS idx_folders_trashed ON folders(is_trashed, trashed_at);
+`
+
+const migrationV5 = `
+CREATE TABLE IF NOT EXISTS file_approvals (
+    id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    file_id      TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    requested_by TEXT NOT NULL REFERENCES users(id),
+    approver_id  TEXT NOT NULL REFERENCES users(id),
+    status       TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_file_approvals_approver ON file_approvals(approver_id, status);
+CREATE INDEX IF NOT EXISTS idx_file_approvals_requester ON file_approvals(requested_by, status);
+ALTER TABLE comments ADD COLUMN assigned_to TEXT REFERENCES users(id);
 `

@@ -12,6 +12,7 @@ import (
 	"github.com/abdullaabdullazade/freedrive/internal/api/handlers"
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
+	"github.com/abdullaabdullazade/freedrive/internal/repository/sqlite"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
 	"github.com/abdullaabdullazade/freedrive/internal/storage"
 	"github.com/go-chi/chi/v5"
@@ -28,6 +29,8 @@ func NewRouter(
 	fileRepo repository.FileRepository,
 	userRepo repository.UserRepository,
 	activityRepo repository.ActivityRepository,
+	searchRepo *sqlite.SearchRepo,
+	approvalRepo *sqlite.ApprovalRepo,
 	diskStorage *storage.DiskStorage,
 	maxUpload int64,
 ) http.Handler {
@@ -52,6 +55,8 @@ func NewRouter(
 	computerHandler := handlers.NewComputerHandler(computerService)
 	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService)
 	userHandler := handlers.NewUserHandler(userRepo, fileRepo)
+	searchHandler := handlers.NewSearchHandler(searchRepo)
+	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -71,12 +76,17 @@ func NewRouter(
 			// User storage (quota-based)
 			r.Get("/me/storage", userHandler.MyStorage)
 
+			// Advanced search
+			r.Get("/search", searchHandler.Search)
+			r.Get("/approvals", approvalHandler.List)
+
 			// Files
 			r.Route("/files", func(r chi.Router) {
 				r.Post("/upload", fileHandler.Upload)
 				r.Get("/", fileHandler.List)
 				r.Get("/trash", fileHandler.Trash)
 				r.Get("/{id}", fileHandler.Get)
+				r.Post("/{id}/approvals", approvalHandler.Create)
 				r.Get("/{id}/download", fileHandler.Download)
 				r.Patch("/{id}", fileHandler.Update)
 				r.Post("/{id}/content", fileHandler.UpdateContent)

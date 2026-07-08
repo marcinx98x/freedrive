@@ -53,6 +53,8 @@ func main() {
 	folderRepo := sqlite.NewFolderRepo(db)
 	computerRepo := sqlite.NewComputerRepo(db)
 	activityRepo := sqlite.NewActivityRepo(db)
+	searchRepo := sqlite.NewSearchRepo(db)
+	approvalRepo := sqlite.NewApprovalRepo(db)
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.JWTSecret)
@@ -85,6 +87,8 @@ func main() {
 		fileRepo,
 		userRepo,
 		activityRepo,
+		searchRepo,
+		approvalRepo,
 		diskStorage,
 		cfg.MaxUploadBytes,
 	)

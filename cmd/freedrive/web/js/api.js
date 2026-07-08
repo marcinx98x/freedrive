@@ -200,6 +200,24 @@ const API = (() => {
         list: (page = 1, pageSize = 50) => request('GET', `/activity?page=${page}&page_size=${pageSize}`),
     };
 
+    const search = {
+        advanced: (params = {}) => {
+            const q = new URLSearchParams();
+            Object.entries(params).forEach(([key, value]) => {
+                if (value !== undefined && value !== null && value !== '') {
+                    q.set(key, String(value));
+                }
+            });
+            const qs = q.toString();
+            return request('GET', `/search${qs ? `?${qs}` : ''}`);
+        },
+    };
+
+    const approvals = {
+        list: (status = '') => request('GET', `/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+        create: (fileId, data) => request('POST', `/files/${fileId}/approvals`, data),
+    };
+
     return {
         setTokens,
         setUser,
@@ -212,6 +230,8 @@ const API = (() => {
         computers,
         admin,
         activity,
+        search,
+        approvals,
         diskStats,
         myStorage,
         request,
