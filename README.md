@@ -81,9 +81,12 @@ FreeDrive is ideal for:
 ### 1. Drive-like File Management UX
 
 - Folder-based navigation and root view
-- Suggested/recent style listings
-- List/grid view switching
-- Search and search filters
+- Unified page headers across Home, My Drive, Recent, Starred, Shared, Trash, and other tabs
+- Home Suggested files: list view with Name / Reason suggested / Owner / Location (parent folder name), or grid tiles
+- List/grid view switching with Recent and Starred collections
+- Owner column shows avatar + `me` for your own items, or avatar + owner name for others
+- Global live search in the top bar on every page
+- Advanced search panel (Drive-style filters: type, owner, location, modified, trash, starred, approvals, and more)
 - Context menus and keyboard shortcuts
 
 ### 2. Sidebar: My Drive & Computers
@@ -212,7 +215,7 @@ Runtime flow summary:
 Global limiter enabled in router:
 
 - `100 req/sec`
-- `burst 200`
+- `burst 400`
 
 ### Storage Note
 
@@ -432,6 +435,8 @@ Base path: `/api/v1`
 - `GET /me/storage`
 - `GET /activity`
 - `GET /disk-stats`
+- `GET /search` — advanced search (query + filters: type, owner, location, trash, starred, modified, approvals, …)
+- `GET /approvals`
 
 #### Files
 
@@ -439,6 +444,7 @@ Base path: `/api/v1`
 - `GET /files`
 - `GET /files/trash`
 - `GET /files/{id}`
+- `POST /files/{id}/approvals`
 - `GET /files/{id}/download`
 - `PATCH /files/{id}`
 - `POST /files/{id}/content`
@@ -452,9 +458,13 @@ Base path: `/api/v1`
 
 - `POST /folders`
 - `GET /folders/root`
+- `GET /folders/all`
+- `GET /folders/trash`
 - `GET /folders/{id}`
 - `PATCH /folders/{id}`
 - `DELETE /folders/{id}`
+- `POST /folders/{id}/restore`
+- `DELETE /folders/{id}/permanent`
 - `GET /folders/{id}/breadcrumb`
 
 #### Computers
@@ -472,6 +482,7 @@ Base path: `/api/v1`
 - `POST /admin/users/{id}/reset-password`
 - `GET /admin/stats`
 - `POST /admin/invites`
+- `POST /admin/invites/resend`
 - `GET /admin/invites`
 - `GET /admin/activity`
 - `GET /admin/settings`
