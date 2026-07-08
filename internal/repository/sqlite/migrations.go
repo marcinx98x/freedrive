@@ -27,6 +27,7 @@ func runMigrations(db *sql.DB) error {
 		{4, migrationV4},
 		{5, migrationV5},
 		{6, migrationV6},
+		{7, migrationV7},
 	}
 
 	for _, m := range migrations {
@@ -257,4 +258,8 @@ ALTER TABLE comments ADD COLUMN assigned_to TEXT REFERENCES users(id);
 
 const migrationV6 = `
 ALTER TABLE invite_links ADD COLUMN email TEXT NOT NULL DEFAULT '';
+`
+
+const migrationV7 = `
+ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;
 `

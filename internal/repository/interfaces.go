@@ -22,6 +22,7 @@ type UserRepository interface {
 	GetRefreshToken(ctx context.Context, tokenHash string) (*domain.RefreshToken, error)
 	DeleteRefreshToken(ctx context.Context, tokenHash string) error
 	DeleteUserRefreshTokens(ctx context.Context, userID string) error
+	DeleteAllRefreshTokens(ctx context.Context) error
 
 	// Invite links
 	CreateInvite(ctx context.Context, invite *domain.InviteLink) error

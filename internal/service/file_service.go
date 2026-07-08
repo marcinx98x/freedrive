@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/storage"
@@ -221,7 +222,11 @@ func (s *FileService) StartTrashPurge(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				files, err := s.fileRepo.PurgeOldTrashed(ctx, 30)
+				days := adminsettings.TrashAutoEmptyDays()
+				if days <= 0 {
+					continue
+				}
+				files, err := s.fileRepo.PurgeOldTrashed(ctx, days)
 				if err != nil {
 					log.Printf("trash purge error: %v", err)
 					continue

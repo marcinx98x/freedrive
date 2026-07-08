@@ -139,6 +139,7 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		Role       *string `json:"role"`
 		QuotaBytes *int64  `json:"quota_bytes"`
 		Username   *string `json:"username"`
+		Suspended  *bool   `json:"suspended"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -154,6 +155,12 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Username != nil {
 		user.Username = *req.Username
 	}
+	if req.Suspended != nil {
+		user.Suspended = *req.Suspended
+		if user.Suspended {
+			_ = h.userRepo.DeleteUserRefreshTokens(r.Context(), user.ID)
+		}
+	}
 
 	if err := h.userRepo.Update(r.Context(), user); err != nil {
 		writeError(w, "failed to update user", http.StatusInternalServerError)
@@ -161,6 +168,43 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, user)
+}
+
+// RevokeUserSessions handles POST /api/v1/admin/users/{id}/revoke-sessions
+func (h *AdminHandler) RevokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	if userID == "" {
+		writeError(w, "user id required", http.StatusBadRequest)
+		return
+	}
+	if err := h.userRepo.DeleteUserRefreshTokens(r.Context(), userID); err != nil {
+		writeError(w, "failed to revoke sessions", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// RevokeAllSessions handles POST /api/v1/admin/sessions/revoke-all
+func (h *AdminHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
+	if err := h.userRepo.DeleteAllRefreshTokens(r.Context()); err != nil {
+		writeError(w, "failed to revoke sessions", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeleteInvite handles DELETE /api/v1/admin/invites/{id}
+func (h *AdminHandler) DeleteInvite(w http.ResponseWriter, r *http.Request) {
+	inviteID := chi.URLParam(r, "id")
+	if inviteID == "" {
+		writeError(w, "invite id required", http.StatusBadRequest)
+		return
+	}
+	if err := h.userRepo.DeleteInvite(r.Context(), inviteID); err != nil {
+		writeError(w, "failed to delete invite", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // DeleteUser handles DELETE /api/v1/admin/users/{id}

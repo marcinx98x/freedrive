@@ -29,11 +29,15 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) error {
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
+	suspended := 0
+	if user.Suspended {
+		suspended = 1
+	}
 	_, err := r.writer.ExecContext(ctx,
-		`INSERT INTO users (id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO users (id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, user.Email, user.Username, user.PasswordHash, user.Role,
-		user.QuotaBytes, user.UsedBytes, user.AvatarURL, user.CreatedAt, user.UpdatedAt,
+		user.QuotaBytes, user.UsedBytes, user.AvatarURL, suspended, user.CreatedAt, user.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -41,13 +45,26 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
-func (r *UserRepo) GetByID(ctx context.Context, id string) (*domain.User, error) {
+func scanUser(row interface {
+	Scan(dest ...interface{}) error
+}) (*domain.User, error) {
 	user := &domain.User{}
-	err := r.reader.QueryRowContext(ctx,
-		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, created_at, updated_at, last_login_at
+	var suspended int
+	err := row.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role,
+		&user.QuotaBytes, &user.UsedBytes, &user.AvatarURL, &suspended, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
+	if err != nil {
+		return nil, err
+	}
+	user.Suspended = suspended != 0
+	return user, nil
+}
+
+func (r *UserRepo) GetByID(ctx context.Context, id string) (*domain.User, error) {
+	row := r.reader.QueryRowContext(ctx,
+		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at, last_login_at
 		 FROM users WHERE id = ?`, id,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role,
-		&user.QuotaBytes, &user.UsedBytes, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
+	)
+	user, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -58,12 +75,11 @@ func (r *UserRepo) GetByID(ctx context.Context, id string) (*domain.User, error)
 }
 
 func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	user := &domain.User{}
-	err := r.reader.QueryRowContext(ctx,
-		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, created_at, updated_at, last_login_at
+	row := r.reader.QueryRowContext(ctx,
+		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at, last_login_at
 		 FROM users WHERE email = ? COLLATE NOCASE`, email,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role,
-		&user.QuotaBytes, &user.UsedBytes, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt)
+	)
+	user, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -75,11 +91,15 @@ func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, 
 
 func (r *UserRepo) Update(ctx context.Context, user *domain.User) error {
 	user.UpdatedAt = time.Now()
+	suspended := 0
+	if user.Suspended {
+		suspended = 1
+	}
 	_, err := r.writer.ExecContext(ctx,
-		`UPDATE users SET email=?, username=?, password_hash=?, role=?, quota_bytes=?, used_bytes=?, avatar_url=?, updated_at=?, last_login_at=?
+		`UPDATE users SET email=?, username=?, password_hash=?, role=?, quota_bytes=?, used_bytes=?, avatar_url=?, suspended=?, updated_at=?, last_login_at=?
 		 WHERE id=?`,
 		user.Email, user.Username, user.PasswordHash, user.Role,
-		user.QuotaBytes, user.UsedBytes, user.AvatarURL, user.UpdatedAt, user.LastLoginAt, user.ID,
+		user.QuotaBytes, user.UsedBytes, user.AvatarURL, suspended, user.UpdatedAt, user.LastLoginAt, user.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)
@@ -97,7 +117,7 @@ func (r *UserRepo) Delete(ctx context.Context, id string) error {
 
 func (r *UserRepo) List(ctx context.Context) ([]domain.User, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, created_at, updated_at, last_login_at
+		`SELECT id, email, username, password_hash, role, quota_bytes, used_bytes, avatar_url, suspended, created_at, updated_at, last_login_at
 		 FROM users ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -107,12 +127,11 @@ func (r *UserRepo) List(ctx context.Context) ([]domain.User, error) {
 
 	var users []domain.User
 	for rows.Next() {
-		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Username, &u.PasswordHash, &u.Role,
-			&u.QuotaBytes, &u.UsedBytes, &u.AvatarURL, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
-		users = append(users, u)
+		users = append(users, *u)
 	}
 	return users, nil
 }
@@ -168,6 +187,11 @@ func (r *UserRepo) DeleteRefreshToken(ctx context.Context, tokenHash string) err
 
 func (r *UserRepo) DeleteUserRefreshTokens(ctx context.Context, userID string) error {
 	_, err := r.writer.ExecContext(ctx, "DELETE FROM refresh_tokens WHERE user_id = ?", userID)
+	return err
+}
+
+func (r *UserRepo) DeleteAllRefreshTokens(ctx context.Context) error {
+	_, err := r.writer.ExecContext(ctx, "DELETE FROM refresh_tokens")
 	return err
 }
 

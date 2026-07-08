@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
@@ -21,7 +22,9 @@ var (
 	ErrUserExists         = errors.New("user with this email already exists")
 	ErrInvalidInvite      = errors.New("invalid or expired invite code")
 	ErrInviteEmailMismatch = errors.New("registration email must match the invite email")
-	ErrInvalidToken       = errors.New("invalid or expired token")
+	ErrInvalidToken          = errors.New("invalid or expired token")
+	ErrAccountSuspended      = errors.New("account suspended")
+	ErrRegistrationClosed    = errors.New("registration is closed")
 )
 
 // AuthService handles authentication and authorization.
@@ -55,39 +58,45 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 	}
 
 	role := domain.RoleUser
-	var quotaBytes int64 = 10737418240 // 10 GB default
+	quotaBytes := adminsettings.DefaultQuotaBytes()
 	if userCount == 0 {
 		role = domain.RoleAdmin
-	} else if inviteCode != "" {
-		invite, err := s.userRepo.GetInviteByCode(ctx, inviteCode)
-		if err != nil {
-			return nil, fmt.Errorf("get invite: %w", err)
+	} else {
+		mode := adminsettings.RegistrationMode()
+		if mode == "closed" {
+			return nil, ErrRegistrationClosed
 		}
-		if invite == nil {
+		if inviteCode != "" {
+			invite, err := s.userRepo.GetInviteByCode(ctx, inviteCode)
+			if err != nil {
+				return nil, fmt.Errorf("get invite: %w", err)
+			}
+			if invite == nil {
+				return nil, ErrInvalidInvite
+			}
+			if invite.MaxUses > 0 && invite.UsedCount >= invite.MaxUses {
+				return nil, ErrInvalidInvite
+			}
+			if invite.ExpiresAt != nil && invite.ExpiresAt.Before(time.Now()) {
+				return nil, ErrInvalidInvite
+			}
+			inviteEmail := strings.ToLower(strings.TrimSpace(invite.Email))
+			if inviteEmail != "" && inviteEmail != email {
+				return nil, ErrInviteEmailMismatch
+			}
+			if inviteEmail != "" {
+				email = inviteEmail
+			}
+			role = invite.Role
+			if invite.QuotaBytes > 0 {
+				quotaBytes = invite.QuotaBytes
+			}
+			if err := s.userRepo.IncrementInviteUsage(ctx, invite.ID); err != nil {
+				return nil, err
+			}
+		} else if mode == "invite" {
 			return nil, ErrInvalidInvite
 		}
-		if invite.MaxUses > 0 && invite.UsedCount >= invite.MaxUses {
-			return nil, ErrInvalidInvite
-		}
-		if invite.ExpiresAt != nil && invite.ExpiresAt.Before(time.Now()) {
-			return nil, ErrInvalidInvite
-		}
-		inviteEmail := strings.ToLower(strings.TrimSpace(invite.Email))
-		if inviteEmail != "" && inviteEmail != email {
-			return nil, ErrInviteEmailMismatch
-		}
-		if inviteEmail != "" {
-			email = inviteEmail
-		}
-		role = invite.Role
-		if invite.QuotaBytes > 0 {
-			quotaBytes = invite.QuotaBytes
-		}
-		if err := s.userRepo.IncrementInviteUsage(ctx, invite.ID); err != nil {
-			return nil, err
-		}
-	} else if userCount > 0 {
-		return nil, ErrInvalidInvite
 	}
 
 	// Check if email exists
@@ -134,6 +143,9 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Token
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, nil, ErrInvalidCredentials
 	}
+	if user.Suspended {
+		return nil, nil, ErrAccountSuspended
+	}
 
 	// Update last login
 	now := time.Now()
@@ -169,6 +181,9 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 	user, err := s.userRepo.GetByID(ctx, stored.UserID)
 	if err != nil || user == nil {
 		return nil, ErrInvalidToken
+	}
+	if user.Suspended {
+		return nil, ErrAccountSuspended
 	}
 
 	return s.generateTokenPair(ctx, user)

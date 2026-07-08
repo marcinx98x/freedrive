@@ -48,6 +48,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "invalid or expired invite code", http.StatusBadRequest)
 		case service.ErrInviteEmailMismatch:
 			writeError(w, "registration email must match the invite email", http.StatusBadRequest)
+		case service.ErrRegistrationClosed:
+			writeError(w, "registration is closed", http.StatusForbidden)
 		default:
 			writeError(w, "registration failed: "+err.Error(), http.StatusInternalServerError)
 		}
@@ -79,6 +81,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == service.ErrInvalidCredentials {
 			writeError(w, "invalid email or password", http.StatusUnauthorized)
+		} else if err == service.ErrAccountSuspended {
+			writeError(w, "account suspended", http.StatusForbidden)
 		} else {
 			writeError(w, "login failed", http.StatusInternalServerError)
 		}
@@ -103,7 +107,11 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	tokens, err := h.authService.Refresh(r.Context(), req.RefreshToken)
 	if err != nil {
-		writeError(w, "invalid or expired refresh token", http.StatusUnauthorized)
+		if err == service.ErrAccountSuspended {
+			writeError(w, "account suspended", http.StatusForbidden)
+		} else {
+			writeError(w, "invalid or expired refresh token", http.StatusUnauthorized)
+		}
 		return
 	}
 

@@ -18,6 +18,12 @@ const Auth = (() => {
         if (lower.includes('must match the invite email')) {
             return 'This invite requires the email address it was sent to. Check the invite email or ask your admin for a new invite.';
         }
+        if (lower.includes('account suspended')) {
+            return 'Your account has been suspended. Contact your FreeDrive administrator.';
+        }
+        if (lower.includes('registration is closed')) {
+            return 'New account registration is currently closed.';
+        }
         return raw || 'Something went wrong. Please try again.';
     }
 

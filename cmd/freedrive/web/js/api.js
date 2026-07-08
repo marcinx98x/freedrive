@@ -205,10 +205,13 @@ const API = (() => {
         updateUser: (id, data) => request('PATCH', `/admin/users/${id}`, data),
         deleteUser: (id) => request('DELETE', `/admin/users/${id}`),
         sendPasswordReset: (id) => request('POST', `/admin/users/${id}/reset-password`),
+        revokeUserSessions: (id) => request('POST', `/admin/users/${id}/revoke-sessions`),
+        revokeAllSessions: () => request('POST', '/admin/sessions/revoke-all'),
         stats: () => request('GET', '/admin/stats'),
         createInvite: (data) => request('POST', '/admin/invites', data),
         resendInvite: (data) => request('POST', '/admin/invites/resend', data),
         invites: () => request('GET', '/admin/invites'),
+        deleteInvite: (id) => request('DELETE', `/admin/invites/${id}`),
         activity: (page = 1, pageSize = 50) => request('GET', `/admin/activity?page=${page}&page_size=${pageSize}`),
     };
 

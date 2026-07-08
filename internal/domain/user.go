@@ -21,6 +21,7 @@ type User struct {
 	QuotaBytes   int64     `json:"quota_bytes"`
 	UsedBytes    int64     `json:"used_bytes"`
 	AvatarURL    string    `json:"avatar_url,omitempty"`
+	Suspended    bool      `json:"suspended"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`

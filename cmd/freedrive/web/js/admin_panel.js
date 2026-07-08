@@ -392,12 +392,13 @@ const AdminPanel = (() => {
     }
 
     async function hydrateData() {
-        const [statsRes, usersRes, diskRes, activityRes, filesRes] = await Promise.all([
+        const [statsRes, usersRes, diskRes, activityRes, filesRes, invitesRes] = await Promise.all([
             API.admin.stats().catch(() => ({})),
             API.admin.users().catch(() => ({ users: [] })),
             API.diskStats().catch(() => ({})),
             API.admin.activity(1, 300).catch(() => ({ activities: [] })),
             API.files.list({ page_size: '800' }).catch(() => ({ files: [] })),
+            API.admin.invites().catch(() => ({ invites: [] })),
         ]);
 
         state.stats = statsRes.stats || statsRes || {};
@@ -405,9 +406,26 @@ const AdminPanel = (() => {
         state.disk = diskRes || {};
         state.activities = Array.isArray(activityRes.activities) ? activityRes.activities : [];
         state.files = Array.isArray(filesRes.files) ? filesRes.files : [];
+        state.invites = (Array.isArray(invitesRes.invites) ? invitesRes.invites : []).map(mapInviteRecord);
 
         ensureUserMeta();
         saveLocalState();
+    }
+
+    function mapInviteRecord(inv) {
+        const maxUses = Number(inv?.max_uses || 1);
+        const used = Number(inv?.used_count || 0);
+        const quotaBytes = Number(inv?.quota_bytes || 0);
+        return {
+            id: inv?.id || '',
+            email: inv?.email || '',
+            role: inv?.role || 'user',
+            quota: Math.max(1, Math.round(quotaBytes / 1073741824) || 10),
+            message: '',
+            code: inv?.code || '',
+            status: maxUses > 0 && used >= maxUses ? 'used' : 'pending',
+            created_at: inv?.created_at || nowISO(),
+        };
     }
 
 
@@ -650,14 +668,11 @@ const AdminPanel = (() => {
     }
 
     function getUserStatus(user) {
-        return state.userMeta[user.id]?.status || 'active';
-    }
-
-    function setUserStatus(userId, status) {
-        if (!state.userMeta[userId]) state.userMeta[userId] = {};
-        state.userMeta[userId].status = status;
-        state.userMeta[userId].last_active = nowISO();
-        saveLocalState();
+        if (user && typeof user === 'object') {
+            return user.suspended ? 'suspended' : 'active';
+        }
+        const found = state.users.find((u) => u.id === user);
+        return found?.suspended ? 'suspended' : 'active';
     }
 
     function renderUsersSection() {
@@ -1362,7 +1377,7 @@ const AdminPanel = (() => {
                                             <td style="font-family:monospace; font-size:12px; color:#5F6368;">${esc(s.ip)}</td>
                                             <td style="color:#5F6368;">${Components.formatDate(s.started)}</td>
                                             <td style="color:#5F6368;">${Components.formatDate(s.last_active)}</td>
-                                            <td>${!s.is_current ? `<button class="gd-icon-btn" data-admin-action="revoke-session" data-session-id="${esc(s.id)}" title="Revoke"><svg width="18" height="18" viewBox="0 0 24 24" fill="#D93025"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>` : ''}</td>
+                                            <td></td>
                                         </tr>
                                     `).join('') || '<tr><td colspan="6" class="gd-empty-table">No active sessions</td></tr>'}
                                 </tbody>
@@ -1852,10 +1867,14 @@ const AdminPanel = (() => {
         }
 
         if (action === 'toggle-suspend') {
-            const status = getUserStatus(user);
-            setUserStatus(userId, status === 'suspended' ? 'active' : 'suspended');
-            Components.toast(status === 'suspended' ? 'User unsuspended' : 'User suspended', 'success');
-            renderSection();
+            const suspended = !user.suspended;
+            try {
+                await API.admin.updateUser(userId, { suspended });
+                Components.toast(suspended ? 'User suspended' : 'User unsuspended', 'success');
+                await load(state.section);
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to update user', 'error');
+            }
             return;
         }
 
@@ -1966,16 +1985,12 @@ const AdminPanel = (() => {
                         if (!inviteCode) {
                             throw new Error('Invite code could not be generated');
                         }
-                        state.invites.push({
-                            id: Components.uuid(),
+                        state.invites.push(mapInviteRecord({
+                            ...invite,
                             email,
                             role,
-                            quota,
-                            message,
-                            code: inviteCode,
-                            status: 'pending',
-                            created_at: nowISO(),
-                        });
+                            quota_bytes: quota * 1073741824,
+                        }));
                         saveLocalState();
                         
                         // Transform the modal to show the link
@@ -2082,11 +2097,19 @@ const AdminPanel = (() => {
                         }).catch((err) => {
                             Components.toast(err?.message || 'Failed to resend invite', 'error');
                         });
-                    } else {
-                        row.status = 'cancelled';
-                        saveLocalState();
-                        Components.hideModal();
-                        openInviteModal();
+                    } else if (inviteAction === 'cancel') {
+                        if (!row.id) {
+                            Components.toast('Invite id missing', 'error');
+                            return;
+                        }
+                        API.admin.deleteInvite(row.id).then(async () => {
+                            Components.toast('Invite cancelled', 'success');
+                            await hydrateData();
+                            Components.hideModal();
+                            openInviteModal();
+                        }).catch((err) => {
+                            Components.toast(err?.message || 'Failed to cancel invite', 'error');
+                        });
                     }
                 });
             });
@@ -2235,9 +2258,14 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'bulk-suspend') {
-                    state.userSelection.forEach((id) => setUserStatus(id, 'suspended'));
-                    Components.toast('Selected users suspended', 'success');
-                    renderSection();
+                    try {
+                        await Promise.all([...state.userSelection].map((id) => API.admin.updateUser(id, { suspended: true })));
+                        Components.toast('Selected users suspended', 'success');
+                        state.userSelection.clear();
+                        await load(state.section);
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to suspend users', 'error');
+                    }
                     return;
                 }
 
@@ -2446,14 +2474,17 @@ const AdminPanel = (() => {
                 if (action === 'revoke-all-sessions') {
                     const ok = await Components.confirm('Revoke all sessions', 'All active sessions will be terminated. This cannot be undone.', 'Revoke');
                     if (!ok) return;
-                    Components.toast('All sessions revoked', 'success');
+                    try {
+                        await API.admin.revokeAllSessions();
+                        Components.toast('All sessions revoked', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to revoke sessions', 'error');
+                    }
                     return;
                 }
 
                 if (action === 'revoke-session') {
-                    const ok = await Components.confirm('Revoke session', 'Session will be terminated immediately.', 'Revoke');
-                    if (!ok) return;
-                    Components.toast('Session revoked', 'success');
+                    Components.toast('Per-session revoke is not available yet. Use Revoke all.', 'info');
                     return;
                 }
 

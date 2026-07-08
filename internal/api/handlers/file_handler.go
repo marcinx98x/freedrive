@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
@@ -36,8 +39,9 @@ func NewFileHandler(fileService *service.FileService, fileRepo repository.FileRe
 func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 
-	// Limit upload size
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxUpload)
+	// Limit upload size (config + admin setting)
+	maxBytes := adminsettings.EffectiveMaxUploadBytes(h.maxUpload)
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB memory
 		writeError(w, "file too large or invalid form", http.StatusBadRequest)
@@ -55,6 +59,14 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	if name == "" {
 		name = header.Filename
+	}
+
+	if allowed := adminsettings.AllowedTypes(); len(allowed) > 0 {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+		if ext == "" || !containsString(allowed, ext) {
+			writeError(w, "file type not allowed", http.StatusBadRequest)
+			return
+		}
 	}
 	mimeType := r.FormValue("mime_type")
 	if mimeType == "" {
@@ -269,7 +281,8 @@ func (h *FileHandler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 	fileID := chi.URLParam(r, "id")
 	userID := middleware.GetUserID(r.Context())
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxUpload)
+	maxBytes := adminsettings.EffectiveMaxUploadBytes(h.maxUpload)
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, "file too large or invalid form", http.StatusBadRequest)
 		return
@@ -285,6 +298,13 @@ func (h *FileHandler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	if name == "" {
 		name = header.Filename
+	}
+	if allowed := adminsettings.AllowedTypes(); len(allowed) > 0 {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+		if ext == "" || !containsString(allowed, ext) {
+			writeError(w, "file type not allowed", http.StatusBadRequest)
+			return
+		}
 	}
 	mimeType := r.FormValue("mime_type")
 	if mimeType == "" {
@@ -335,4 +355,13 @@ func (h *FileHandler) Trash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"files": files})
+}
+
+func containsString(items []string, value string) bool {
+	for _, item := range items {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
