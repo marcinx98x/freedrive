@@ -4005,8 +4005,8 @@ const FileManager = (() => {
 
             const used = Number(disk.used_bytes || 0);
             const total = Number(disk.total_bytes || 1);
-            const displayPct = storageQuotaPercent(used, total);
-            const targetDeg = displayPct * 3.6;
+            const arcPct = storageQuotaPercentRaw(used, total);
+            const targetDeg = arcPct * 3.6;
 
             const circle = document.getElementById('storage-circle');
             circle.style.setProperty('--storage-target-deg', `${targetDeg}deg`);
@@ -4034,7 +4034,7 @@ const FileManager = (() => {
             const totalStr = Components.formatSize(total);
             document.getElementById('storage-circle-text').innerHTML = `
                 <div class="storage-circle-inner">
-                    <span class="storage-circle-pct">${displayPct.toFixed(1)}%</span>
+                    <span class="storage-circle-pct">${formatStoragePercentRounded(used, total)}%</span>
                     <span class="storage-circle-label">${usedStr} of ${totalStr}</span>
                 </div>
             `;
@@ -4065,12 +4065,11 @@ const FileManager = (() => {
                 });
             }
 
-            const breakdownTotal = buckets.Images + buckets.Videos + buckets.Documents + buckets.Other;
             document.getElementById('storage-breakdown').innerHTML = `
-                ${renderBreakdownItem('Images',    buckets.Images,    '#ea4335', breakdownTotal)}
-                ${renderBreakdownItem('Videos',    buckets.Videos,    '#fbbc04', breakdownTotal)}
-                ${renderBreakdownItem('Documents', buckets.Documents, '#4285f4', breakdownTotal)}
-                ${renderBreakdownItem('Other',     buckets.Other,     '#a142f4', breakdownTotal)}
+                ${renderBreakdownItem('Images',    buckets.Images,    '#ea4335', total)}
+                ${renderBreakdownItem('Videos',    buckets.Videos,    '#fbbc04', total)}
+                ${renderBreakdownItem('Documents', buckets.Documents, '#4285f4', total)}
+                ${renderBreakdownItem('Other',     buckets.Other,     '#a142f4', total)}
             `;
 
             const largest = [...files].sort((a, b) => Number(b.size || 0) - Number(a.size || 0)).slice(0, 20);
@@ -4081,8 +4080,10 @@ const FileManager = (() => {
         }
     }
 
-    function renderBreakdownItem(name, bytes, color, breakdownTotal) {
-        const widthPct = storageBreakdownPercent(bytes, breakdownTotal);
+    function renderBreakdownItem(name, bytes, color, quota) {
+        const widthPct = storageQuotaPercentRaw(bytes, quota);
+        const pctLabel = formatStoragePercentRounded(bytes, quota);
+        const activeClass = bytes > 0 ? ' break-bar-fill--active' : '';
         const icons = {
             Images: '<svg viewBox="0 0 24 24" width="18" height="18" fill="' + color + '"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>',
             Videos: '<svg viewBox="0 0 24 24" width="18" height="18" fill="' + color + '"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>',
@@ -4095,10 +4096,10 @@ const FileManager = (() => {
                     <div class="break-tag">
                         ${icons[name] || ''}<span>${name}</span>
                     </div>
-                    <span class="break-size">${bytes > 0 ? Components.formatSize(bytes) : '—'}</span>
+                    <span class="break-size">${bytes > 0 ? `${Components.formatSize(bytes)} · ${pctLabel}%` : '—'}</span>
                 </div>
                 <div class="break-bar-track">
-                    <div class="break-bar-fill" style="width:${widthPct.toFixed(2)}%; background:${color};"></div>
+                    <div class="break-bar-fill${activeClass}" style="width:${widthPct}%; background:${color};"></div>
                 </div>
             </div>
         `;
@@ -6291,20 +6292,15 @@ const FileManager = (() => {
         }
     }
 
-    function storageQuotaPercent(usedBytes, totalBytes) {
+    function storageQuotaPercentRaw(usedBytes, totalBytes) {
         const used = Math.max(0, Number(usedBytes) || 0);
         const total = Math.max(0, Number(totalBytes) || 0);
         if (used <= 0 || total <= 0) return 0;
-        const raw = (used / total) * 100;
-        return Math.min(100, Math.max(0.1, raw));
+        return Math.min(100, (used / total) * 100);
     }
 
-    function storageBreakdownPercent(bytes, breakdownTotal) {
-        const used = Math.max(0, Number(bytes) || 0);
-        const total = Math.max(0, Number(breakdownTotal) || 0);
-        if (used <= 0 || total <= 0) return 0;
-        const raw = (used / total) * 100;
-        return Math.min(100, Math.max(0.1, raw));
+    function formatStoragePercentRounded(usedBytes, totalBytes) {
+        return String(Math.round(storageQuotaPercentRaw(usedBytes, totalBytes)));
     }
 
     function formatStorageSize(bytes) {
@@ -6330,17 +6326,17 @@ const FileManager = (() => {
             const rawUsed = Number(s.used_bytes || 0);
             const rawTotal = Number(s.total_bytes || 1);
 
-            const ratio = rawTotal > 0 ? rawUsed / rawTotal : 0;
-            const pct = Math.min(100, Math.round(ratio * 100));
-            const widthPct = storageQuotaPercent(rawUsed, rawTotal);
+            const rawPct = storageQuotaPercentRaw(rawUsed, rawTotal);
+            const pct = Math.round(rawPct);
+            const widthPct = rawPct;
 
             const barFill = document.getElementById('storage-bar-fill');
-            barFill.style.width = `${widthPct.toFixed(2)}%`;
-            barFill.style.background = pct >= 90 ? '#d93025' : '#1a73e8';
+            barFill.style.width = `${widthPct}%`;
+            barFill.style.background = rawPct >= 90 ? '#d93025' : '#1a73e8';
             document.getElementById('storage-text').textContent =
                 `${formatStorageSize(rawUsed)} of ${formatStorageSize(rawTotal)} used`;
 
-            if (pct >= 80) {
+            if (rawPct >= 80) {
                 const key = 'fd_storage_notice_last';
                 const last = Number(localStorage.getItem(key) || 0);
                 const now = Date.now();

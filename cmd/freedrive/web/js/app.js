@@ -66,14 +66,17 @@ const App = (() => {
     async function refreshProfileFromServer() {
         try {
             const user = await API.me();
-            if (!user?.id) return null;
-            API.setUser(user);
-            syncAvatarCache(user.avatar_url || '');
-            refreshUserUI();
-            return user;
+            if (user?.id) {
+                API.setUser(user);
+                syncAvatarCache(user.avatar_url || '');
+                return user;
+            }
         } catch {
-            return null;
+            /* ignore */
+        } finally {
+            refreshUserUI();
         }
+        return null;
     }
 
     function isAdminUser(user) {
@@ -90,37 +93,40 @@ const App = (() => {
         const show = inDriveMode && isAdminUser(user);
 
         app.classList.toggle('admin-drive-access', show);
+        btn.classList.toggle('hidden', !show);
+        btn.disabled = !show;
         btn.setAttribute('aria-hidden', show ? 'false' : 'true');
     }
 
     function refreshUserUI() {
         const user = API.getUser();
-        if (!user) return;
-        const prefs = getUserPrefs();
-        const initial = Components.initials(user.username || user.email || 'U');
-        const ua = document.getElementById('user-avatar');
-        const ta = document.getElementById('topbar-avatar');
-        const savedPhoto = resolveAvatar(user, prefs);
-        
-        if (ua) {
-            ua.textContent = savedPhoto ? '' : initial;
-            ua.style.backgroundImage = savedPhoto ? `url(${savedPhoto})` : '';
-            ua.style.backgroundSize = savedPhoto ? 'cover' : '';
-            ua.style.backgroundPosition = savedPhoto ? 'center' : '';
-            ua.style.color = savedPhoto ? 'transparent' : '';
+        if (user) {
+            const prefs = getUserPrefs();
+            const initial = Components.initials(user.username || user.email || 'U');
+            const ua = document.getElementById('user-avatar');
+            const ta = document.getElementById('topbar-avatar');
+            const savedPhoto = resolveAvatar(user, prefs);
+            
+            if (ua) {
+                ua.textContent = savedPhoto ? '' : initial;
+                ua.style.backgroundImage = savedPhoto ? `url(${savedPhoto})` : '';
+                ua.style.backgroundSize = savedPhoto ? 'cover' : '';
+                ua.style.backgroundPosition = savedPhoto ? 'center' : '';
+                ua.style.color = savedPhoto ? 'transparent' : '';
+            }
+            if (ta) {
+                ta.innerHTML = '';
+                ta.textContent = savedPhoto ? '' : initial;
+                ta.style.backgroundImage = savedPhoto ? `url(${savedPhoto})` : '';
+                ta.style.backgroundSize = savedPhoto ? 'cover' : '';
+                ta.style.backgroundPosition = savedPhoto ? 'center' : '';
+                ta.style.color = savedPhoto ? 'transparent' : '';
+            }
+            const un = document.getElementById('user-name');
+            if (un) un.textContent = user.username || user.email;
+            const ur = document.getElementById('user-role');
+            if (ur) ur.textContent = user.role;
         }
-        if (ta) {
-            ta.innerHTML = '';
-            ta.textContent = savedPhoto ? '' : initial;
-            ta.style.backgroundImage = savedPhoto ? `url(${savedPhoto})` : '';
-            ta.style.backgroundSize = savedPhoto ? 'cover' : '';
-            ta.style.backgroundPosition = savedPhoto ? 'center' : '';
-            ta.style.color = savedPhoto ? 'transparent' : '';
-        }
-        const un = document.getElementById('user-name');
-        if (un) un.textContent = user.username || user.email;
-        const ur = document.getElementById('user-role');
-        if (ur) ur.textContent = user.role;
         syncAdminBtnVisibility();
     }
 
@@ -880,11 +886,12 @@ const App = (() => {
     function showAuth() {
         const app = document.getElementById('app');
         app?.classList.remove('admin-mode', 'admin-drive-access');
+        document.getElementById('admin-btn')?.classList.add('hidden');
         document.getElementById('auth-screen').classList.remove('hidden');
         app?.classList.add('hidden');
     }
 
-    function showApp() {
+    async function showApp() {
         document.getElementById('auth-screen').classList.add('hidden');
         document.getElementById('app').classList.remove('hidden');
 
@@ -893,7 +900,9 @@ const App = (() => {
             // Prefer server profile over stale localStorage avatar/name cache.
             if (user.avatar_url) syncAvatarCache(user.avatar_url);
             refreshUserUI();
-            refreshProfileFromServer();
+            await refreshProfileFromServer();
+        } else {
+            syncAdminBtnVisibility();
         }
 
         const prefs = getUserPrefs();

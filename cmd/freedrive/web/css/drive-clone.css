@@ -934,7 +934,7 @@ body {
   display: none;
 }
 
-.app:not(.admin-mode).admin-drive-access #admin-btn {
+.app:not(.admin-mode).admin-drive-access #admin-btn:not(.hidden) {
   display: inline-flex !important;
 }
 

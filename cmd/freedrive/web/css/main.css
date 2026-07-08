@@ -1430,6 +1430,7 @@ svg {
   overflow: hidden;
 }
 .break-bar-fill { height: 100%; border-radius: 99px; }
+.break-bar-fill--active { min-width: 2px; }
 .largest-files { padding: 16px; }
 .largest-files-header {
   font-size: 14px;
