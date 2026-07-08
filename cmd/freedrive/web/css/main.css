@@ -1235,8 +1235,29 @@ svg {
   transition: width 0.3s;
 }
 
-/* ── Toast (base in components.css, z-index override) ── */
-.toast-container { z-index: 10005; }
+/* ── Toast (must sit above .auth-screen z-index: 1000) ── */
+.toast-container {
+  z-index: 10005 !important;
+  pointer-events: none;
+}
+.toast-container .toast {
+  pointer-events: auto;
+}
+
+.auth-error {
+  display: none;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fce8e6;
+  color: #c5221f;
+  font-size: 13px;
+  line-height: 1.35;
+  border: 1px solid #f6aea9;
+}
+.auth-error:not(:empty) {
+  display: block;
+}
 
 /* ── Activity page ── */
 .activity-page { padding: 16px 0; }

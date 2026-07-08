@@ -62,7 +62,16 @@ const API = (() => {
             opts.body = body instanceof FormData ? body : JSON.stringify(body);
         }
 
-        const res = await fetch(BASE + path, opts);
+        let res;
+        try {
+            res = await fetch(BASE + path, opts);
+        } catch (err) {
+            const raw = String(err?.message || '').toLowerCase();
+            if (raw.includes('failed to fetch') || raw.includes('networkerror') || raw.includes('load failed') || !raw) {
+                throw new Error('Cannot reach the server. Check the FreeDrive URL (HTTPS / reverse proxy) and try again.');
+            }
+            throw new Error(err.message || 'Network error');
+        }
 
         if (res.status === 401 && !isRetry && refreshToken) {
             const refreshed = await tryRefresh();

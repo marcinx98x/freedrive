@@ -34,6 +34,7 @@
             <form id="login-form" class="auth-form">
                 <div class="form-group"><input type="email" id="login-email" placeholder="Email" required autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
                 <div class="form-group"><input type="password" id="login-password" placeholder="Password" required autocomplete="current-password"></div>
+                <div class="auth-error" id="login-error" role="alert" aria-live="polite"></div>
                 <button type="submit" class="btn btn-primary btn-full" id="login-btn"><span>Sign in</span><div class="btn-loader hidden"></div></button>
             </form>
             <form id="register-form" class="auth-form hidden">
@@ -41,12 +42,14 @@
                 <div class="form-group"><input type="email" id="reg-email" placeholder="Email" required autocapitalize="none" autocorrect="off" spellcheck="false"></div>
                 <div class="form-group"><input type="password" id="reg-password" placeholder="Password (min 6 chars)" required minlength="6"></div>
                 <div class="form-group"><input type="text" id="reg-invite" placeholder="Invite code (optional)"></div>
+                <div class="auth-error" id="register-error" role="alert" aria-live="polite"></div>
                 <button type="submit" class="btn btn-primary btn-full" id="register-btn"><span>Create account</span><div class="btn-loader hidden"></div></button>
             </form>
             <form id="reset-form" class="auth-form hidden">
                 <div class="form-group"><input type="email" id="reset-email" placeholder="Email" required autocapitalize="none" autocorrect="off" spellcheck="false"></div>
                 <div class="form-group"><input type="password" id="reset-password" placeholder="New password (min 6 chars)" required minlength="6"></div>
                 <div class="form-group"><input type="password" id="reset-password-confirm" placeholder="Confirm new password" required minlength="6"></div>
+                <div class="auth-error" id="reset-error" role="alert" aria-live="polite"></div>
                 <button type="submit" class="btn btn-primary btn-full" id="reset-btn"><span>Reset password</span><div class="btn-loader hidden"></div></button>
             </form>
             <div class="auth-footer">
