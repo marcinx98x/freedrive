@@ -931,7 +931,11 @@ body {
 }
 
 .app:not(.admin-mode) #admin-btn {
-  display: none !important;
+  display: none;
+}
+
+.app:not(.admin-mode).admin-drive-access #admin-btn {
+  display: inline-flex !important;
 }
 
 .app:not(.admin-mode) .topbar-view-toggle {

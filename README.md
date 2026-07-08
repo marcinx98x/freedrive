@@ -163,6 +163,8 @@ FreeDrive is ideal for:
 
 Admin routes are role-protected and available under `/api/v1/admin/*`.
 
+In the Drive UI, users with the `admin` role see a shield icon in the top bar (next to Security) on every tab; it opens the admin panel at `/admin/dashboard`. The icon is hidden in admin-panel mode and for non-admin accounts.
+
 ### User Management
 
 - List users

@@ -76,6 +76,23 @@ const App = (() => {
         }
     }
 
+    function isAdminUser(user) {
+        return String(user?.role || '').toLowerCase() === 'admin';
+    }
+
+    function syncAdminBtnVisibility() {
+        const app = document.getElementById('app');
+        const btn = document.getElementById('admin-btn');
+        if (!app || !btn) return;
+
+        const user = API.getUser();
+        const inDriveMode = !app.classList.contains('admin-mode');
+        const show = inDriveMode && isAdminUser(user);
+
+        app.classList.toggle('admin-drive-access', show);
+        btn.setAttribute('aria-hidden', show ? 'false' : 'true');
+    }
+
     function refreshUserUI() {
         const user = API.getUser();
         if (!user) return;
@@ -104,6 +121,7 @@ const App = (() => {
         if (un) un.textContent = user.username || user.email;
         const ur = document.getElementById('user-role');
         if (ur) ur.textContent = user.role;
+        syncAdminBtnVisibility();
     }
 
     function applyTheme(theme) {
@@ -860,9 +878,10 @@ const App = (() => {
     }
 
     function showAuth() {
-        document.getElementById('app')?.classList.remove('admin-mode');
+        const app = document.getElementById('app');
+        app?.classList.remove('admin-mode', 'admin-drive-access');
         document.getElementById('auth-screen').classList.remove('hidden');
-        document.getElementById('app').classList.add('hidden');
+        app?.classList.add('hidden');
     }
 
     function showApp() {
@@ -874,16 +893,7 @@ const App = (() => {
             // Prefer server profile over stale localStorage avatar/name cache.
             if (user.avatar_url) syncAvatarCache(user.avatar_url);
             refreshUserUI();
-            if (user.role === 'admin') {
-                const ab = document.getElementById('admin-btn');
-                if (ab) ab.style.display = '';
-            }
-            refreshProfileFromServer().then((fresh) => {
-                if (fresh?.role === 'admin') {
-                    const ab = document.getElementById('admin-btn');
-                    if (ab) ab.style.display = '';
-                }
-            });
+            refreshProfileFromServer();
         }
 
         const prefs = getUserPrefs();
@@ -904,6 +914,7 @@ const App = (() => {
             document.getElementById('notifications-panel')?.classList.add('hidden');
             app?.classList.remove('details-open');
         }
+        syncAdminBtnVisibility();
     }
 
     function setActiveNav(page) {
@@ -913,7 +924,8 @@ const App = (() => {
 
     async function handleRoute() {
         if (!API.isLoggedIn()) return;
-        
+
+        try {
         let pathRoute = window.location.pathname;
         let hash = window.location.hash;
 
@@ -1045,6 +1057,9 @@ const App = (() => {
         }
 
         window.location.hash = '#/files';
+        } finally {
+            syncAdminBtnVisibility();
+        }
     }
 
     function initRipple() {
