@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
 	"github.com/abdullaabdullazade/freedrive/internal/api"
 	"github.com/abdullaabdullazade/freedrive/internal/config"
 	"github.com/abdullaabdullazade/freedrive/internal/repository/sqlite"
@@ -40,6 +41,8 @@ func main() {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 	log.Println("✓ Database migrations applied")
+
+	adminsettings.SetDataDir(cfg.DataDir)
 
 	// Initialize storage
 	diskStorage, err := storage.NewDiskStorage(cfg.DataDir)

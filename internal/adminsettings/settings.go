@@ -8,7 +8,14 @@ import (
 	"strings"
 )
 
-const settingsFile = "data/settings.json"
+var settingsFile = "data/settings.json"
+
+// SetDataDir points settings reads at dataDir/settings.json (call from main).
+func SetDataDir(dataDir string) {
+	if strings.TrimSpace(dataDir) != "" {
+		settingsFile = filepath.Join(dataDir, "settings.json")
+	}
+}
 
 func load() map[string]interface{} {
 	out := map[string]interface{}{}

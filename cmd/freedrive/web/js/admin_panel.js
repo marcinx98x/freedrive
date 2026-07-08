@@ -1,6 +1,5 @@
 const AdminPanel = (() => {
-    const LOCAL_KEY = 'fd_admin_panel_state_v1';
-    const INVITE_KEY = 'fd_admin_invites_local_v1';
+    const UI_PREFS_KEY = 'fd_admin_ui_prefs_v1';
     const ALLOWED_TYPES_VERSION = 1;
 
     const DEFAULT_SETTINGS = {
@@ -260,35 +259,68 @@ const AdminPanel = (() => {
         `;
     }
 
-    function saveLocalState() {
-        const payload = {
-            userMeta: state.userMeta,
-            settings: state.settings,
-            security: state.settings.security,
+    function saveLocalUiState() {
+        const prefs = {
+            activityFilters: state.activityFilters,
+            usersFilter: state.usersFilter,
+            usersPerPage: state.usersPerPage,
+            activityPerPage: state.activityPerPage,
         };
-        localStorage.setItem(LOCAL_KEY, JSON.stringify(payload));
-        localStorage.setItem(INVITE_KEY, JSON.stringify(state.invites));
+        localStorage.setItem(UI_PREFS_KEY, JSON.stringify(prefs));
     }
 
-    function loadLocalState() {
+    function loadLocalUiState() {
         try {
-            const raw = JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}');
-            if (raw.userMeta && typeof raw.userMeta === 'object') state.userMeta = raw.userMeta;
-            if (raw.settings && typeof raw.settings === 'object') {
-                state.settings = deepMerge(clone(DEFAULT_SETTINGS), raw.settings);
-                state.settingsDraft = clone(state.settings);
+            const raw = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}');
+            if (raw.activityFilters && typeof raw.activityFilters === 'object') {
+                state.activityFilters = { ...state.activityFilters, ...raw.activityFilters };
             }
+            if (raw.usersFilter) state.usersFilter = raw.usersFilter;
+            if (raw.usersPerPage) state.usersPerPage = asNumber(raw.usersPerPage, state.usersPerPage);
+            if (raw.activityPerPage) state.activityPerPage = asNumber(raw.activityPerPage, state.activityPerPage);
         } catch {
-            state.userMeta = {};
-            state.settings = clone(DEFAULT_SETTINGS);
-            state.settingsDraft = clone(DEFAULT_SETTINGS);
+            // ignore corrupt UI prefs
         }
+    }
 
-        try {
-            const invites = JSON.parse(localStorage.getItem(INVITE_KEY) || '[]');
-            state.invites = Array.isArray(invites) ? invites : [];
-        } catch {
-            state.invites = [];
+    async function fetchServerSettings() {
+        const res = await fetch('/api/v1/admin/settings', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
+        });
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => null);
+        if (!data || typeof data !== 'object' || Object.keys(data).length === 0) return null;
+        return data;
+    }
+
+    function applyServerSettings(data) {
+        state.settings = deepMerge(clone(DEFAULT_SETTINGS), data);
+        state.settingsDraft = clone(state.settings);
+        state.settingsDirty = false;
+    }
+
+    async function saveSettingsToServer(settings = state.settings) {
+        const res = await fetch('/api/v1/admin/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${localStorage.getItem('fd_access_token') || ''}`,
+            },
+            body: JSON.stringify(settings),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `Settings save failed (${res.status})`);
+        }
+    }
+
+    async function persistSettingsNow({ silent = false } = {}) {
+        state.settings = clone(state.settingsDraft);
+        state.settingsDirty = false;
+        await saveSettingsToServer(state.settings);
+        state.settingsSavedUntil = Date.now() + 3000;
+        if (!silent) {
+            Components.toast('Settings saved', 'success', { duration: 3000 });
         }
     }
 
@@ -302,12 +334,19 @@ const AdminPanel = (() => {
         return true;
     }
 
-    function persistSettingsToBackend() {
-        fetch('/api/v1/admin/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
-            body: JSON.stringify(state.settings),
-        }).catch(() => {});
+    async function loadServerSettings() {
+        const data = await fetchServerSettings().catch(() => null);
+        if (data) {
+            applyServerSettings(data);
+        } else {
+            state.settings = clone(DEFAULT_SETTINGS);
+            state.settingsDraft = clone(DEFAULT_SETTINGS);
+            state.settingsDirty = false;
+        }
+        if (migrateAllowedTypes()) {
+            state.settingsDraft = clone(state.settings);
+            await saveSettingsToServer(state.settings);
+        }
     }
 
     function deepMerge(target, source) {
@@ -412,7 +451,7 @@ const AdminPanel = (() => {
         state.backups = Array.isArray(backupsRes.backups) ? backupsRes.backups : [];
 
         ensureUserMeta();
-        saveLocalState();
+        saveLocalUiState();
     }
 
     function mapInviteRecord(inv) {
@@ -1769,29 +1808,15 @@ const AdminPanel = (() => {
 
         state.section = normalizeSection(section);
         if (!state.initialized) {
-            loadLocalState();
-            if (migrateAllowedTypes()) saveLocalState();
+            loadLocalUiState();
             state.initialized = true;
-            // Try loading settings from backend (non-blocking)
-            fetch('/api/v1/admin/settings', {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
-            }).then((r) => r.ok ? r.json() : null).then((data) => {
-                if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-                    state.settings = deepMerge(clone(DEFAULT_SETTINGS), data);
-                    state.settingsDraft = clone(state.settings);
-                }
-                if (migrateAllowedTypes()) {
-                    saveLocalState();
-                    persistSettingsToBackend();
-                    if (state.section === 'settings') renderSection();
-                }
-            }).catch(() => {});
         }
 
         state.loading = true;
         renderShell();
         const root = getSectionRoot();
         if (root) root.innerHTML = renderSectionSkeleton(state.section);
+        await loadServerSettings();
         await hydrateData();
         state.loading = false;
         renderShell();
@@ -2000,7 +2025,6 @@ const AdminPanel = (() => {
                             role,
                             quota_bytes: quota * 1073741824,
                         }));
-                        saveLocalState();
                         
                         // Transform the modal to show the link
                         const link = invite?.invite_url || `${window.location.origin}?invite=${inviteCode}`;
@@ -2514,16 +2538,20 @@ const AdminPanel = (() => {
                     const ip = btn.getAttribute('data-ip');
                     if (!ip) return;
                     const blocked = btn.type === 'checkbox' ? btn.checked : btn.getAttribute('data-blocked') === '1';
-                    const list = state.settings.security.blocklist || [];
+                    const list = state.settingsDraft.security.blocklist || [];
                     if (blocked) {
                         if (!list.some((x) => x.ip === ip)) {
-                            state.settings.security.blocklist.push({ ip, by: getCurrentUser().username || 'admin', at: nowISO(), note: 'Blocked from security panel' });
+                            state.settingsDraft.security.blocklist.push({ ip, by: getCurrentUser().username || 'admin', at: nowISO(), note: 'Blocked from security panel' });
                         }
                     } else {
-                        state.settings.security.blocklist = list.filter((x) => x.ip !== ip);
+                        state.settingsDraft.security.blocklist = list.filter((x) => x.ip !== ip);
                     }
-                    state.settingsDraft = clone(state.settings);
-                    saveLocalState();
+                    try {
+                        await persistSettingsNow({ silent: true });
+                        Components.toast('IP blocklist updated', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to save blocklist', 'error');
+                    }
                     renderSection();
                     return;
                 }
@@ -2543,15 +2571,19 @@ const AdminPanel = (() => {
                         return;
                     }
                     const key = state.listTab === 'allowlist' ? 'allowlist' : 'blocklist';
-                    const list = state.settings.security[key] || [];
+                    const list = state.settingsDraft.security[key] || [];
                     if (list.some((x) => x.ip === ip)) {
                         Components.toast('IP already exists in list', 'warning');
                         return;
                     }
                     list.push({ ip, by: getCurrentUser().username || 'admin', at: nowISO(), note });
-                    state.settings.security[key] = list;
-                    state.settingsDraft = clone(state.settings);
-                    saveLocalState();
+                    state.settingsDraft.security[key] = list;
+                    try {
+                        await persistSettingsNow({ silent: true });
+                        Components.toast('IP list updated', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to save IP list', 'error');
+                    }
                     renderSection();
                     return;
                 }
@@ -2560,18 +2592,25 @@ const AdminPanel = (() => {
                     const tab = btn.getAttribute('data-tab');
                     const ip = btn.getAttribute('data-ip');
                     if (!tab || !ip) return;
-                    state.settings.security[tab] = (state.settings.security[tab] || []).filter((x) => x.ip !== ip);
-                    state.settingsDraft = clone(state.settings);
-                    saveLocalState();
+                    state.settingsDraft.security[tab] = (state.settingsDraft.security[tab] || []).filter((x) => x.ip !== ip);
+                    try {
+                        await persistSettingsNow({ silent: true });
+                        Components.toast('IP list updated', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to save IP list', 'error');
+                    }
                     renderSection();
                     return;
                 }
 
                 if (action === 'toggle-require-2fa') {
-                    state.settings.security.require_2fa = btn.checked;
-                    state.settingsDraft = clone(state.settings);
-                    saveLocalState();
-                    Components.toast('2FA requirement updated', 'success');
+                    state.settingsDraft.security.require_2fa = btn.checked;
+                    try {
+                        await persistSettingsNow({ silent: true });
+                        Components.toast('2FA requirement saved', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to save 2FA setting', 'error');
+                    }
                     renderSection();
                     return;
                 }
@@ -2584,10 +2623,13 @@ const AdminPanel = (() => {
                 if (action === 'rotate-keys') {
                     const ok = await Components.confirm('Rotate encryption keys', 'This is a sensitive operation. It may take time and cannot be canceled once started.', 'Rotate');
                     if (!ok) return;
-                    state.settings.security.last_key_rotation = nowISO();
-                    state.settingsDraft = clone(state.settings);
-                    saveLocalState();
-                    Components.toast('Key rotation started', 'success');
+                    state.settingsDraft.security.last_key_rotation = nowISO();
+                    try {
+                        await persistSettingsNow({ silent: true });
+                        Components.toast('Key rotation timestamp saved', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to save setting', 'error');
+                    }
                     renderSection();
                     return;
                 }
@@ -2723,15 +2765,11 @@ const AdminPanel = (() => {
                     if (!ok) return;
                     try {
                         await API.admin.restoreBackup(filename);
-                        const data = await fetch('/api/v1/admin/settings', {
-                            headers: { Authorization: `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
-                        }).then((r) => (r.ok ? r.json() : null));
-                        if (data && typeof data === 'object') {
-                            state.settings = deepMerge(clone(DEFAULT_SETTINGS), data);
-                            state.settingsDraft = clone(state.settings);
-                            saveLocalState();
+                        const data = await fetchServerSettings();
+                        if (data) {
+                            applyServerSettings(data);
                         }
-                        Components.toast('Settings restored — review and Save to persist', 'success');
+                        Components.toast('Settings restored from backup', 'success');
                         renderSection();
                     } catch (err) {
                         Components.toast(err?.message || 'Restore failed', 'error');
@@ -2772,26 +2810,12 @@ const AdminPanel = (() => {
                         renderSection();
                         return;
                     }
-                    state.settings = clone(state.settingsDraft);
-                    state.settingsDirty = false;
-                    state.settingsSavedUntil = Date.now() + 3000;
-                    saveLocalState();
                     try {
-                        const res = await fetch('/api/v1/admin/settings', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
-                            body: JSON.stringify(state.settings),
-                        });
-                        if (!res.ok) {
-                            const data = await res.json().catch(() => ({}));
-                            throw new Error(data.error || `Settings backend save failed (${res.status})`);
-                        }
+                        await persistSettingsNow();
                     } catch (e) {
-                        Components.toast(e?.message || 'Settings backend save failed', 'error');
-                        console.warn('Settings backend save failed, using localStorage only', e);
+                        Components.toast(e?.message || 'Settings save failed', 'error');
                         return;
                     }
-                    Components.toast('Settings saved', 'success', { duration: 3000 });
                     renderSection();
                     return;
                 }
