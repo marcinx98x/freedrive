@@ -244,7 +244,7 @@ const App = (() => {
             };
 
             sidebarResizer.addEventListener('pointerdown', (e) => {
-                if (e.button !== 0 || window.matchMedia('(max-width: 1050px)').matches) return;
+                if (e.button !== 0 || window.matchMedia('(max-width: 1100px)').matches) return;
                 e.preventDefault();
                 isResizing = true;
                 pointerId = e.pointerId;
@@ -257,7 +257,7 @@ const App = (() => {
             });
 
             window.addEventListener('resize', () => {
-                if (window.matchMedia('(max-width: 1050px)').matches) return;
+                if (window.matchMedia('(max-width: 1100px)').matches) return;
                 const current = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--fd-sidebar-w'), 10);
                 if (Number.isFinite(current)) {
                     applySidebarWidth(current);
@@ -267,17 +267,25 @@ const App = (() => {
 
         bindSidebarResizer();
 
+        const closeMobileSidebar = () => {
+            sidebar?.classList.remove('open');
+        };
+
         document.getElementById('sidebar-toggle')?.addEventListener('click', (e) => {
             e.stopPropagation();
             sidebar?.classList.toggle('open');
         });
 
+        document.getElementById('sidebar-scrim')?.addEventListener('click', () => {
+            closeMobileSidebar();
+        });
+
         sidebar?.addEventListener('click', (e) => {
-            if (!window.matchMedia('(max-width: 1050px)').matches) return;
+            if (!window.matchMedia('(max-width: 1100px)').matches) return;
             const target = e.target;
             if (!target) return;
             if (!target.closest('.nav-item, .context-item')) return;
-            sidebar.classList.remove('open');
+            closeMobileSidebar();
         });
 
         document.getElementById('topbar-settings')?.addEventListener('click', () => {
@@ -323,10 +331,10 @@ const App = (() => {
         });
 
         document.addEventListener('click', (e) => {
-            if (!window.matchMedia('(max-width: 1050px)').matches) return;
+            if (!window.matchMedia('(max-width: 1100px)').matches) return;
             const target = e.target;
-            if (target && (target.closest('#sidebar') || target.closest('#sidebar-toggle'))) return;
-            sidebar?.classList.remove('open');
+            if (target && (target.closest('#sidebar') || target.closest('#sidebar-toggle') || target.closest('#sidebar-scrim'))) return;
+            closeMobileSidebar();
         });
 
         document.getElementById('new-folder-action')?.addEventListener('click', () => FileManager.createFolder());
