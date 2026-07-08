@@ -53,6 +53,8 @@ What makes it practical:
 - Embedded SQLite database (no external DB required)
 - Local disk storage backend
 - JWT access + refresh-token authentication
+- Optional email-based two-factor authentication (2FA)
+- User profile settings and secure email change flow
 - User and admin workspaces in one application
 - Simple deployment with direct binary run or `systemd`
 
@@ -106,28 +108,38 @@ FreeDrive is ideal for:
 
 ### 4. Versioning Support
 
-- File version records are kept when content is updated
+- File version records are kept when content is updated (can be disabled in admin settings)
+- Configurable `keep_versions` retention per file
 - List versions per file
 - Restore an earlier version
 
-### 5. Sharing Model
+### 5. User Profile & Security
+
+- Profile settings modal (name, avatar photo)
+- Secure email change with confirmation link sent to the new address
+- Security center for per-user email 2FA toggle
+- When admin enables global `require_2fa`, all users must verify a 6-digit code at sign-in
+
+### 6. Sharing Model
 
 - User-to-user sharing data model (`user_shares`)
 - Share-link data model (`share_links`)
 - "Shared with me" and "Shared by me" listing paths
 
-### 6. Storage & Quota Awareness
+### 7. Storage & Quota Awareness
 
 - Per-user quota enforcement during uploads/content updates
+- Server-wide capacity limit (`total_capacity_gb`) enforced from admin settings
 - Used-bytes accounting on delete/restore/permanent-delete paths
 - Disk usage endpoint for runtime visibility
 
-### 7. Activity Logging
+### 8. Activity Logging
 
 - File/folder actions are recorded in activity logs
+- Login and failed-login events with client IP
 - User and admin activity listing endpoints
 
-### 8. Embedded App Delivery
+### 9. Embedded App Delivery
 
 - Frontend is embedded with `go:embed`
 - Single process serves API + SPA + static assets
@@ -142,9 +154,11 @@ Admin routes are role-protected and available under `/api/v1/admin/*`.
 
 - List users
 - Create users
-- Update role/quota/username
+- Update role, quota, username, email, suspension, and per-user 2FA
 - Delete users (with self-delete protection)
 - Trigger password reset email flow
+- Revoke user sessions / revoke all sessions
+- Send 2FA reminder emails to users without 2FA enabled
 
 ### Invite System
 
@@ -159,13 +173,29 @@ Admin routes are role-protected and available under `/api/v1/admin/*`.
 
 - View aggregate stats (`total_users`, `total_used`, `total_quota`)
 - View global activity feed
-- Save/retrieve admin settings
+- Save/retrieve admin settings (persisted to `data/settings.json`)
 - Run backup snapshot for admin settings
+- Scheduled settings backup (daily / weekly / monthly)
+- Storage tools: purge trash, list/purge duplicate blobs, wipe all data (danger zone)
+
+### Security & Access Policy
+
+Admin settings are enforced at runtime (not UI-only):
+
+- **IP blocklist / allowlist** — applied on login, register, refresh, reset-password, and 2FA verification
+- **Require 2FA for all users** — forces email verification at sign-in (no admin exemption)
+- **Versioning** — enable/disable file versioning and set `keep_versions`
+- **Total capacity** — server-wide storage cap blocks uploads and content updates when exceeded
+
+Security panel also surfaces suspicious logins, active sessions, and session revocation.
 
 ### Email / SMTP
 
 - SMTP test endpoint
 - Password reset email dispatch
+- Email change confirmation links
+- Email 2FA sign-in codes
+- 2FA reminder batch emails
 - Configurable sender and TLS behavior
 
 ---
@@ -185,8 +215,10 @@ Runtime flow summary:
 2. Global middleware stack executes (CORS, rate-limit, recover, logger)
 3. Auth middleware validates JWT when required
 4. Handler validates input and calls service/repo
-5. Service applies policy (quota/ownership/versioning/activity)
+5. Service applies policy (quota, ownership, versioning, capacity, activity, IP rules)
 6. Response serialized as JSON
+
+Admin settings are read from `data/settings.json` via the `adminsettings` package and applied consistently across handlers and services.
 
 ---
 
@@ -198,12 +230,20 @@ Runtime flow summary:
 - Refresh token: random token, stored hashed in DB
 - Token rotation on refresh
 - Logout revokes refresh token
+- Optional **email 2FA**: 6-digit code sent via SMTP after password verification
+- Global `require_2fa` admin setting forces 2FA for every account
 
 ### Authorization
 
 - Protected API group requires valid access token
 - Admin routes use explicit admin-role middleware
 - User-scoped operations enforce ownership checks in services
+
+### Network Access Control
+
+- IP blocklist and allowlist from admin settings
+- Enforced on all public auth endpoints (login, register, refresh, reset-password, verify-2fa)
+- Loopback addresses (`127.0.0.1`, `::1`) are always allowed
 
 ### Secrets
 
@@ -425,13 +465,19 @@ Base path: `/api/v1`
 ### Public Auth
 
 - `POST /auth/register`
-- `POST /auth/login`
+- `POST /auth/login` — returns tokens, or `{ requires_2fa, challenge_id, email_masked }` when 2FA is required
+- `POST /auth/verify-2fa` — complete login with `{ challenge_id, code }`
 - `POST /auth/refresh`
 - `POST /auth/logout`
 - `POST /auth/reset-password`
+- `POST /auth/confirm-email` — confirm pending email change from link
 
 ### Protected (Authenticated)
 
+- `GET /me` — current user profile
+- `PATCH /me` — update username, avatar, or `email_2fa_enabled`
+- `POST /me/email-change/request` — start secure email change (confirmation link to new address)
+- `GET /me/email-change/status` — pending email change status
 - `GET /me/storage`
 - `GET /activity`
 - `GET /disk-stats`
@@ -480,15 +526,27 @@ Base path: `/api/v1`
 - `PATCH /admin/users/{id}`
 - `DELETE /admin/users/{id}`
 - `POST /admin/users/{id}/reset-password`
+- `POST /admin/users/{id}/revoke-sessions`
+- `POST /admin/users/send-2fa-reminder`
+- `POST /admin/sessions/revoke-all`
 - `GET /admin/stats`
 - `POST /admin/invites`
 - `POST /admin/invites/resend`
 - `GET /admin/invites`
+- `DELETE /admin/invites/{id}`
 - `GET /admin/activity`
 - `GET /admin/settings`
 - `POST /admin/settings`
 - `POST /admin/test-email`
 - `POST /admin/backup/run`
+- `GET /admin/backup/list`
+- `GET /admin/backup/download/{filename}`
+- `POST /admin/backup/restore`
+- `DELETE /admin/backup/{filename}`
+- `POST /admin/storage/purge-trash`
+- `GET /admin/storage/duplicates`
+- `POST /admin/storage/duplicates/purge`
+- `POST /admin/danger/wipe`
 
 ### Health
 
@@ -504,12 +562,14 @@ cmd/freedrive/
   web/                    # embedded frontend (HTML/CSS/JS)
 
 internal/
+  adminsettings/          # persisted admin policy (IP, 2FA, capacity, backup)
   api/
     router.go             # route graph + middleware wiring
     handlers/             # HTTP handlers
-    middleware/           # auth, CORS, rate limit
+    middleware/           # auth, CORS, rate limit, client IP
   config/                 # env config + secret generation
   domain/                 # core entities
+  email/                  # shared SMTP sender
   repository/             # interfaces
   repository/sqlite/      # sqlite repos + migrations
   service/                # business logic
@@ -588,11 +648,20 @@ curl -s http://localhost:8080/api/v1/health
 - Verify JWT secret consistency across restarts
 - Ensure system clock is correct
 - Confirm refresh token table integrity
+- Check whether your IP is blocked or not on the allowlist (Admin → Security)
+- If 2FA is enabled, confirm SMTP is configured and the code has not expired (10 minutes)
 
 ### Upload returns size/form errors
 
 - Check `FREEDRIVE_MAX_UPLOAD_MB`
 - Ensure reverse proxy request body limits are aligned
+- Check admin `total_capacity_gb` if uploads fail with a capacity error
+
+### Email 2FA unavailable at sign-in
+
+- Admin must configure SMTP under Admin → Settings → Email
+- Global `require_2fa` cannot be satisfied without working outbound email
+- Users can enable personal 2FA from Security in the profile menu
 
 ### SMTP test/reset mail fails
 
