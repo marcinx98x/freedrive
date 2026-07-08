@@ -1243,7 +1243,7 @@ svg {
 .activity-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-bottom: 16px;
 }
 .activity-top h3 { font-family: 'Google Sans', sans-serif; font-size: 18px; font-weight: 400; margin: 0; }

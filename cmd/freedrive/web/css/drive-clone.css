@@ -1550,24 +1550,76 @@ body {
    Home tab — Google Drive "Welcome" layout
    ============================================================ */
 
-/* Hide the topbar search when the Home tab is active */
-.app.home-active .search-wrap {
+/* On Home: hide filter tune button only — search field stays in topbar */
+.app.home-active #search-options {
   display: none !important;
 }
 
-.app:not(.admin-mode) .gd-hero {
-  max-width: 860px;
-  margin: 8px auto 28px;
-  padding: 16px 24px 0;
-  text-align: center;
+/* Live search dropdown (all pages) */
+.app:not(.admin-mode) .search-live-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 55;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(32, 33, 36, 0.28);
+  text-align: left;
 }
 
-.app:not(.admin-mode) .gd-hero-title {
+.app:not(.admin-mode) .search-live-dropdown.hidden {
+  display: none;
+}
+
+.app:not(.admin-mode) .gd-hero,
+.app:not(.admin-mode) .page-hero {
+  margin: 8px 0 16px;
+  padding: 8px 0 0;
+  text-align: left;
+}
+
+.app:not(.admin-mode) .gd-hero-title,
+.app:not(.admin-mode) .page-hero-title {
   font-size: 22px;
   line-height: 28px;
   font-weight: 400;
   color: #202124;
-  margin: 12px 0 24px;
+  margin: 0 0 16px;
+}
+
+.app:not(.admin-mode) .page-hero-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 32px;
+  margin: 0 0 16px;
+}
+
+.app:not(.admin-mode) .page-hero-breadcrumb .breadcrumb-item {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 400;
+  color: #202124;
+  padding: 0;
+  border-radius: 0;
+  text-decoration: none;
+}
+
+.app:not(.admin-mode) .page-hero-breadcrumb a.breadcrumb-item:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.app:not(.admin-mode) .page-hero-breadcrumb .breadcrumb-sep {
+  font-size: 22px;
+  line-height: 28px;
+  color: #202124;
+  margin: 0 6px;
+}
+
+.app.admin-mode #page-header {
+  display: none !important;
 }
 
 /* Centered search box */
@@ -1893,6 +1945,11 @@ body {
   font-size: 14px;
   color: #1a73e8;
   text-decoration: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
 }
 
 .app:not(.admin-mode) .gd-viewmore-link:hover {

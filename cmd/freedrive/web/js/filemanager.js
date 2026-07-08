@@ -28,7 +28,11 @@ const FileManager = (() => {
     const folderStatsPending = new Map();
     const folderNameCache = new Map();
     let homeSuggestedFolders = [];
-    let homeSearchDebounce = null;
+    let homeSuggestedFiles = [];
+    let homeSuggestedVisible = 0;
+    const HOME_SUGGESTED_INITIAL = 6;
+    const HOME_SUGGESTED_STEP = 6;
+    let searchGlobalCloseBound = false;
     const zipCrcTable = (() => {
         const table = new Uint32Array(256);
         for (let n = 0; n < 256; n += 1) {
@@ -147,12 +151,28 @@ const FileManager = (() => {
             searchDebounce = setTimeout(() => {
                 const q = e.target.value.trim();
                 if (!q) {
+                    hideSearchDropdown();
                     refresh();
                     return;
                 }
-                quickSearch(q);
-            }, 260);
+                renderSearchDropdown(q);
+            }, 220);
         });
+
+        const searchInput = document.getElementById('search-input');
+        searchInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const q = searchInput.value.trim();
+                if (q) searchAllResults(q);
+            } else if (e.key === 'Escape') {
+                hideSearchDropdown();
+            }
+        });
+        searchInput?.addEventListener('focus', () => {
+            const q = searchInput.value.trim();
+            if (q) renderSearchDropdown(q);
+        });
+        bindSearchGlobalClose();
 
         document.querySelectorAll('.sort-col').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -594,10 +614,20 @@ const FileManager = (() => {
         }
     }
 
+    function getPageHeaderEl() {
+        return document.getElementById('page-header-content');
+    }
+
     function setBreadcrumbText(text) {
-        const el = document.getElementById('breadcrumb');
+        const el = getPageHeaderEl();
         if (!el) return;
-        el.innerHTML = `<span class="breadcrumb-item">${esc(text)}</span>`;
+        el.innerHTML = `<h1 class="page-hero-title">${esc(text)}</h1>`;
+    }
+
+    function setBreadcrumbHtml(html) {
+        const el = getPageHeaderEl();
+        if (!el) return;
+        el.innerHTML = `<nav class="page-hero-breadcrumb breadcrumb" aria-label="Breadcrumb">${html}</nav>`;
     }
 
     function syncPageActions() {
@@ -650,18 +680,15 @@ const FileManager = (() => {
     }
 
     async function updateComputerBreadcrumb(folderId) {
-        const el = document.getElementById('breadcrumb');
-        if (!el) return;
-
         let html = '<a href="#/computers" class="breadcrumb-item">Computers</a>';
         if (!folderId) {
-            el.innerHTML = html;
+            setBreadcrumbHtml(html);
             return;
         }
 
         const comp = await ensureComputerContext(folderId);
         if (!comp) {
-            el.innerHTML = html;
+            setBreadcrumbHtml(html);
             return;
         }
 
@@ -684,9 +711,9 @@ const FileManager = (() => {
                     }
                 });
             }
-            el.innerHTML = html;
+            setBreadcrumbHtml(html);
         } catch {
-            el.innerHTML = html;
+            setBreadcrumbHtml(html);
         }
     }
 
@@ -706,15 +733,12 @@ const FileManager = (() => {
     }
 
     async function updateBreadcrumb(folderId) {
-        const el = document.getElementById('breadcrumb');
-        if (!el) return;
-        
-        let html = '<a href="#/files" class="breadcrumb-item">My Drive</a>';
         if (!folderId) {
-            el.innerHTML = html;
+            setBreadcrumbText('My Drive');
             return;
         }
 
+        let html = '<a href="#/files" class="breadcrumb-item">My Drive</a>';
         try {
             const data = await API.folders.breadcrumb(folderId);
             const crumbs = data.breadcrumb || [];
@@ -726,9 +750,9 @@ const FileManager = (() => {
                     html += `<a href="#/files/${c.id}" class="breadcrumb-item">${esc(c.name)}</a>`;
                 }
             });
-            el.innerHTML = html;
+            setBreadcrumbHtml(html);
         } catch {
-            el.innerHTML = html;
+            setBreadcrumbHtml(html);
         }
     }
 
@@ -805,6 +829,11 @@ const FileManager = (() => {
         currentFolderId = null;
         clearSelection();
         showHomeView();
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) searchInput.value = '';
+        document.getElementById('search-filter-panel')?.classList.add('hidden');
+        hideSearchDropdown();
+        homeSuggestedVisible = HOME_SUGGESTED_INITIAL;
         showLoading(true);
         try {
             const data = await API.files.list({ sort: 'accessed_at', dir: 'desc', page_size: '60' });
@@ -834,7 +863,7 @@ const FileManager = (() => {
             filteredFiles = flt.files;
 
             renderHomeItems(filteredFiles, homeSuggestedFolders);
-            setBreadcrumbText('Home');
+            setBreadcrumbText('Welcome to FreeDrive');
             await renderHomeWarning();
         } catch {
             Components.toast('Failed to load Home', 'error');
@@ -885,22 +914,12 @@ const FileManager = (() => {
             new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
         const suggestedFolders = (Array.isArray(folders) ? folders : []).slice(0, 6);
 
-        const topCards = suggestedFiles.slice(0, 6);
+        homeSuggestedFiles = suggestedFiles;
+        homeSuggestedVisible = HOME_SUGGESTED_INITIAL;
+        const initialCards = suggestedFiles.slice(0, HOME_SUGGESTED_INITIAL);
+        const showViewMore = suggestedFiles.length > HOME_SUGGESTED_INITIAL;
 
-        let html = `
-            <div class="gd-hero">
-                <h1 class="gd-hero-title">Welcome to FreeDrive</h1>
-                <div class="gd-home-search" id="gd-home-search">
-                    <div class="gd-home-search-box">
-                        <span class="gd-home-search-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></span>
-                        <input type="text" id="home-search-input" placeholder="Search in Drive" autocomplete="off">
-                        <button type="button" class="gd-home-search-clear hidden" id="home-search-clear" aria-label="Clear search"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
-                    </div>
-                    <div class="gd-home-search-dropdown hidden" id="home-search-dropdown"></div>
-                </div>
-                <div class="gd-home-chips" id="gd-home-chips">${homeChipHtml(HOME_CHIP_DEFS)}</div>
-            </div>
-        `;
+        let html = '';
 
         if (suggestedFolders.length > 0) {
             html += `
@@ -909,11 +928,11 @@ const FileManager = (() => {
             `;
         }
 
-        if (topCards.length > 0) {
+        if (initialCards.length > 0) {
             html += `
                 <h3 class="gd-home-section-title collapsible" data-target="gd-home-suggested-cards"><span class="caret">▾</span> Suggested files</h3>
                 <div class="file-grid grid-view" id="gd-home-suggested-cards"></div>
-                <div class="gd-home-viewmore"><a href="#/recent" class="gd-viewmore-link">View more</a></div>
+                ${showViewMore ? '<div class="gd-home-viewmore"><button type="button" class="gd-viewmore-link" id="home-view-more-btn">View more</button></div>' : ''}
             `;
         }
 
@@ -946,11 +965,12 @@ const FileManager = (() => {
             });
         }
 
-        if (topCards.length > 0) {
+        if (initialCards.length > 0) {
             const gridContainer = document.getElementById('gd-home-suggested-cards');
-            topCards.forEach(f => {
+            initialCards.forEach(f => {
                 gridContainer.appendChild(createGridCard(f, 'file', false));
             });
+            document.getElementById('home-view-more-btn')?.addEventListener('click', expandHomeSuggestedFiles);
         }
 
         homePage.querySelectorAll('.gd-home-section-title.collapsible').forEach((header) => {
@@ -964,13 +984,22 @@ const FileManager = (() => {
             });
         });
 
-        wireHomeSearchAndChips();
         clearSelection();
     }
 
-    function hideHomeDropdown() {
-        const dd = document.getElementById('home-search-dropdown');
-        dd?.classList.add('hidden');
+    function expandHomeSuggestedFiles() {
+        const grid = document.getElementById('gd-home-suggested-cards');
+        if (!grid) return;
+        const next = homeSuggestedFiles.slice(homeSuggestedVisible, homeSuggestedVisible + HOME_SUGGESTED_STEP);
+        next.forEach((f) => grid.appendChild(createGridCard(f, 'file', false)));
+        homeSuggestedVisible += next.length;
+        if (homeSuggestedVisible >= homeSuggestedFiles.length) {
+            document.getElementById('home-view-more-btn')?.closest('.gd-home-viewmore')?.classList.add('hidden');
+        }
+    }
+
+    function hideSearchDropdown() {
+        document.getElementById('search-live-dropdown')?.classList.add('hidden');
         document.querySelectorAll('.gd-chip-menu').forEach(m => m.classList.add('hidden'));
         document.querySelectorAll('.gd-chip.open').forEach(c => c.classList.remove('open'));
     }
@@ -1017,70 +1046,15 @@ const FileManager = (() => {
         });
     }
 
-    let homeGlobalCloseBound = false;
-    function bindHomeGlobalClose() {
-        if (homeGlobalCloseBound) return;
-        homeGlobalCloseBound = true;
+    function bindSearchGlobalClose() {
+        if (searchGlobalCloseBound) return;
+        searchGlobalCloseBound = true;
         document.addEventListener('click', (e) => {
-            const search = document.getElementById('gd-home-search');
-            const chips = document.getElementById('gd-home-chips');
-            const withinSearch = search && search.contains(e.target);
-            const withinChips = chips && chips.contains(e.target);
-            if (!withinSearch) {
-                document.getElementById('home-search-dropdown')?.classList.add('hidden');
-            }
-            if (!withinSearch && !withinChips) {
-                document.querySelectorAll('.gd-chip-menu').forEach(m => m.classList.add('hidden'));
-                document.querySelectorAll('.gd-chip.open').forEach(c => c.classList.remove('open'));
+            const wrap = document.querySelector('.search-wrap');
+            if (wrap && !wrap.contains(e.target)) {
+                hideSearchDropdown();
             }
         });
-    }
-
-    function wireHomeSearchAndChips() {
-        const input = document.getElementById('home-search-input');
-        const clearBtn = document.getElementById('home-search-clear');
-        const chipsWrap = document.getElementById('gd-home-chips');
-
-        if (chipsWrap) {
-            chipsWrap.querySelectorAll('.gd-chip').forEach((chip) => {
-                bindChip(chip, (value) => {
-                    setFilterSelect(chip.dataset.select, value, chip.dataset.any);
-                    syncChipsForSelect(chip.dataset.select, value);
-                    hideHomeDropdown();
-                    applyAdvancedSearch();
-                });
-            });
-        }
-
-        if (input) {
-            input.addEventListener('input', () => {
-                const q = input.value.trim();
-                clearBtn?.classList.toggle('hidden', !q);
-                clearTimeout(homeSearchDebounce);
-                if (!q) { hideHomeDropdown(); return; }
-                homeSearchDebounce = setTimeout(() => renderHomeSearchDropdown(q), 220);
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    const q = input.value.trim();
-                    if (q) homeAllResults(q);
-                } else if (e.key === 'Escape') {
-                    hideHomeDropdown();
-                }
-            });
-            input.addEventListener('focus', () => {
-                const q = input.value.trim();
-                if (q) renderHomeSearchDropdown(q);
-            });
-        }
-
-        clearBtn?.addEventListener('click', () => {
-            if (input) { input.value = ''; input.focus(); }
-            clearBtn.classList.add('hidden');
-            hideHomeDropdown();
-        });
-
-        bindHomeGlobalClose();
     }
 
     function highlightMatch(name, qLower) {
@@ -1150,11 +1124,11 @@ const FileManager = (() => {
         return out;
     }
 
-    async function renderHomeSearchDropdown(query) {
-        const dropdown = document.getElementById('home-search-dropdown');
+    async function renderSearchDropdown(query) {
+        const dropdown = document.getElementById('search-live-dropdown');
         if (!dropdown) return;
         const q = String(query || '').trim();
-        if (!q) { hideHomeDropdown(); return; }
+        if (!q) { hideSearchDropdown(); return; }
 
         dropdown.classList.remove('hidden');
 
@@ -1204,39 +1178,37 @@ const FileManager = (() => {
             bindChip(chip, (value) => {
                 setFilterSelect(chip.dataset.select, value, chip.dataset.any);
                 syncChipsForSelect(chip.dataset.select, value);
-                renderHomeSearchDropdown(q);
+                renderSearchDropdown(q);
             });
         });
 
         dropdown.querySelectorAll('.gd-sr-row').forEach((row) => {
             row.addEventListener('click', () => {
                 const id = row.dataset.id;
-                if (row.dataset.type === 'folder') { window.location.hash = `#/files/${id}`; hideHomeDropdown(); return; }
+                if (row.dataset.type === 'folder') { window.location.hash = `#/files/${id}`; hideSearchDropdown(); return; }
                 const f = top.find((x) => x.id === id);
                 if (f) openFile(f);
-                hideHomeDropdown();
+                hideSearchDropdown();
             });
         });
 
-        dropdown.querySelector('.gd-sr-advanced')?.addEventListener('click', (e) => { e.preventDefault(); homeOpenAdvancedSearch(q); });
-        dropdown.querySelector('.gd-sr-all')?.addEventListener('click', (e) => { e.preventDefault(); homeAllResults(q); });
+        dropdown.querySelector('.gd-sr-advanced')?.addEventListener('click', (e) => { e.preventDefault(); openAdvancedSearchPanel(q); });
+        dropdown.querySelector('.gd-sr-all')?.addEventListener('click', (e) => { e.preventDefault(); searchAllResults(q); });
 
         resolveUnknownLocations(top, dropdown);
     }
 
-    function homeAllResults(query) {
-        hideHomeDropdown();
+    function searchAllResults(query) {
+        hideSearchDropdown();
         const topInput = document.getElementById('search-input');
         if (topInput) topInput.value = query;
         quickSearch(query);
     }
 
-    function homeOpenAdvancedSearch(query) {
-        hideHomeDropdown();
+    function openAdvancedSearchPanel(query) {
+        hideSearchDropdown();
         const topInput = document.getElementById('search-input');
         if (topInput) topInput.value = query;
-        // Reveal the topbar search + advanced filter panel (hidden on Home).
-        document.getElementById('app')?.classList.remove('home-active');
         document.getElementById('search-filter-panel')?.classList.remove('hidden');
         topInput?.focus();
     }
@@ -1483,6 +1455,7 @@ const FileManager = (() => {
     }
 
     async function quickSearch(query) {
+        hideSearchDropdown();
         const q = String(query || '').trim().toLowerCase();
 
         // In folder view, search only within the currently opened folder.
@@ -1515,9 +1488,8 @@ const FileManager = (() => {
     }
 
     async function applyAdvancedSearch() {
-        const query = (document.getElementById('search-input')?.value?.trim()
-            || document.getElementById('home-search-input')?.value?.trim()
-            || '');
+        hideSearchDropdown();
+        const query = (document.getElementById('search-input')?.value?.trim() || '');
         const type = document.getElementById('filter-type')?.value || '';
         const owner = document.getElementById('filter-owner')?.value || 'Anyone';
         const modified = document.getElementById('filter-modified')?.value || 'Any time';
@@ -6030,6 +6002,7 @@ const FileManager = (() => {
         loadStoragePage,
         loadAdminPanel,
         applyAdvancedSearch,
+        hideSearchDropdown,
         bulkShare,
         bulkDownload,
         bulkMove,

@@ -145,6 +145,7 @@
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
                         </button>
                     </div>
+                    <div class="search-live-dropdown hidden" id="search-live-dropdown"></div>
                     <div class="search-filter-panel hidden" id="search-filter-panel">
                         <div class="filter-grid">
                             <label class="filter-chip">Type
@@ -247,6 +248,10 @@
                     </div>
                 </div>
 
+                <div class="page-hero" id="page-header">
+                    <div id="page-header-content" class="page-hero-content"></div>
+                </div>
+
                 <div class="md3-chip-bar hidden" id="md3-chip-bar"></div>
 
                 <div class="selection-bar hidden" id="selection-bar">
@@ -273,7 +278,6 @@
 
                 <div class="activity-page hidden" id="activity-page">
                     <div class="activity-top">
-                        <h3>Drive Activity</h3>
                         <select id="activity-filter"><option value="all">All activity</option><option value="me">Only me</option><option value="others">Only others</option></select>
                     </div>
                     <div id="activity-list"></div>

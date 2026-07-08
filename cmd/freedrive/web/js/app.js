@@ -398,6 +398,7 @@ const App = (() => {
             e.stopPropagation();
             newDropdown?.classList.add('hidden');
             helpDropdown?.classList.add('hidden');
+            FileManager.hideSearchDropdown();
             searchFilterPanel?.classList.toggle('hidden');
         });
 
