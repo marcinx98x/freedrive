@@ -110,6 +110,7 @@ const AdminPanel = (() => {
         settingsErrors: {},
         settingsSavedUntil: 0,
         invites: [],
+        backups: [],
         initialized: false,
         loading: false,
     };
@@ -392,13 +393,14 @@ const AdminPanel = (() => {
     }
 
     async function hydrateData() {
-        const [statsRes, usersRes, diskRes, activityRes, filesRes, invitesRes] = await Promise.all([
+        const [statsRes, usersRes, diskRes, activityRes, filesRes, invitesRes, backupsRes] = await Promise.all([
             API.admin.stats().catch(() => ({})),
             API.admin.users().catch(() => ({ users: [] })),
             API.diskStats().catch(() => ({})),
             API.admin.activity(1, 300).catch(() => ({ activities: [] })),
             API.files.list({ page_size: '800' }).catch(() => ({ files: [] })),
             API.admin.invites().catch(() => ({ invites: [] })),
+            API.admin.listBackups().catch(() => ({ backups: [] })),
         ]);
 
         state.stats = statsRes.stats || statsRes || {};
@@ -407,6 +409,7 @@ const AdminPanel = (() => {
         state.activities = Array.isArray(activityRes.activities) ? activityRes.activities : [];
         state.files = Array.isArray(filesRes.files) ? filesRes.files : [];
         state.invites = (Array.isArray(invitesRes.invites) ? invitesRes.invites : []).map(mapInviteRecord);
+        state.backups = Array.isArray(backupsRes.backups) ? backupsRes.backups : [];
 
         ensureUserMeta();
         saveLocalState();
@@ -615,8 +618,8 @@ const AdminPanel = (() => {
                         </div>
                         <div class="gd-metric-content">
                             <span class="gd-metric-label">Bandwidth</span>
-                            <span class="gd-metric-value">${Components.formatSize(users.reduce((sum, u) => sum + asNumber(state.userMeta?.[u.id]?.bandwidth_month, 0), 0))}</span>
-                            <span class="gd-metric-sub">this month</span>
+                            <span class="gd-metric-value">—</span>
+                            <span class="gd-metric-sub">Not tracked yet</span>
                         </div>
                     </div>
                 </div>
@@ -992,7 +995,7 @@ const AdminPanel = (() => {
                             </div>
                             <div class="gd-cleanup-item">
                                 <span>Never opened (90+ days)</span>
-                                <button class="gd-btn-outline" data-admin-action="cleanup-notify">Notify</button>
+                                <button class="gd-btn-outline" disabled title="Not available yet">Notify</button>
                             </div>
                         </div>
                     </div>
@@ -1173,7 +1176,7 @@ const AdminPanel = (() => {
                         <div class="gd-input-group">
                             <label>Action type</label>
                             <select class="gd-input" id="admin-activity-action">
-                                ${['all', 'upload', 'download', 'delete', 'share', 'login', 'failed login'].map((a) => `<option value="${a}" ${state.activityFilters.action === a ? 'selected' : ''}>${a[0].toUpperCase()}${a.slice(1)}</option>`).join('')}
+                                ${['all', 'upload', 'download', 'delete', 'share', 'login'].map((a) => `<option value="${a}" ${state.activityFilters.action === a ? 'selected' : ''}>${a[0].toUpperCase()}${a.slice(1)}</option>`).join('')}
                             </select>
                         </div>
                         <div class="gd-input-group">
@@ -1370,7 +1373,7 @@ const AdminPanel = (() => {
                                                 <div style="display:flex; align-items:center; gap:8px;">
                                                     <span class="gd-avatar" style="width:24px; height:24px; font-size:10px; background-color:hsl(${((s.user || '').length * 137) % 360},60%,50%)">${esc(initials(s.user))}</span>
                                                     ${esc(s.user)}
-                                                    ${s.is_current ? '<span style="font-size:10px; font-weight:600; padding:2px 6px; background:#CEEAD6; color:#188038; border-radius:10px;">This device</span>' : ''}
+                                                    ${s.is_me ? '<span style="font-size:10px; font-weight:600; padding:2px 6px; background:#CEEAD6; color:#188038; border-radius:10px;">This device</span>' : ''}
                                                 </div>
                                             </td>
                                             <td>${esc(s.device)}</td>
@@ -1527,9 +1530,11 @@ const AdminPanel = (() => {
 
     function renderBackupTab() {
         const b = state.settingsDraft.backup;
+        const backups = state.backups || [];
         return `
+            <p class="settings-hint" style="margin:0 0 12px; color:#5f6368; font-size:13px;">Settings backup — exports admin settings JSON only (not database or file blobs).</p>
             <div class="backup-top-row">
-                <button class="gd-btn-primary" data-admin-action="run-backup-now">Create backup now</button>
+                <button class="gd-btn-primary" data-admin-action="run-backup-now">Create settings backup</button>
                 <div class="backup-progress"><span id="backup-progress-fill"></span></div>
             </div>
             <div class="backup-form-grid">
@@ -1555,15 +1560,15 @@ const AdminPanel = (() => {
                 <table class="admin-table">
                     <thead><tr><th>Date</th><th>Size</th><th></th></tr></thead>
                     <tbody>
-                        ${(b.history || []).map((h, idx) => `
+                        ${backups.map((h) => `
                             <tr>
-                                <td>${Components.formatAbsoluteDate(h.at)}</td>
-                                <td>${h.size}</td>
+                                <td>${Components.formatAbsoluteDate(h.created_at)}</td>
+                                <td>${Components.formatSize(h.size)}</td>
                                 <td>
                                     <div class="backup-row-actions">
-                                        <button class="gd-btn-outline" data-admin-action="backup-download" data-backup-idx="${idx}">Download</button>
-                                        <button class="gd-btn-outline" data-admin-action="backup-restore" data-backup-idx="${idx}">Restore</button>
-                                        <button class="danger-outline-btn" data-admin-action="backup-delete" data-backup-idx="${idx}">Delete</button>
+                                        <button class="gd-btn-outline" data-admin-action="backup-download" data-backup-filename="${esc(h.filename)}">Download</button>
+                                        <button class="gd-btn-outline" data-admin-action="backup-restore" data-backup-filename="${esc(h.filename)}">Restore settings</button>
+                                        <button class="danger-outline-btn" data-admin-action="backup-delete" data-backup-filename="${esc(h.filename)}">Delete</button>
                                     </div>
                                 </td>
                             </tr>
@@ -1846,11 +1851,13 @@ const AdminPanel = (() => {
         if (action === 'change-role') {
             const role = await Components.prompt('Change role', String(user.role || 'user'));
             if (!role) return;
-            await API.admin.updateUser(userId, { role: role.toLowerCase() }).catch((err) => {
-                Components.toast(err.message, 'error');
-            });
-            Components.toast('Role updated', 'success');
-            await load(state.section);
+            try {
+                await API.admin.updateUser(userId, { role: role.toLowerCase() });
+                Components.toast('Role updated', 'success');
+                await load(state.section);
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to update role', 'error');
+            }
             return;
         }
 
@@ -1858,11 +1865,13 @@ const AdminPanel = (() => {
             const gb = await promptQuota('Adjust quota', Math.max(1, Math.round(asNumber(user.quota_bytes, 0) / (1024 ** 3))));
             if (!gb) return;
             const quota = Math.max(1, asNumber(gb, 10));
-            await API.admin.updateUser(userId, { quota_bytes: Math.round(quota * (1024 ** 3)) }).catch((err) => {
-                Components.toast(err.message, 'error');
-            });
-            Components.toast('Quota updated', 'success');
-            await load(state.section);
+            try {
+                await API.admin.updateUser(userId, { quota_bytes: Math.round(quota * (1024 ** 3)) });
+                Components.toast('Quota updated', 'success');
+                await load(state.section);
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to update quota', 'error');
+            }
             return;
         }
 
@@ -2238,13 +2247,13 @@ const AdminPanel = (() => {
                     }
                     await API.admin.updateUser(userId, {
                         username: name,
+                        email,
                         role,
                         quota_bytes: Math.round(quotaGb * (1024 ** 3)),
                     }).catch((err) => {
                         Components.toast(err.message, 'error');
                         throw err;
                     });
-                    user.email = email;
                     Components.toast('User updated', 'success');
                     await load('users');
                     state.drawerUserId = userId;
@@ -2347,17 +2356,30 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'cleanup-trash') {
-                    const ok = await Components.confirm('Empty all trash', 'Deleted data cannot be recovered.', 'Empty');
+                    const ok = await Components.confirm('Empty trash older than 30 days', 'Trashed files older than 30 days will be permanently deleted.', 'Empty');
                     if (!ok) return;
-                    Components.toast('Trash cleanup started', 'info');
+                    try {
+                        const res = await API.admin.purgeTrash(30);
+                        Components.toast(`Purged ${res.removed_files || 0} file(s)`, 'success');
+                        await load('storage');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Trash cleanup failed', 'error');
+                    }
                     return;
                 }
                 if (action === 'cleanup-duplicates') {
-                    Components.toast('Duplicate review queued', 'info');
+                    const ok = await Components.confirm('Remove duplicate files', 'In each duplicate group the newest copy is kept; older copies are permanently deleted.', 'Remove');
+                    if (!ok) return;
+                    try {
+                        const res = await API.admin.purgeDuplicates();
+                        Components.toast(`Removed ${res.removed_files || 0} duplicate file(s)`, 'success');
+                        await load('storage');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Duplicate cleanup failed', 'error');
+                    }
                     return;
                 }
                 if (action === 'cleanup-notify') {
-                    Components.toast('Owners notified for inactive files', 'success');
                     return;
                 }
 
@@ -2488,15 +2510,17 @@ const AdminPanel = (() => {
                     return;
                 }
 
-                if (action === 'toggle-ip-block') {
+                if (action === 'toggle-ip-block' || action === 'toggle-block-ip') {
                     const ip = btn.getAttribute('data-ip');
                     if (!ip) return;
-                    const blocked = btn.getAttribute('data-blocked') === '1';
+                    const blocked = btn.type === 'checkbox' ? btn.checked : btn.getAttribute('data-blocked') === '1';
                     const list = state.settings.security.blocklist || [];
                     if (blocked) {
-                        state.settings.security.blocklist = list.filter((x) => x.ip !== ip);
+                        if (!list.some((x) => x.ip === ip)) {
+                            state.settings.security.blocklist.push({ ip, by: getCurrentUser().username || 'admin', at: nowISO(), note: 'Blocked from security panel' });
+                        }
                     } else {
-                        state.settings.security.blocklist.push({ ip, by: getCurrentUser().username || 'admin', at: nowISO(), note: 'Auto from failed login' });
+                        state.settings.security.blocklist = list.filter((x) => x.ip !== ip);
                     }
                     state.settingsDraft = clone(state.settings);
                     saveLocalState();
@@ -2670,14 +2694,9 @@ const AdminPanel = (() => {
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(data.error || 'Backup failed');
                         if (progress) progress.style.width = '100%';
-                        if (!Array.isArray(state.settingsDraft.backup.history)) state.settingsDraft.backup.history = [];
-                        state.settingsDraft.backup.history.unshift({
-                            at: data.at || new Date().toISOString(),
-                            size: data.size || '—',
-                            filename: data.filename || 'backup.json',
-                        });
-                        state.settingsDirty = true;
-                        Components.toast('Backup created successfully', 'success');
+                        const list = await API.admin.listBackups().catch(() => ({ backups: [] }));
+                        state.backups = Array.isArray(list.backups) ? list.backups : [];
+                        Components.toast('Settings backup created', 'success');
                         renderSection();
                     } catch (err) {
                         if (progress) progress.style.width = '0%';
@@ -2687,21 +2706,51 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'backup-download') {
-                    Components.toast('Backup download started', 'info');
+                    const filename = btn.getAttribute('data-backup-filename');
+                    if (!filename) return;
+                    try {
+                        await API.admin.downloadBackup(filename);
+                        Components.toast('Download started', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Download failed', 'error');
+                    }
                     return;
                 }
                 if (action === 'backup-restore') {
-                    const ok = await Components.confirm('Restore backup', 'This will overwrite current data. Continue?', 'Restore');
+                    const filename = btn.getAttribute('data-backup-filename');
+                    if (!filename) return;
+                    const ok = await Components.confirm('Restore settings backup', 'This will merge saved admin settings into the server. Continue?', 'Restore');
                     if (!ok) return;
-                    Components.toast('Backup restore started', 'warning');
+                    try {
+                        await API.admin.restoreBackup(filename);
+                        const data = await fetch('/api/v1/admin/settings', {
+                            headers: { Authorization: `Bearer ${localStorage.getItem('fd_access_token') || ''}` },
+                        }).then((r) => (r.ok ? r.json() : null));
+                        if (data && typeof data === 'object') {
+                            state.settings = deepMerge(clone(DEFAULT_SETTINGS), data);
+                            state.settingsDraft = clone(state.settings);
+                            saveLocalState();
+                        }
+                        Components.toast('Settings restored — review and Save to persist', 'success');
+                        renderSection();
+                    } catch (err) {
+                        Components.toast(err?.message || 'Restore failed', 'error');
+                    }
                     return;
                 }
                 if (action === 'backup-delete') {
-                    const idx = asNumber(btn.getAttribute('data-backup-idx'), -1);
-                    if (idx < 0) return;
-                    state.settingsDraft.backup.history.splice(idx, 1);
-                    state.settingsDirty = true;
-                    renderSection();
+                    const filename = btn.getAttribute('data-backup-filename');
+                    if (!filename) return;
+                    const ok = await Components.confirm('Delete backup', `Delete ${filename}?`, 'Delete');
+                    if (!ok) return;
+                    try {
+                        await API.admin.deleteBackup(filename);
+                        state.backups = state.backups.filter((b) => b.filename !== filename);
+                        Components.toast('Backup deleted', 'success');
+                        renderSection();
+                    } catch (err) {
+                        Components.toast(err?.message || 'Delete failed', 'error');
+                    }
                     return;
                 }
 
@@ -2750,14 +2799,25 @@ const AdminPanel = (() => {
                 if (action === 'danger-clear-trash') {
                     const ok = await Components.confirm('Clear all trash', 'This cannot be undone and all trashed files will be permanently deleted.', 'Clear');
                     if (!ok) return;
-                    Components.toast('Trash cleared', 'success');
+                    try {
+                        const res = await API.admin.purgeTrash(0);
+                        Components.toast(`Cleared ${res.removed_files || 0} trashed file(s)`, 'success');
+                        await load('storage');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to clear trash', 'error');
+                    }
                     return;
                 }
 
                 if (action === 'danger-reset-sessions') {
                     const ok = await Components.confirm('Reset all user sessions', 'All users will be logged out immediately.', 'Reset');
                     if (!ok) return;
-                    Components.toast('All user sessions reset', 'success');
+                    try {
+                        await API.admin.revokeAllSessions();
+                        Components.toast('All user sessions reset', 'success');
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to reset sessions', 'error');
+                    }
                     return;
                 }
 
@@ -2767,9 +2827,16 @@ const AdminPanel = (() => {
                         Components.toast('Type WIPE to proceed', 'warning');
                         return;
                     }
-                    const finalOk = await Components.confirm('Final confirmation', 'All files and database data will be irreversibly destroyed.', 'Wipe');
+                    const finalOk = await Components.confirm('Final confirmation', 'All files and user data will be irreversibly destroyed. Your admin account and settings are kept.', 'Wipe');
                     if (!finalOk) return;
-                    Components.toast('Wipe queued. This operation is irreversible.', 'error');
+                    try {
+                        await API.admin.wipeAllData();
+                        Components.toast('All data wiped', 'success');
+                        history.pushState(null, '', '/#/files');
+                        window.dispatchEvent(new Event('popstate'));
+                    } catch (err) {
+                        Components.toast(err?.message || 'Wipe failed', 'error');
+                    }
                     return;
                 }
             });

@@ -30,6 +30,8 @@ type UserRepository interface {
 	IncrementInviteUsage(ctx context.Context, id string) error
 	ListInvites(ctx context.Context) ([]domain.InviteLink, error)
 	DeleteInvite(ctx context.Context, id string) error
+	DeleteAllInvites(ctx context.Context) error
+	WipeAllDataExcept(ctx context.Context, keepUserID string) error
 }
 
 // FileRepository defines data access for files.
@@ -45,6 +47,10 @@ type FileRepository interface {
 	RestoreFromTrash(ctx context.Context, id string) error
 	GetTrashedFiles(ctx context.Context, ownerID string) ([]domain.File, error)
 	PurgeOldTrashed(ctx context.Context, days int) ([]domain.File, error)
+	PurgeAllTrashed(ctx context.Context) ([]domain.File, error)
+	ListDuplicateGroups(ctx context.Context) ([]domain.DuplicateGroup, error)
+	ListDuplicateFilesToRemove(ctx context.Context) ([]domain.File, error)
+	ListAllBlobPaths(ctx context.Context) ([]string, error)
 	CountByOwner(ctx context.Context, ownerID string) (int, error)
 	SumEncryptedSizeByOwner(ctx context.Context, ownerID string) (int64, error)
 	ListFileMetaByOwner(ctx context.Context, ownerID string) ([]domain.FileMeta, error)
@@ -109,4 +115,5 @@ type ActivityRepository interface {
 	Create(ctx context.Context, log *domain.ActivityLog) error
 	List(ctx context.Context, userID string, page, pageSize int) ([]domain.ActivityLog, int, error)
 	ListAll(ctx context.Context, page, pageSize int) ([]domain.ActivityLog, int, error)
+	DeleteAll(ctx context.Context) error
 }

@@ -349,6 +349,103 @@ func (r *FileRepo) PurgeOldTrashed(ctx context.Context, days int) ([]domain.File
 	return files, nil
 }
 
+func (r *FileRepo) PurgeAllTrashed(ctx context.Context) ([]domain.File, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, blob_path, owner_id, encrypted_size FROM files WHERE is_trashed = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.BlobPath, &f.OwnerID, &f.EncryptedSize); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+
+	if len(files) > 0 {
+		_, err = r.writer.ExecContext(ctx, "DELETE FROM files WHERE is_trashed = 1")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
+func (r *FileRepo) ListDuplicateGroups(ctx context.Context) ([]domain.DuplicateGroup, error) {
+	rows, err := r.reader.QueryContext(ctx, `
+		SELECT owner_id, name, encrypted_size, COUNT(*) AS cnt
+		FROM files
+		WHERE is_trashed = 0
+		GROUP BY owner_id, name, encrypted_size
+		HAVING cnt > 1
+		ORDER BY cnt DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []domain.DuplicateGroup
+	for rows.Next() {
+		var g domain.DuplicateGroup
+		if err := rows.Scan(&g.OwnerID, &g.Name, &g.EncryptedSize, &g.Count); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
+func (r *FileRepo) ListDuplicateFilesToRemove(ctx context.Context) ([]domain.File, error) {
+	rows, err := r.reader.QueryContext(ctx, `
+		SELECT id, name, encrypted_size, owner_id, blob_path FROM (
+			SELECT id, name, encrypted_size, owner_id, blob_path,
+			       ROW_NUMBER() OVER (PARTITION BY owner_id, name, encrypted_size ORDER BY updated_at DESC) AS rn
+			FROM files
+			WHERE is_trashed = 0
+		) WHERE rn > 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.Name, &f.EncryptedSize, &f.OwnerID, &f.BlobPath); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
+func (r *FileRepo) ListAllBlobPaths(ctx context.Context) ([]string, error) {
+	rows, err := r.reader.QueryContext(ctx, `
+		SELECT blob_path FROM files
+		UNION ALL
+		SELECT blob_path FROM file_versions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, rows.Err()
+}
+
 func (r *FileRepo) CountByOwner(ctx context.Context, ownerID string) (int, error) {
 	var count int
 	err := r.reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM files WHERE owner_id = ?", ownerID).Scan(&count)

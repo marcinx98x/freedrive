@@ -91,6 +91,7 @@ func main() {
 		approvalRepo,
 		diskStorage,
 		cfg.MaxUploadBytes,
+		cfg.DataDir,
 	)
 
 	// Start server

@@ -22,6 +22,7 @@ import (
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
+	"github.com/abdullaabdullazade/freedrive/internal/storage"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -75,15 +76,32 @@ type AdminHandler struct {
 	fileRepo     repository.FileRepository
 	activityRepo repository.ActivityRepository
 	authService  *service.AuthService
+	diskStorage  *storage.DiskStorage
+	dataDir      string
 }
 
 // NewAdminHandler creates a new admin handler.
-func NewAdminHandler(userRepo repository.UserRepository, fileRepo repository.FileRepository, activityRepo repository.ActivityRepository, authService *service.AuthService) *AdminHandler {
+func NewAdminHandler(
+	userRepo repository.UserRepository,
+	fileRepo repository.FileRepository,
+	activityRepo repository.ActivityRepository,
+	authService *service.AuthService,
+	diskStorage *storage.DiskStorage,
+	dataDir string,
+) *AdminHandler {
+	if dataDir != "" {
+		adminSettingsMu.Lock()
+		settingsFile = filepath.Join(dataDir, "settings.json")
+		adminSettingsMu.Unlock()
+		loadSettings()
+	}
 	return &AdminHandler{
 		userRepo:     userRepo,
 		fileRepo:     fileRepo,
 		activityRepo: activityRepo,
 		authService:  authService,
+		diskStorage:  diskStorage,
+		dataDir:      dataDir,
 	}
 }
 
@@ -139,6 +157,7 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		Role       *string `json:"role"`
 		QuotaBytes *int64  `json:"quota_bytes"`
 		Username   *string `json:"username"`
+		Email      *string `json:"email"`
 		Suspended  *bool   `json:"suspended"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -146,6 +165,23 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Email != nil {
+		email := strings.TrimSpace(*req.Email)
+		if email == "" || !strings.Contains(email, "@") {
+			writeError(w, "invalid email address", http.StatusBadRequest)
+			return
+		}
+		existing, err := h.userRepo.GetByEmail(r.Context(), email)
+		if err != nil {
+			writeError(w, "failed to validate email", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil && existing.ID != userID {
+			writeError(w, "email already in use", http.StatusConflict)
+			return
+		}
+		user.Email = email
+	}
 	if req.Role != nil {
 		user.Role = domain.Role(*req.Role)
 	}

@@ -256,3 +256,44 @@ func (r *UserRepo) DeleteInvite(ctx context.Context, id string) error {
 	_, err := r.writer.ExecContext(ctx, "DELETE FROM invite_links WHERE id = ?", id)
 	return err
 }
+
+func (r *UserRepo) DeleteAllInvites(ctx context.Context) error {
+	_, err := r.writer.ExecContext(ctx, "DELETE FROM invite_links")
+	return err
+}
+
+func (r *UserRepo) WipeAllDataExcept(ctx context.Context, keepUserID string) error {
+	tx, err := r.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin wipe tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		"DELETE FROM file_approvals",
+		"DELETE FROM share_links",
+		"DELETE FROM user_shares",
+		"DELETE FROM comments",
+		"DELETE FROM file_versions",
+		"DELETE FROM files",
+		"DELETE FROM folders",
+		"DELETE FROM computers",
+		"DELETE FROM notifications",
+		"DELETE FROM activity_log",
+		"DELETE FROM refresh_tokens",
+		"DELETE FROM invite_links",
+	}
+	for _, q := range stmts {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("wipe: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE users SET used_bytes = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", keepUserID); err != nil {
+		return fmt.Errorf("wipe admin quota: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id != ?", keepUserID); err != nil {
+		return fmt.Errorf("wipe users: %w", err)
+	}
+	return tx.Commit()
+}

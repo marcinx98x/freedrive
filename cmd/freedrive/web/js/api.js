@@ -213,6 +213,31 @@ const API = (() => {
         invites: () => request('GET', '/admin/invites'),
         deleteInvite: (id) => request('DELETE', `/admin/invites/${id}`),
         activity: (page = 1, pageSize = 50) => request('GET', `/admin/activity?page=${page}&page_size=${pageSize}`),
+        purgeTrash: (days = 30) => request('POST', `/admin/storage/purge-trash?days=${encodeURIComponent(days)}`),
+        listDuplicates: () => request('GET', '/admin/storage/duplicates'),
+        purgeDuplicates: () => request('POST', '/admin/storage/duplicates/purge'),
+        listBackups: () => request('GET', '/admin/backup/list'),
+        downloadBackup: async (filename) => {
+            const res = await fetch(`${BASE}/admin/backup/download/${encodeURIComponent(filename)}`, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || `Download failed (${res.status})`);
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        },
+        restoreBackup: (filename) => request('POST', '/admin/backup/restore', { filename }),
+        deleteBackup: (filename) => request('DELETE', `/admin/backup/${encodeURIComponent(filename)}`),
+        wipeAllData: () => request('POST', '/admin/danger/wipe', { confirm: 'WIPE' }),
     };
 
     const activity = {

@@ -33,6 +33,7 @@ func NewRouter(
 	approvalRepo *sqlite.ApprovalRepo,
 	diskStorage *storage.DiskStorage,
 	maxUpload int64,
+	dataDir string,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -53,7 +54,7 @@ func NewRouter(
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
 	computerHandler := handlers.NewComputerHandler(computerService)
-	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService)
+	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, activityRepo, authService, diskStorage, dataDir)
 	userHandler := handlers.NewUserHandler(userRepo, fileRepo)
 	searchHandler := handlers.NewSearchHandler(searchRepo)
 	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo)
@@ -149,6 +150,14 @@ func NewRouter(
 				r.Post("/settings", adminHandler.SaveSettings)
 				r.Post("/test-email", adminHandler.TestEmail)
 				r.Post("/backup/run", adminHandler.RunBackupNow)
+				r.Get("/backup/list", adminHandler.ListBackups)
+				r.Get("/backup/download/{filename}", adminHandler.DownloadBackup)
+				r.Post("/backup/restore", adminHandler.RestoreBackup)
+				r.Delete("/backup/{filename}", adminHandler.DeleteBackup)
+				r.Post("/storage/purge-trash", adminHandler.PurgeTrash)
+				r.Get("/storage/duplicates", adminHandler.ListDuplicates)
+				r.Post("/storage/duplicates/purge", adminHandler.PurgeDuplicates)
+				r.Post("/danger/wipe", adminHandler.WipeAllData)
 			})
 		})
 

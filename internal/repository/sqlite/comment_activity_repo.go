@@ -146,6 +146,11 @@ func (r *ActivityRepo) ListAll(ctx context.Context, page, pageSize int) ([]domai
 	return logs, total, nil
 }
 
+func (r *ActivityRepo) DeleteAll(ctx context.Context) error {
+	_, err := r.writer.ExecContext(ctx, "DELETE FROM activity_log")
+	return err
+}
+
 // scanActivityRows reads activity rows null-safely so that orphaned rows (user
 // deleted) or unusual date formats can never abort the query.
 func scanActivityRows(rows *sql.Rows) ([]domain.ActivityLog, error) {

@@ -29,6 +29,14 @@ type FileMeta struct {
 	EncryptedSize int64
 }
 
+// DuplicateGroup describes files sharing owner, name, and encrypted size.
+type DuplicateGroup struct {
+	OwnerID       string `json:"owner_id"`
+	Name          string `json:"name"`
+	EncryptedSize int64  `json:"encrypted_size"`
+	Count         int    `json:"count"`
+}
+
 // FileVersion represents a historical version of a file.
 type FileVersion struct {
 	ID        string    `json:"id"`
