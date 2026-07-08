@@ -164,6 +164,14 @@ const Auth = (() => {
                 }
                 API.setTokens(data.tokens);
                 API.setUser(data.user);
+                if (data.user?.avatar_url) {
+                    try {
+                        const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}') || {};
+                        prefs.profileAvatar = data.user.avatar_url;
+                        localStorage.setItem('fd_user_prefs', JSON.stringify(prefs));
+                        localStorage.setItem('fd_profile_photo', data.user.avatar_url);
+                    } catch { /* ignore */ }
+                }
 
                 Components.toast('Welcome back, ' + data.user.username + '!', 'success');
                 App.showApp();

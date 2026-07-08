@@ -13,6 +13,69 @@ const App = (() => {
         localStorage.setItem(USER_PREFS_KEY, JSON.stringify(next || {}));
     }
 
+    function resolveAvatar(user, prefs) {
+        const fromUser = String(user?.avatar_url || '').trim();
+        if (fromUser) return fromUser;
+        const fromPrefs = String(prefs?.profileAvatar || '').trim();
+        if (fromPrefs) return fromPrefs;
+        return String(localStorage.getItem('fd_profile_photo') || '').trim();
+    }
+
+    function syncAvatarCache(avatarUrl) {
+        const prefs = getUserPrefs();
+        const next = { ...prefs, profileAvatar: avatarUrl || '' };
+        setUserPrefs(next);
+        if (avatarUrl) {
+            localStorage.setItem('fd_profile_photo', avatarUrl);
+        } else {
+            localStorage.removeItem('fd_profile_photo');
+        }
+    }
+
+    function resizeAvatarDataURL(dataUrl, maxSize = 256, quality = 0.85) {
+        return new Promise((resolve) => {
+            if (!dataUrl || !String(dataUrl).startsWith('data:image/')) {
+                resolve(dataUrl || '');
+                return;
+            }
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    resolve(dataUrl);
+                    return;
+                }
+                ctx.drawImage(img, 0, 0, w, h);
+                try {
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                } catch {
+                    resolve(dataUrl);
+                }
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        });
+    }
+
+    async function refreshProfileFromServer() {
+        try {
+            const user = await API.me();
+            if (!user?.id) return null;
+            API.setUser(user);
+            syncAvatarCache(user.avatar_url || '');
+            refreshUserUI();
+            return user;
+        } catch {
+            return null;
+        }
+    }
+
     function refreshUserUI() {
         const user = API.getUser();
         if (!user) return;
@@ -20,7 +83,7 @@ const App = (() => {
         const initial = Components.initials(user.username || user.email || 'U');
         const ua = document.getElementById('user-avatar');
         const ta = document.getElementById('topbar-avatar');
-        const savedPhoto = prefs.profileAvatar || localStorage.getItem('fd_profile_photo');
+        const savedPhoto = resolveAvatar(user, prefs);
         
         if (ua) {
             ua.textContent = savedPhoto ? '' : initial;
@@ -59,7 +122,7 @@ const App = (() => {
         const nameParts = currentName.split(' ');
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || '';
-        const previewAvatar = prefs.profileAvatar || '';
+        const previewAvatar = resolveAvatar(user, prefs);
 
         Components.showModal('Settings', `
             <div class="drive-settings-modal" style="padding: 8px 0;">
@@ -91,22 +154,37 @@ const App = (() => {
             {
                 text: 'Save',
                 class: 'btn-primary',
+                close: false,
                 action: async () => {
                     const first = String(document.getElementById('settings-first-name')?.value || '').trim();
                     const last = String(document.getElementById('settings-last-name')?.value || '').trim();
                     const fullName = [first, last].filter(Boolean).join(' ');
-                    const avatar = document.getElementById('settings-avatar-preview')?.dataset.avatar || prefs.profileAvatar || '';
-
-                    if (fullName) {
-                        user.username = fullName;
-                        API.setUser(user);
+                    if (!fullName) {
+                        Components.toast('First or last name is required', 'error');
+                        return;
                     }
 
-                    const nextPrefs = { ...prefs, profileAvatar: avatar };
-                    setUserPrefs(nextPrefs);
-                    
-                    refreshUserUI();
-                    Components.toast('Profile updated', 'success');
+                    const preview = document.getElementById('settings-avatar-preview');
+                    const avatarRaw = preview && Object.prototype.hasOwnProperty.call(preview.dataset, 'avatar')
+                        ? String(preview.dataset.avatar || '')
+                        : resolveAvatar(user, prefs);
+
+                    try {
+                        const avatar = avatarRaw
+                            ? await resizeAvatarDataURL(avatarRaw)
+                            : '';
+                        const updated = await API.updateMe({
+                            username: fullName,
+                            avatar_url: avatar,
+                        });
+                        API.setUser(updated);
+                        syncAvatarCache(updated.avatar_url || '');
+                        refreshUserUI();
+                        Components.toast('Profile updated', 'success');
+                        Components.hideModal();
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to save profile', 'error');
+                    }
                 },
             },
         ]);
@@ -114,14 +192,15 @@ const App = (() => {
         const fileInput = document.getElementById('settings-avatar-input');
         const avatarPreview = document.getElementById('settings-avatar-preview');
         const removeBtn = document.getElementById('settings-avatar-remove');
-        if (avatarPreview && previewAvatar) avatarPreview.dataset.avatar = previewAvatar;
+        if (avatarPreview) avatarPreview.dataset.avatar = previewAvatar || '';
 
-        fileInput?.addEventListener('change', () => {
+        fileInput?.addEventListener('change', async () => {
             const file = fileInput.files?.[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = () => {
-                const result = String(reader.result || '');
+            reader.onload = async () => {
+                const raw = String(reader.result || '');
+                const result = await resizeAvatarDataURL(raw);
                 if (!avatarPreview) return;
                 avatarPreview.dataset.avatar = result;
                 avatarPreview.textContent = '';
@@ -642,11 +721,19 @@ const App = (() => {
 
         const user = API.getUser();
         if (user) {
+            // Prefer server profile over stale localStorage avatar/name cache.
+            if (user.avatar_url) syncAvatarCache(user.avatar_url);
             refreshUserUI();
             if (user.role === 'admin') {
                 const ab = document.getElementById('admin-btn');
                 if (ab) ab.style.display = '';
             }
+            refreshProfileFromServer().then((fresh) => {
+                if (fresh?.role === 'admin') {
+                    const ab = document.getElementById('admin-btn');
+                    if (ab) ab.style.display = '';
+                }
+            });
         }
 
         const prefs = getUserPrefs();

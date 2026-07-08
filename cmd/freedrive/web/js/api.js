@@ -196,6 +196,8 @@ const API = (() => {
 
     const diskStats = () => request('GET', '/disk-stats');
     const myStorage = () => request('GET', '/me/storage');
+    const me = () => request('GET', '/me');
+    const updateMe = (payload) => request('PATCH', '/me', payload);
 
     const admin = {
         users: () => request('GET', '/admin/users'),
@@ -248,6 +250,8 @@ const API = (() => {
         approvals,
         diskStats,
         myStorage,
+        me,
+        updateMe,
         request,
         uploadFile: uploadXHR.bind(null, '/files/upload'),
         downloadBlob,

@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
 )
+
+// Max avatar data-URL length (~500 KB of base64 payload + header).
+const maxAvatarURLLen = 700_000
 
 // UserHandler handles user-specific endpoints.
 type UserHandler struct {
@@ -18,6 +23,85 @@ type UserHandler struct {
 // NewUserHandler creates a new user handler.
 func NewUserHandler(userRepo repository.UserRepository, fileRepo repository.FileRepository) *UserHandler {
 	return &UserHandler{userRepo: userRepo, fileRepo: fileRepo}
+}
+
+// GetMe handles GET /api/v1/me — returns the current authenticated user.
+func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		writeError(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, user)
+}
+
+// UpdateMe handles PATCH /api/v1/me — updates username and/or avatar for the current user.
+func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		writeError(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Username  *string `json:"username"`
+		AvatarURL *string `json:"avatar_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Username != nil {
+		name := strings.TrimSpace(*req.Username)
+		if name == "" {
+			writeError(w, "username cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if len(name) > 120 {
+			writeError(w, "username is too long", http.StatusBadRequest)
+			return
+		}
+		user.Username = name
+	}
+
+	if req.AvatarURL != nil {
+		avatar := strings.TrimSpace(*req.AvatarURL)
+		if avatar == "" {
+			user.AvatarURL = ""
+		} else {
+			if len(avatar) > maxAvatarURLLen {
+				writeError(w, "avatar is too large", http.StatusBadRequest)
+				return
+			}
+			if !strings.HasPrefix(avatar, "data:image/") {
+				writeError(w, "avatar must be a data:image URL", http.StatusBadRequest)
+				return
+			}
+			user.AvatarURL = avatar
+		}
+	}
+
+	user.UpdatedAt = time.Now()
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		writeError(w, "failed to update profile", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, user)
 }
 
 // MyStorage handles GET /api/v1/me/storage — returns the current user's quota and usage.

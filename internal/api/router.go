@@ -73,7 +73,9 @@ func NewRouter(
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(authService))
 
-			// User storage (quota-based)
+			// Current user profile + storage
+			r.Get("/me", userHandler.GetMe)
+			r.Patch("/me", userHandler.UpdateMe)
 			r.Get("/me/storage", userHandler.MyStorage)
 
 			// Advanced search
