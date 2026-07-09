@@ -4,7 +4,7 @@ use crate::auth_store::{save_auth, StoredAuth};
 
 use crate::crypto::{self, generate_file_key, key_to_b64url};
 
-use crate::db::{delete_pending_file_key, store_pending_file_key, DbHandle};
+use crate::db::{delete_pending_file_key, store_file_key, store_pending_file_key, DbHandle};
 
 use crate::error::{AppError, AppResult};
 
@@ -862,7 +862,7 @@ impl ApiClient {
 
 
 
-            let upload_result = self
+            let upload_result: AppResult<crate::api::types::FileRecord> = self
 
                 .multipart_stream_once(path, &prepared, http_timeout)
 
@@ -878,18 +878,46 @@ impl ApiClient {
 
                 Ok(rec) => {
 
-                    if let (Some(db), Some(folder_id)) = (db, prepared.folder_id.as_deref()) {
+                    let key_b64 = key_to_b64url(&prepared.key);
 
-                        if existing_key.is_none() {
+                    if let Some(db) = db {
 
-                            if let Ok(conn) = db.lock() {
+                        if let Ok(conn) = db.lock() {
 
-                                let _ = delete_pending_file_key(&conn, folder_id, &prepared.name);
+                            let _ = store_file_key(&conn, &rec.id, &key_b64);
+
+                            if let Some(folder_id) = prepared.folder_id.as_deref() {
+
+                                if existing_key.is_none() {
+
+                                    let _ =
+
+                                        delete_pending_file_key(&conn, folder_id, &prepared.name);
+
+                                }
 
                             }
 
                         }
 
+                    }
+
+                    if let Some(auth) = crate::auth_store::load_auth().ok().flatten() {
+                        if let Ok(user) =
+                            serde_json::from_str::<serde_json::Value>(&auth.user_json)
+                        {
+                            if let Some(uid) = user.get("id").and_then(|v| v.as_str()) {
+                                if let Some(uek) = crate::account_crypto::get_uek(uid) {
+                                    let _ = crate::account_crypto::push_file_key(
+                                        self,
+                                        &uek,
+                                        &rec.id,
+                                        &key_b64,
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
                     }
 
                     crate::sync::log::sync_log(format!("http ok {}", prepared.name));
@@ -1222,6 +1250,90 @@ impl ApiClient {
 
         serde_json::from_str(&text).map_err(Into::into)
 
+    }
+
+    pub async fn get_crypto_account(
+        &self,
+    ) -> AppResult<serde_json::Value> {
+        self.request_json(reqwest::Method::GET, "/crypto/account", None, false, 2)
+            .await
+    }
+
+    pub async fn setup_crypto_account(
+        &self,
+        key_salt: &[u8],
+        wrapped_uek: &str,
+        wrapped_uek_recovery: Option<&str>,
+    ) -> AppResult<()> {
+        let mut body = serde_json::json!({
+            "key_salt": key_salt,
+            "wrapped_uek": wrapped_uek,
+        });
+        if let Some(recovery) = wrapped_uek_recovery {
+            body["wrapped_uek_recovery"] = serde_json::Value::String(recovery.to_string());
+        }
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::POST, "/crypto/account", Some(body), false, 2)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_encryption_keys(
+        &self,
+        since: &str,
+    ) -> AppResult<serde_json::Value> {
+        let path = if since.is_empty() {
+            "/encryption-keys".to_string()
+        } else {
+            format!("/encryption-keys?since={}", urlencoding::encode(since))
+        };
+        self.request_json(reqwest::Method::GET, &path, None, false, 2)
+            .await
+    }
+
+    pub async fn bulk_put_encryption_keys(
+        &self,
+        keys: std::collections::HashMap<String, String>,
+    ) -> AppResult<serde_json::Value> {
+        self.request_json(
+            reqwest::Method::POST,
+            "/encryption-keys/bulk",
+            Some(serde_json::json!({ "keys": keys })),
+            false,
+            2,
+        )
+        .await
+    }
+
+    pub async fn get_file_encryption_key(
+        &self,
+        file_id: &str,
+    ) -> AppResult<serde_json::Value> {
+        self.request_json(
+            reqwest::Method::GET,
+            &format!("/files/{}/encryption-key", file_id),
+            None,
+            false,
+            2,
+        )
+        .await
+    }
+
+    pub async fn put_file_encryption_key(
+        &self,
+        file_id: &str,
+        wrapped_file_key: &str,
+    ) -> AppResult<()> {
+        let _: serde_json::Value = self
+            .request_json(
+                reqwest::Method::PUT,
+                &format!("/files/{}/encryption-key", file_id),
+                Some(serde_json::json!({ "wrapped_file_key": wrapped_file_key })),
+                false,
+                2,
+            )
+            .await?;
+        Ok(())
     }
 
 }

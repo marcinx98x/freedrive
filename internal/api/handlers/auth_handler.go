@@ -15,6 +15,7 @@ import (
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
 	authService          *service.AuthService
+	cryptoService        *service.CryptoService
 	emailChangeRepo      repository.EmailChangeRepository
 	userRepo             repository.UserRepository
 	activityRepo         repository.ActivityRepository
@@ -24,6 +25,7 @@ type AuthHandler struct {
 // NewAuthHandler creates a new auth handler.
 func NewAuthHandler(
 	authService *service.AuthService,
+	cryptoService *service.CryptoService,
 	emailChangeRepo repository.EmailChangeRepository,
 	userRepo repository.UserRepository,
 	activityRepo repository.ActivityRepository,
@@ -31,6 +33,7 @@ func NewAuthHandler(
 ) *AuthHandler {
 	return &AuthHandler{
 		authService:          authService,
+		cryptoService:        cryptoService,
 		emailChangeRepo:      emailChangeRepo,
 		userRepo:             userRepo,
 		activityRepo:         activityRepo,
@@ -270,6 +273,11 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		Token       string `json:"token"`
 		Email       string `json:"email"`
 		NewPassword string `json:"new_password"`
+		CryptoUpdate *struct {
+			KeySalt            []byte `json:"key_salt"`
+			WrappedUEK         string `json:"wrapped_uek"`
+			WrappedUEKRecovery string `json:"wrapped_uek_recovery"`
+		} `json:"crypto_update"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -292,7 +300,47 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.CryptoUpdate != nil && req.CryptoUpdate.WrappedUEK != "" {
+		user, err := h.userRepo.GetByEmail(r.Context(), strings.ToLower(strings.TrimSpace(req.Email)))
+		if err == nil && user != nil {
+			_ = h.cryptoService.UpdateAccount(
+				r.Context(),
+				user.ID,
+				req.CryptoUpdate.KeySalt,
+				req.CryptoUpdate.WrappedUEK,
+				req.CryptoUpdate.WrappedUEKRecovery,
+			)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Password updated"})
+}
+
+// ResetPasswordCryptoInfo handles POST /api/v1/auth/reset-password/crypto-info
+func (h *AuthHandler) ResetPasswordCryptoInfo(w http.ResponseWriter, r *http.Request) {
+	if !h.checkIP(w, r) {
+		return
+	}
+
+	var req struct {
+		Token string `json:"token"`
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	userID, ok := h.passwordResetService.PeekResetToken(r.Context(), req.Token, req.Email)
+	if !ok {
+		writeError(w, "invalid or expired reset link", http.StatusBadRequest)
+		return
+	}
+	data, err := h.cryptoService.GetAccount(r.Context(), userID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, data)
 }
 
 // ForgotPassword handles POST /api/v1/auth/forgot-password

@@ -14,17 +14,17 @@ use crate::my_drive::{
     resolve_folder_id_for_fetch, resolve_my_drive_root_id, FolderIdSource,
 };
 use crate::sync::log::sync_log;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{NTSTATUS, STATUS_CLOUD_FILE_UNSUCCESSFUL, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
-    CfExecute, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS, CF_OPERATION_ACK_DATA_FLAGS,
-    CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
-    CF_OPERATION_PARAMETERS_0_0, CF_OPERATION_PARAMETERS_0_6,
-    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_ACK_DATA,
-    CF_OPERATION_TYPE_TRANSFER_DATA,
+    CfExecute, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS, CF_OPERATION_INFO,
+    CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_6,
+    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_TRANSFER_DATA,
 };
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -36,7 +36,29 @@ struct CallbackContext {
 }
 
 static CONTEXT: OnceLock<Mutex<Option<CallbackContext>>> = OnceLock::new();
+static APP_HANDLE: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();
 static CANCELLED_PLACEHOLDER_REQUESTS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+
+#[derive(Clone, Serialize)]
+struct HydrateFailedPayload {
+    message: String,
+    file_id: String,
+}
+
+pub fn init_app_handle(app: AppHandle) {
+    let slot = APP_HANDLE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(app);
+    }
+}
+
+pub fn clear_app_handle() {
+    if let Some(slot) = APP_HANDLE.get() {
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+    }
+}
 
 fn cancelled_requests() -> &'static Mutex<HashSet<i64>> {
     CANCELLED_PLACEHOLDER_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
@@ -87,6 +109,7 @@ pub fn clear_context() {
             *guard = None;
         }
     }
+    clear_app_handle();
     if let Ok(mut set) = cancelled_requests().lock() {
         set.clear();
     }
@@ -182,31 +205,67 @@ pub unsafe extern "system" fn fetch_data(
     }
     let info = &*info;
     let params = &*params;
-    let fetch = unsafe { params.Anonymous.FetchData };
-    let offset = fetch.RequiredFileOffset;
-    let length = fetch.RequiredLength;
+
+    let file_id = unsafe {
+        let identity = std::slice::from_raw_parts(
+            info.FileIdentity as *const u8,
+            info.FileIdentityLength as usize,
+        );
+        parse_file_identity(identity)
+            .map(|(_, id)| id)
+            .unwrap_or_default()
+    };
 
     let result = std::panic::catch_unwind(|| handle_fetch_data(info, params));
-    let hydrate_ok = match &result {
-        Ok(Ok(())) => true,
+    match result {
+        Ok(Ok(())) => {}
         Ok(Err(e)) => {
-            log_callback_error("FETCH_DATA", e);
-            false
+            log_callback_error("FETCH_DATA", &e);
+            emit_hydrate_failed(&e, &file_id);
+            if let Err(te) = fail_fetch_data(info, params) {
+                log_callback_error("TRANSFER_DATA", &te);
+            }
         }
         Err(_) => {
             log_callback_error("FETCH_DATA", "callback panicked");
-            false
+            if let Err(te) = fail_fetch_data(info, params) {
+                log_callback_error("TRANSFER_DATA", &te);
+            }
         }
-    };
-
-    let ack_status = if hydrate_ok {
-        STATUS_SUCCESS
-    } else {
-        STATUS_CLOUD_FILE_UNSUCCESSFUL
-    };
-    if let Err(e) = ack_data(info, ack_status, offset, length) {
-        log_callback_error("ACK_DATA", &e.to_string());
     }
+}
+
+fn emit_hydrate_failed(message: &str, file_id: &str) {
+    let Some(slot) = APP_HANDLE.get() else {
+        return;
+    };
+    let Ok(guard) = slot.lock() else {
+        return;
+    };
+    let Some(app) = guard.as_ref() else {
+        return;
+    };
+    let _ = app.emit(
+        "my-drive-hydrate-failed",
+        HydrateFailedPayload {
+            message: message.to_string(),
+            file_id: file_id.to_string(),
+        },
+    );
+}
+
+fn fail_fetch_data(
+    info: &CF_CALLBACK_INFO,
+    params: &CF_CALLBACK_PARAMETERS,
+) -> Result<(), String> {
+    let fetch = unsafe { params.Anonymous.FetchData };
+    let offset = fetch.RequiredFileOffset;
+    let length = fetch.RequiredLength;
+    unsafe {
+        transfer_data(info, offset, length, &[], STATUS_CLOUD_FILE_UNSUCCESSFUL)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn handle_fetch_placeholders(info: &CF_CALLBACK_INFO) -> Result<u32, String> {
@@ -438,36 +497,6 @@ unsafe fn transfer_data(
     };
     CfExecute(&op_info, &mut op_params)
         .map_err(|e| crate::error::AppError::msg(format!("CfExecute TRANSFER_DATA: {}", e)))
-}
-
-unsafe fn ack_data(
-    info: &CF_CALLBACK_INFO,
-    status: NTSTATUS,
-    offset: i64,
-    length: i64,
-) -> AppResult<()> {
-    let op_info = CF_OPERATION_INFO {
-        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
-        Type: CF_OPERATION_TYPE_ACK_DATA,
-        ConnectionKey: info.ConnectionKey,
-        TransferKey: info.TransferKey,
-        CorrelationVector: info.CorrelationVector,
-        RequestKey: info.RequestKey,
-        SyncStatus: std::ptr::null(),
-    };
-    let mut op_params = CF_OPERATION_PARAMETERS {
-        ParamSize: cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_0>(),
-        Anonymous: CF_OPERATION_PARAMETERS_0 {
-            AckData: CF_OPERATION_PARAMETERS_0_0 {
-                Flags: CF_OPERATION_ACK_DATA_FLAGS(0),
-                CompletionStatus: status,
-                Offset: offset,
-                Length: length,
-            },
-        },
-    };
-    CfExecute(&op_info, &mut op_params)
-        .map_err(|e| crate::error::AppError::msg(format!("CfExecute ACK_DATA: {}", e)))
 }
 
 #[cfg(test)]

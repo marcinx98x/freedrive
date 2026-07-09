@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, onSyncActivity, onSyncProgress, onSyncStatusChanged } from "../api/tauri";
+import { api, onCryptoRecoverySetup, onMyDriveHydrateFailed, onSyncActivity, onSyncProgress, onSyncStatusChanged } from "../api/tauri";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { Sidebar } from "../components/Sidebar";
 import { TopBar } from "../components/TopBar";
@@ -33,6 +33,10 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileAnchor, setProfileAnchor] = useState<DOMRect | null>(null);
   const [settingsError, setSettingsError] = useState("");
+  const [keysImportMessage, setKeysImportMessage] = useState("");
+  const [keysImporting, setKeysImporting] = useState(false);
+  const [keysExporting, setKeysExporting] = useState(false);
+  const [hydrateWarning, setHydrateWarning] = useState("");
   const [folderError, setFolderError] = useState("");
   const [explorerWarning, setExplorerWarning] = useState("");
   const [signingOut, setSigningOut] = useState(false);
@@ -129,6 +133,22 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         return [row, ...prev].slice(0, 50);
       });
     }).then((u) => unsubs.push(u));
+    onMyDriveHydrateFailed((event) => {
+      const isWebKey =
+        event.message.includes("uploaded via web") ||
+        event.message.includes("encryption key not available");
+      setHydrateWarning(
+        isWebKey
+          ? "Could not decrypt this file yet. Sign out and sign in again to sync encryption keys, or use Settings export/import as backup."
+          : event.message,
+      );
+    }).then((u) => unsubs.push(u));
+    onCryptoRecoverySetup((code) => {
+      setKeysImportMessage(
+        `Save this recovery code in a safe place: ${code}`,
+      );
+      setShowSettings(true);
+    }).then((u) => unsubs.push(u));
     const interval = setInterval(refresh, 10000);
     return () => {
       unsubs.forEach((u) => u());
@@ -152,6 +172,43 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
       refresh();
     } catch (err) {
       console.error("pause/resume failed:", err);
+    }
+  };
+
+  const handleExportEncryptionKeys = async () => {
+    setSettingsError("");
+    setKeysImportMessage("");
+    setKeysExporting(true);
+    try {
+      const result = await api.exportEncryptionKeys();
+      setKeysImportMessage(
+        `Exported ${result.exported} encryption key${result.exported === 1 ? "" : "s"} to ${result.path}.`,
+      );
+    } catch (err) {
+      const message = String(err);
+      if (!message.includes("Export cancelled")) {
+        setSettingsError(message);
+      }
+    } finally {
+      setKeysExporting(false);
+    }
+  };
+
+  const handleImportEncryptionKeys = async () => {
+    setSettingsError("");
+    setKeysImportMessage("");
+    setKeysImporting(true);
+    try {
+      const result = await api.importEncryptionKeys();
+      setKeysImportMessage(`Imported ${result.imported} encryption key${result.imported === 1 ? "" : "s"}.`);
+      setHydrateWarning("");
+    } catch (err) {
+      const message = String(err);
+      if (!message.includes("No file selected")) {
+        setSettingsError(message);
+      }
+    } finally {
+      setKeysImporting(false);
     }
   };
 
@@ -196,9 +253,9 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         onOpenFolder={handleOpenDriveFolder}
       />
       <div className="main-content">
-        {(folderError || explorerWarning) && (
+        {(folderError || explorerWarning || hydrateWarning) && (
           <div className="error-banner" style={{ margin: "8px 16px 0" }}>
-            {folderError || explorerWarning}
+            {hydrateWarning || folderError || explorerWarning}
           </div>
         )}
         <TopBar
@@ -209,6 +266,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           onPauseResume={handlePauseResume}
           onOpenSettings={() => {
             setSettingsError("");
+            setKeysImportMessage("");
             setShowSettings(true);
           }}
           onProfileClick={(rect) => {
@@ -270,6 +328,34 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
             <div className="form-group">
               <label>Account</label>
               <input type="text" value={user?.email || ""} readOnly />
+            </div>
+            <div className="form-group">
+              <label>Encryption keys (E2E)</label>
+              <p className="settings-hint">
+                Encryption keys sync automatically when you sign in. Use export/import below only
+                as a backup if you need to move keys manually.
+              </p>
+              {keysImportMessage && (
+                <div className="success-banner">{keysImportMessage}</div>
+              )}
+              <div className="settings-actions" style={{ marginBottom: 0, justifyContent: "flex-start", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleExportEncryptionKeys}
+                  disabled={keysExporting || keysImporting}
+                >
+                  {keysExporting ? "Exporting…" : "Export encryption keys…"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleImportEncryptionKeys}
+                  disabled={keysImporting || keysExporting}
+                >
+                  {keysImporting ? "Importing…" : "Import encryption keys…"}
+                </button>
+              </div>
             </div>
             <div className="settings-actions">
               <button type="button" className="btn-secondary" onClick={() => setShowSettings(false)}>

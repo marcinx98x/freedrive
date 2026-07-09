@@ -67,6 +67,56 @@ pub fn iv_from_base64(s: &str) -> AppResult<[u8; 12]> {
     Ok(iv)
 }
 
+pub const PBKDF2_ITERATIONS: u32 = 310_000;
+
+pub fn derive_kek(password: &str, salt: &[u8]) -> AppResult<[u8; 32]> {
+    use pbkdf2::pbkdf2_hmac_array;
+    use sha2::Sha256;
+    Ok(pbkdf2_hmac_array::<Sha256, 32>(password.as_bytes(), salt, PBKDF2_ITERATIONS))
+}
+
+pub fn wrap_bytes(plaintext: &[u8], key: &[u8; 32]) -> AppResult<String> {
+    let (ciphertext, iv) = encrypt_file(plaintext, key)?;
+    let mut combined = Vec::with_capacity(12 + ciphertext.len());
+    combined.extend_from_slice(&iv);
+    combined.extend_from_slice(&ciphertext);
+    Ok(URL_SAFE_NO_PAD.encode(combined))
+}
+
+pub fn unwrap_bytes(wrapped_b64: &str, key: &[u8; 32]) -> AppResult<Vec<u8>> {
+    let combined = URL_SAFE_NO_PAD
+        .decode(wrapped_b64)
+        .map_err(|e| AppError::msg(format!("invalid wrapped key: {}", e)))?;
+    if combined.len() < 13 {
+        return Err(AppError::msg("invalid wrapped key length"));
+    }
+    let mut iv = [0u8; 12];
+    iv.copy_from_slice(&combined[..12]);
+    decrypt_file(&combined[12..], key, &iv)
+}
+
+pub fn format_recovery_code(raw: &[u8; 32]) -> String {
+    raw.iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
+        .as_bytes()
+        .chunks(8)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+pub fn parse_recovery_code(code: &str) -> AppResult<[u8; 32]> {
+    let hex: String = code.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if hex.len() != 64 {
+        return Err(AppError::msg("invalid recovery code format"));
+    }
+    let bytes = hex::decode(hex).map_err(|e| AppError::msg(e.to_string()))?;
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,11 +140,19 @@ mod tests {
     }
 
     #[test]
-    fn iv_base64_roundtrip() {
-        let mut iv = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut iv);
-        let encoded = iv_to_base64(&iv);
-        let decoded = iv_from_base64(&encoded).unwrap();
-        assert_eq!(decoded, iv);
+    fn wrap_unwrap_roundtrip() {
+        let key = generate_file_key();
+        let wrapping = generate_file_key();
+        let wrapped = wrap_bytes(&key, &wrapping).unwrap();
+        let unwrapped = unwrap_bytes(&wrapped, &wrapping).unwrap();
+        assert_eq!(unwrapped, key);
+    }
+
+    #[test]
+    fn recovery_code_roundtrip() {
+        let raw = generate_file_key();
+        let formatted = format_recovery_code(&raw);
+        let parsed = parse_recovery_code(&formatted).unwrap();
+        assert_eq!(parsed, raw);
     }
 }

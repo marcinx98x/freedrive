@@ -151,3 +151,14 @@ type ActivityRepository interface {
 	ListAll(ctx context.Context, page, pageSize int) ([]domain.ActivityLog, int, error)
 	DeleteAll(ctx context.Context) error
 }
+
+// CryptoRepository defines data access for E2E encryption key sync.
+type CryptoRepository interface {
+	GetUserCrypto(ctx context.Context, userID string) (*domain.UserCrypto, error)
+	CreateUserCrypto(ctx context.Context, crypto *domain.UserCrypto) error
+	UpdateUserCrypto(ctx context.Context, crypto *domain.UserCrypto) error
+
+	GetFileEncryptionKey(ctx context.Context, fileID string) (*domain.FileEncryptionKey, error)
+	UpsertFileEncryptionKey(ctx context.Context, key *domain.FileEncryptionKey) error
+	ListFileEncryptionKeysSince(ctx context.Context, ownerID string, since time.Time, limit int) ([]domain.EncryptionKeyEntry, error)
+}

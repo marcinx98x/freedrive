@@ -1,6 +1,7 @@
 use crate::error::AppResult;
 use rusqlite::{params, Connection};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub type DbHandle = Arc<Mutex<Connection>>;
@@ -521,6 +522,31 @@ pub fn store_file_key(conn: &Connection, remote_file_id: &str, key_b64url: &str)
     Ok(())
 }
 
+pub fn import_file_keys(
+    conn: &Connection,
+    keys: &std::collections::HashMap<String, String>,
+) -> AppResult<usize> {
+    let mut count = 0usize;
+    for (remote_file_id, key_b64url) in keys {
+        if remote_file_id.is_empty() || key_b64url.is_empty() {
+            continue;
+        }
+        store_file_key(conn, remote_file_id, key_b64url)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+pub fn list_all_file_keys(conn: &Connection) -> AppResult<HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT remote_file_id, key_b64url FROM file_keys")?;
+    let mut rows = stmt.query([])?;
+    let mut keys = HashMap::new();
+    while let Some(row) = rows.next()? {
+        keys.insert(row.get(0)?, row.get(1)?);
+    }
+    Ok(keys)
+}
+
 pub fn get_file_key(conn: &Connection, remote_file_id: &str) -> AppResult<Option<String>> {
     let mut stmt = conn.prepare("SELECT key_b64url FROM file_keys WHERE remote_file_id = ?1")?;
     let mut rows = stmt.query(params![remote_file_id])?;
@@ -774,6 +800,30 @@ mod tests {
         let row = my_drive_get_placeholder(&conn, "My Drive\\Docs").unwrap();
         assert_eq!(row.as_ref().map(|r| r.0.as_str()), Some("f-1"));
         assert_eq!(row.as_ref().map(|r| r.1.as_str()), Some("folder"));
+    }
+
+    #[test]
+    fn import_file_keys_roundtrip() {
+        let conn = test_conn();
+        let mut keys = std::collections::HashMap::new();
+        keys.insert("file-a".to_string(), "key-a".to_string());
+        keys.insert("file-b".to_string(), "key-b".to_string());
+        let count = import_file_keys(&conn, &keys).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            get_file_key(&conn, "file-a").unwrap().as_deref(),
+            Some("key-a")
+        );
+    }
+
+    #[test]
+    fn list_all_file_keys_returns_map() {
+        let conn = test_conn();
+        store_file_key(&conn, "file-a", "key-a").unwrap();
+        store_file_key(&conn, "file-b", "key-b").unwrap();
+        let keys = list_all_file_keys(&conn).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys.get("file-a").map(|s| s.as_str()), Some("key-a"));
     }
 
     #[test]

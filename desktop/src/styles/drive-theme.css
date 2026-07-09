@@ -167,6 +167,22 @@ input {
   font-size: 14px;
 }
 
+.success-banner {
+  background: #1e3a2f;
+  color: #81c995;
+  padding: 10px 12px;
+  border-radius: var(--fd-radius-sm);
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.settings-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fd-text-secondary, #9aa0a6);
+}
+
 /* Welcome */
 .welcome-screen {
   display: flex;

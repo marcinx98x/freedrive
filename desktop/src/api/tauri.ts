@@ -13,6 +13,9 @@ import type {
   SyncStatus,
   SystemFolder,
   User,
+  ImportEncryptionKeysResult,
+  ExportEncryptionKeysResult,
+  HydrateFailedEvent,
 } from "../types";
 
 export const api = {
@@ -21,9 +24,9 @@ export const api = {
     invoke<LoginResult>("login", {
       req: { server_url, email, password },
     }),
-  verify2FA: (server_url: string, challenge_id: string, code: string) =>
+  verify2FA: (server_url: string, challenge_id: string, code: string, password: string) =>
     invoke<User>("verify_2fa", {
-      req: { server_url, challenge_id, code },
+      req: { server_url, challenge_id, code, password },
     }),
   logout: () => invoke<void>("logout"),
   getSystemFolders: () => invoke<SystemFolder[]>("get_system_folders"),
@@ -46,6 +49,10 @@ export const api = {
   openServerUrl: (path?: string) => invoke<void>("open_server_url", { path }),
   openPathInExplorer: (path: string) =>
     invoke<void>("open_path_in_explorer", { path }),
+  importEncryptionKeys: () =>
+    invoke<ImportEncryptionKeysResult>("import_encryption_keys"),
+  exportEncryptionKeys: () =>
+    invoke<ExportEncryptionKeysResult>("export_encryption_keys"),
 };
 
 export function onSyncStatusChanged(cb: (status: SyncStatus) => void) {
@@ -60,6 +67,10 @@ export function onSyncProgress(cb: (progress: SyncProgress) => void) {
   return listen<SyncProgress>("sync-progress", (e) => cb(e.payload));
 }
 
+export function onMyDriveHydrateFailed(cb: (event: HydrateFailedEvent) => void) {
+  return listen<HydrateFailedEvent>("my-drive-hydrate-failed", (e) => cb(e.payload));
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return "—";
   const units = ["B", "KB", "MB", "GB"];
@@ -70,6 +81,10 @@ export function formatBytes(bytes: number): string {
     i++;
   }
   return `${n.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+export function onCryptoRecoverySetup(cb: (code: string) => void) {
+  return listen<string>("crypto-recovery-setup", (e) => cb(e.payload));
 }
 
 export function formatRelativeTime(iso: string | null): string {

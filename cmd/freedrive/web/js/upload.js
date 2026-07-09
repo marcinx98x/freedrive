@@ -334,7 +334,10 @@ const Upload = (() => {
                 statusEl.textContent = `${pct}%`;
             });
 
-            if (key) await cryptoModule.storeKey(result.id, key);
+            if (key) {
+                await cryptoModule.storeKey(result.id, key);
+                if (window.CryptoSync?.pushFileKey) await CryptoSync.pushFileKey(result.id, key);
+            }
             progressFill.style.width = '100%';
             statusEl.textContent = 'Done';
             statusEl.style.color = 'var(--fd-green)';

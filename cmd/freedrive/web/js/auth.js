@@ -3,6 +3,8 @@
 // ========================================
 
 const Auth = (() => {
+    let pendingLoginPassword = '';
+
     function friendlyAuthError(err) {
         const raw = String(err?.message || err || '').trim();
         const lower = raw.toLowerCase();
@@ -82,7 +84,7 @@ const Auth = (() => {
         clearFormError('twofa-error');
     }
 
-    async function completeLogin(data) {
+    async function completeLogin(data, password) {
         if (!data?.tokens?.access_token || !data?.user) {
             throw new Error('Login response was incomplete. Please try again.');
         }
@@ -95,6 +97,9 @@ const Auth = (() => {
                 localStorage.setItem('fd_user_prefs', JSON.stringify(prefs));
                 localStorage.setItem('fd_profile_photo', data.user.avatar_url);
             } catch { /* ignore */ }
+        }
+        if (password && window.CryptoSync?.ensureUnlockedAfterLogin) {
+            await CryptoSync.ensureUnlockedAfterLogin(password);
         }
         Components.toast('Welcome back, ' + (data.user.username || data.user.email) + '!', 'success');
         App.showApp();
@@ -188,7 +193,8 @@ const Auth = (() => {
                 btn.querySelector('.btn-loader').classList.remove('hidden');
                 btn.querySelector('span').textContent = 'Verifying...';
                 const data = await API.auth.verify2FA(challengeId, code);
-                await completeLogin(data);
+                await completeLogin(data, pendingLoginPassword);
+                pendingLoginPassword = '';
             } catch (err) {
                 const msg = friendlyAuthError(err);
                 setFormError('twofa-error', msg);
@@ -264,7 +270,19 @@ const Auth = (() => {
                     btn.disabled = true;
                     btn.querySelector('.btn-loader').classList.remove('hidden');
                     btn.querySelector('span').textContent = 'Resetting...';
-                    await API.auth.resetPassword(token, finalEmail, newPassword);
+                    const recoveryCode = String(document.getElementById('reset-recovery-code')?.value || '').trim();
+                    let cryptoUpdate = null;
+                    if (recoveryCode && window.CryptoSync?.buildCryptoUpdateForReset) {
+                        try {
+                            cryptoUpdate = await CryptoSync.buildCryptoUpdateForReset(token, finalEmail, newPassword, recoveryCode);
+                        } catch (cryptoErr) {
+                            const msg = cryptoErr?.message || 'Invalid recovery code';
+                            setFormError('reset-error', msg);
+                            Components.toast(msg, 'error');
+                            return;
+                        }
+                    }
+                    await API.auth.resetPassword(token, finalEmail, newPassword, cryptoUpdate);
                     Components.toast('Password reset successful. Please sign in.', 'success');
                     history.replaceState(null, '', '/');
                     window.location.hash = '#/login';
@@ -352,10 +370,11 @@ const Auth = (() => {
 
                 const data = await API.auth.login(email, password);
                 if (data?.requires_2fa) {
+                    pendingLoginPassword = password;
                     showTwoFAForm(data.challenge_id, data.email_masked);
                     return;
                 }
-                await completeLogin(data);
+                await completeLogin(data, password);
             } catch (err) {
                 const msg = friendlyAuthError(err);
                 setFormError('login-error', msg);
@@ -387,10 +406,11 @@ const Auth = (() => {
                 // Auto-login after registration
                 const data = await API.auth.login(email, password);
                 if (data?.requires_2fa) {
+                    pendingLoginPassword = password;
                     showTwoFAForm(data.challenge_id, data.email_masked);
                     return;
                 }
-                await completeLogin(data);
+                await completeLogin(data, password);
             } catch (err) {
                 const msg = friendlyAuthError(err);
                 setFormError('register-error', msg);

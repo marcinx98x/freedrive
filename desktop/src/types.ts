@@ -1,3 +1,17 @@
+export interface ImportEncryptionKeysResult {
+  imported: number;
+}
+
+export interface HydrateFailedEvent {
+  message: string;
+  file_id: string;
+}
+
+export interface ExportEncryptionKeysResult {
+  exported: number;
+  path: string;
+}
+
 export interface ExplorerIntegrationStatus {
   connected: boolean;
   registered: boolean;

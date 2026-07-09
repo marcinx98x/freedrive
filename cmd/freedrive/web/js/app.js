@@ -205,6 +205,18 @@ const App = (() => {
                     </label>
                     <button type="button" class="btn btn-secondary drive-settings-confirm-btn" id="settings-send-email-confirm">Confirm</button>
                     ${pendingBanner}
+                    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8eaed;">
+                        <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Encryption keys across devices</div>
+                        <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
+                            Encryption keys sync automatically across your devices when you sign in.
+                            Use export/import below only as a backup.
+                        </p>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                            <button type="button" class="btn btn-secondary" id="settings-export-keys-btn">Export encryption keys</button>
+                            <button type="button" class="btn btn-secondary" id="settings-import-keys-btn">Import encryption keys</button>
+                        </div>
+                        <input type="file" id="settings-import-keys-input" accept="application/json,.json" hidden>
+                    </div>
                 </div>
                 <input id="settings-avatar-input" type="file" accept="image/*" hidden>
             </div>
@@ -276,6 +288,51 @@ const App = (() => {
             avatarPreview.style.backgroundImage = '';
             avatarPreview.classList.remove('has-photo');
             if (fileInput) fileInput.value = '';
+        });
+
+        document.getElementById('settings-export-keys-btn')?.addEventListener('click', async () => {
+            try {
+                if (!CryptoModule.canEncrypt()) {
+                    Components.toast('Encryption is not available in this browser session', 'error');
+                    return;
+                }
+                const exportData = await CryptoModule.exportAllKeys();
+                const count = Object.keys(exportData.keys || {}).length;
+                if (count === 0) {
+                    Components.toast('No encryption keys found in this browser', 'info');
+                    return;
+                }
+                CryptoModule.downloadKeyExport(exportData);
+                Components.toast(`Exported ${count} encryption key${count === 1 ? '' : 's'}`, 'success');
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to export encryption keys', 'error');
+            }
+        });
+
+        const importKeysInput = document.getElementById('settings-import-keys-input');
+        document.getElementById('settings-import-keys-btn')?.addEventListener('click', () => {
+            importKeysInput?.click();
+        });
+        importKeysInput?.addEventListener('change', async () => {
+            const file = importKeysInput.files?.[0];
+            importKeysInput.value = '';
+            if (!file) return;
+            try {
+                if (!CryptoModule.canEncrypt()) {
+                    Components.toast('Encryption is not available in this browser session', 'error');
+                    return;
+                }
+                const text = await file.text();
+                const exportData = CryptoModule.parseKeyExportFile(text);
+                const count = await CryptoModule.importAllKeys(exportData);
+                if (count === 0) {
+                    Components.toast('No valid keys found in import file', 'info');
+                    return;
+                }
+                Components.toast(`Imported ${count} encryption key${count === 1 ? '' : 's'}`, 'success');
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to import encryption keys', 'error');
+            }
         });
 
         const emailInput = document.getElementById('settings-email');
@@ -912,6 +969,9 @@ const App = (() => {
         }
 
         SidebarTree.init();
+        if (window.CryptoSync?.ensureUnlockedOnAppLoad) {
+            await CryptoSync.ensureUnlockedOnAppLoad();
+        }
         handleRoute();
     }
 

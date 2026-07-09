@@ -2,14 +2,15 @@ use crate::api::types::{LoginSuccess, SharedItem, StorageInfo, User};
 use crate::api::ApiClient;
 use crate::auth_store::{clear_auth, load_auth, my_drive_path, save_auth, sync_root_dir, StoredAuth};
 use crate::db::{
-    config_get, config_set, list_activity, list_sync_folders, prepare_login_session,
-    reset_session_on_logout, save_local_sync_folders,
+    config_get, config_set, import_file_keys, list_activity, list_all_file_keys, list_sync_folders,
+    prepare_login_session, reset_session_on_logout, save_local_sync_folders,
 };
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::sync::engine::SyncEngine;
 use crate::sync::watcher::WatcherHandle;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -43,6 +44,7 @@ pub struct TwoFactorRequest {
     pub server_url: String,
     pub challenge_id: String,
     pub code: String,
+    pub password: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,7 +204,20 @@ pub async fn restore_sync_on_startup(state: &AppState, app: &AppHandle) -> AppRe
 pub fn init_api_from_storage(state: &AppState) -> AppResult<()> {
     if let Some(auth) = load_auth()? {
         let client = ApiClient::from_auth(&auth);
-        state.set_api(client);
+        state.set_api(client.clone());
+        if let Ok(user) = serde_json::from_str::<serde_json::Value>(&auth.user_json) {
+            if let Some(uid) = user.get("id").and_then(|v| v.as_str()) {
+                if crate::account_crypto::get_uek(uid).is_some() {
+                    let db = state.db.clone();
+                    let uid = uid.to_string();
+                    tauri::async_runtime::spawn(async move {
+                        let _ =
+                            crate::account_crypto::try_unlock_from_keyring(&client, &db, &uid)
+                                .await;
+                    });
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -254,7 +269,7 @@ pub async fn login(
     }
 
     let success: LoginSuccess = serde_json::from_value(data).map_err(|e| e.to_string())?;
-    finish_login(&state, &app, &req.server_url, &success).await?;
+    finish_login(&state, &app, &req.server_url, &success, Some(&req.password)).await?;
     Ok(LoginResult::Success {
         user: success.user,
     })
@@ -269,7 +284,14 @@ pub async fn verify_2fa(
     let success = ApiClient::verify_2fa(&req.challenge_id, &req.code, &req.server_url)
         .await
         .map_err(|e: crate::error::AppError| e.to_string())?;
-    finish_login(&state, &app, &req.server_url, &success).await?;
+    finish_login(
+        &state,
+        &app,
+        &req.server_url,
+        &success,
+        Some(&req.password),
+    )
+    .await?;
     Ok(success.user)
 }
 
@@ -278,6 +300,7 @@ async fn finish_login(
     app: &AppHandle,
     server_url: &str,
     success: &LoginSuccess,
+    password: Option<&str>,
 ) -> Result<(), String> {
     let normalized_url = server_url.trim_end_matches('/').to_string();
 
@@ -305,6 +328,32 @@ async fn finish_login(
 
     let client = ApiClient::from_auth(&auth);
     state.set_api(client.clone());
+
+    if let Some(pwd) = password {
+        match crate::account_crypto::unlock_after_login(
+            &client,
+            &state.db,
+            &success.user.id,
+            pwd,
+        )
+        .await
+        {
+            Ok(unlock) => {
+                if unlock.setup {
+                    if let Some(code) = unlock.recovery_code {
+                        let _ = app.emit("crypto-recovery-setup", code);
+                    }
+                }
+            }
+            Err(e) => eprintln!("encryption unlock failed: {}", e),
+        }
+    } else if crate::account_crypto::get_uek(&success.user.id).is_some() {
+        let db = state.db.clone();
+        let uid = success.user.id.clone();
+        if let Err(e) = crate::account_crypto::try_unlock_from_keyring(&client, &db, &uid).await {
+            eprintln!("encryption sync from keyring failed: {}", e);
+        }
+    }
 
     let engine = Arc::new(SyncEngine::new(client, state.db.clone(), app.clone()));
     engine.load_computer_from_db();
@@ -354,8 +403,16 @@ async fn finish_login(
 
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> Result<(), String> {
+    let user_id = load_auth()
+        .ok()
+        .flatten()
+        .and_then(|a| serde_json::from_str::<serde_json::Value>(&a.user_json).ok())
+        .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()));
     if let Ok(client) = state.api() {
         let _ = client.logout().await;
+    }
+    if let Some(uid) = user_id.as_deref() {
+        crate::account_crypto::clear_uek(uid);
     }
     if let Ok(engine) = state.sync_engine() {
         engine.shutdown();
@@ -642,6 +699,97 @@ pub async fn open_path_in_explorer(app: AppHandle, path: String) -> Result<(), S
     app.opener()
         .open_path(&path, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EncryptionKeysExport {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    exported_at: String,
+    keys: HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportEncryptionKeysResult {
+    pub imported: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportEncryptionKeysResult {
+    pub exported: usize,
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn import_encryption_keys(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<ImportEncryptionKeysResult, String> {
+    let picked = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("JSON", &["json"])
+            .blocking_pick_file()
+            .map(|p| p.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let path = picked.ok_or_else(|| "No file selected".to_string())?;
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let export: EncryptionKeysExport =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid key export file: {}", e))?;
+    if export.keys.is_empty() {
+        return Err("Key export file contains no keys".into());
+    }
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let imported = import_file_keys(&conn, &export.keys).map_err(|e| e.to_string())?;
+    if imported == 0 {
+        return Err("No valid keys found in export file".into());
+    }
+    Ok(ImportEncryptionKeysResult { imported })
+}
+
+#[tauri::command]
+pub async fn export_encryption_keys(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<ExportEncryptionKeysResult, String> {
+    let keys = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        list_all_file_keys(&conn).map_err(|e| e.to_string())?
+    };
+    if keys.is_empty() {
+        return Err("No encryption keys on this device".into());
+    }
+
+    let export = EncryptionKeysExport {
+        version: 1,
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        keys: keys.clone(),
+    };
+    let json =
+        serde_json::to_string_pretty(&export).map_err(|e| format!("Failed to encode keys: {}", e))?;
+
+    let path = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("JSON", &["json"])
+            .set_file_name("freedrive-encryption-keys.json")
+            .blocking_save_file()
+            .map(|p| p.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "Export cancelled".to_string())?;
+
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(ExportEncryptionKeysResult {
+        exported: keys.len(),
+        path,
+    })
 }
 
 /// Emergency recovery: disconnect and unregister CfAPI sync root (Windows only).

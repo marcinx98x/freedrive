@@ -9,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use std::path::{Path, PathBuf};
 use windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO;
 
-const ROOT_FOLDER_CONFIG_KEY: &str = "my_drive_root_folder_id";
+pub const ROOT_FOLDER_CONFIG_KEY: &str = "my_drive_root_folder_id";
 /// Stored when GET /folders/root returns children without a folder object.
 pub const MY_DRIVE_CLOUD_ROOT_SENTINEL: &str = "cloud-root";
 
@@ -198,7 +198,18 @@ pub async fn hydrate_file(
     db: &DbHandle,
     file_id: &str,
 ) -> AppResult<Vec<u8>> {
-    let key_b64url = resolve_encryption_key(db, file_id)?;
+    let user_id = crate::auth_store::load_auth()
+        .ok()
+        .flatten()
+        .and_then(|a| serde_json::from_str::<serde_json::Value>(&a.user_json).ok())
+        .and_then(|v| {
+            v.get("id")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| AppError::msg("not authenticated"))?;
+    let key_b64url =
+        crate::account_crypto::resolve_file_key(api, db, &user_id, file_id).await?;
     api.download_file(file_id, Some(&key_b64url)).await
 }
 

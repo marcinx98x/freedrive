@@ -159,7 +159,10 @@ const API = (() => {
         verify2FA: (challenge_id, code) => request('POST', '/auth/verify-2fa', { challenge_id, code }),
         register: (email, username, password, invite_code) => request('POST', '/auth/register', { email, username, password, invite_code }),
         logout: () => request('POST', '/auth/logout', { refresh_token: refreshToken }),
-        resetPassword: (token, email, new_password) => request('POST', '/auth/reset-password', { token, email, new_password }),
+        resetPassword: (token, email, new_password, crypto_update) => request('POST', '/auth/reset-password', {
+            token, email, new_password, crypto_update: crypto_update || undefined,
+        }),
+        resetPasswordCryptoInfo: (token, email) => request('POST', '/auth/reset-password/crypto-info', { token, email }),
         forgotPassword: (email) => request('POST', '/auth/forgot-password', { email }),
         confirmEmail: (token) => request('POST', '/auth/confirm-email', { token }),
     };
@@ -291,6 +294,16 @@ const API = (() => {
         update: (id, data) => request('PATCH', `/approvals/${id}`, data),
     };
 
+    const crypto = {
+        getAccount: () => request('GET', '/crypto/account'),
+        setupAccount: (data) => request('POST', '/crypto/account', data),
+        updateAccount: (data) => request('PUT', '/crypto/account', data),
+        listKeys: (query = '') => request('GET', `/encryption-keys${query}`),
+        getFileKey: (fileId) => request('GET', `/files/${fileId}/encryption-key`),
+        putFileKey: (fileId, wrappedFileKey) => request('PUT', `/files/${fileId}/encryption-key`, { wrapped_file_key: wrappedFileKey }),
+        bulkPutKeys: (data) => request('POST', '/encryption-keys/bulk', data),
+    };
+
     return {
         setTokens,
         setUser,
@@ -307,6 +320,7 @@ const API = (() => {
         activity,
         search,
         approvals,
+        crypto,
         diskStats,
         myStorage,
         me,

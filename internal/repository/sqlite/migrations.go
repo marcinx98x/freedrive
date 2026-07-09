@@ -31,6 +31,7 @@ func runMigrations(db *sql.DB) error {
 		{8, migrationV8},
 		{9, migrationV9},
 		{10, migrationV10},
+		{11, migrationV11},
 	}
 
 	for _, m := range migrations {
@@ -302,4 +303,23 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id);
+`
+
+const migrationV11 = `
+CREATE TABLE IF NOT EXISTS user_crypto (
+    user_id              TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    key_salt             BLOB NOT NULL,
+    wrapped_uek          TEXT NOT NULL,
+    wrapped_uek_recovery TEXT,
+    version              INTEGER NOT NULL DEFAULT 1,
+    updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS file_encryption_keys (
+    file_id          TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    owner_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    wrapped_file_key TEXT NOT NULL,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_file_enc_keys_owner_updated ON file_encryption_keys(owner_id, updated_at);
 `

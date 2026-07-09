@@ -118,6 +118,8 @@ FreeDrive is ideal for:
 
 - Profile settings modal (name, avatar photo)
 - Forgot-password flow with SQLite-persisted reset tokens (survives server restart; single-use)
+- **Cross-device encryption** — account key (UEK) and per-file keys sync via server; unlock with password on web or desktop to decrypt files on any device
+- Password reset can re-wrap the account key when crypto metadata is supplied
 - Secure email change with confirmation link sent to the new address
 - Security center for per-user email 2FA toggle
 - When admin enables global `require_2fa`, all users must verify a 6-digit code at sign-in
@@ -276,7 +278,14 @@ Global limiter enabled in router:
 
 ### Storage Note
 
-Frontend transmits encrypted payload metadata (`iv`, encrypted size), and backend stores encrypted blob data and file metadata. If your threat model requires strict end-to-end guarantees, review the current crypto/key flow before production rollout.
+File payloads are encrypted client-side (AES-GCM) before upload. The server stores ciphertext blobs and **wrapped** encryption keys only — it never receives the user's raw account key (UEK) or per-file keys.
+
+- **Web UI** — WebCrypto encrypts/decrypts in the browser; keys are wrapped with a password-derived key and synced via `/api/v1/crypto/*`
+- **Desktop client** — same UEK + file-key model; keys sync on sign-in and are cached locally for offline decrypt during Explorer hydration
+- **Password reset** — optional crypto metadata lets users re-wrap the account key without losing access to existing files (when recovery was configured)
+- On plain HTTP (non-localhost), the web UI warns and may upload without browser-side encryption
+
+If your threat model requires strict end-to-end guarantees, review key handling and server-side wrapped-key storage before production rollout.
 
 ---
 
@@ -487,7 +496,8 @@ Base path: `/api/v1`
 - `POST /auth/refresh`
 - `POST /auth/logout`
 - `POST /auth/forgot-password` — `{ email }` — sends reset link if account exists (requires SMTP); generic response either way
-- `POST /auth/reset-password` — `{ token, email, new_password }` — consumes SQLite-stored token (survives server restart)
+- `POST /auth/reset-password` — `{ token, email, new_password, crypto_update? }` — consumes SQLite-stored token (survives server restart); optional `crypto_update` re-wraps the account encryption key after password change
+- `POST /auth/reset-password/crypto-info` — `{ token, email }` — returns wrapped account key metadata for password-reset flows that preserve file access
 - `POST /auth/confirm-email` — confirm pending email change from link
 
 ### Protected (Authenticated)
@@ -502,6 +512,18 @@ Base path: `/api/v1`
 - `GET /search` — advanced search (query + filters: type, owner, location, trash, starred, modified, approvals, follow-ups, …)
 - `GET /approvals` — list approvals for current user (`?status=pending` optional)
 - `PATCH /approvals/{id}` — `{ status: "approved" | "rejected" }` (approver only)
+
+#### Encryption key sync
+
+Password-wrapped account keys and per-file keys for cross-device decrypt. The server stores wrapped keys only; clients derive the UEK locally from the user's password.
+
+- `GET /crypto/account` — account crypto metadata (`has_crypto`, `key_salt`, `wrapped_uek`, optional recovery wrap)
+- `POST /crypto/account` — first-time setup (`key_salt`, `wrapped_uek`, optional `wrapped_uek_recovery`)
+- `PUT /crypto/account` — update wraps after password change
+- `GET /encryption-keys` — list file keys for current user (`?since=` for incremental sync)
+- `POST /encryption-keys/bulk` — bulk import wrapped file keys after upload batches
+- `GET /files/{id}/encryption-key` — wrapped key for one file
+- `PUT /files/{id}/encryption-key` — store wrapped key for one file
 
 #### Shares
 
@@ -600,11 +622,12 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app (Tauri 2 + React + Rust). It talks to the server over the same REST API as the web UI.
 
 - Sign in, onboarding, folder sync, system tray, pause/resume
+- **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out / Sign in with another account
 - **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`)
-- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive` in File Explorer as the cloud sync root (Windows 10 1809+)
+- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive` in File Explorer as the cloud sync root (Windows 10 1809+); uses synchronous provider connect (pre-shell baseline, no sidebar shell registration)
 - **My Drive in Explorer** — subfolder with server folders/files as cloud placeholders; files download when opened
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client

@@ -4236,8 +4236,15 @@ const FileManager = (() => {
         const cryptoModule = window.CryptoModule;
         if (!cryptoModule?.getKey || !cryptoModule?.decryptFile || !iv) return blob;
 
-        const key = await cryptoModule.getKey(file.id);
-        if (!key || !iv) return blob;
+        const key = await (window.CryptoSync?.ensureFileKey
+            ? CryptoSync.ensureFileKey(file.id)
+            : cryptoModule.getKey(file.id));
+        if (!key) {
+            throw new Error(
+                'Encryption key not available. Sign in on a device that uploaded the file, or unlock encryption with your password.',
+            );
+        }
+        if (!iv) return blob;
 
         const encrypted = await blob.arrayBuffer();
         const plain = await cryptoModule.decryptFile(encrypted, key, cryptoModule.base64ToUint8(iv));
@@ -4573,7 +4580,10 @@ const FileManager = (() => {
         if (folderId) form.append('folder_id', folderId);
 
         const result = await API.uploadFile(form);
-        if (key) await cryptoModule.storeKey(result.id, key);
+        if (key) {
+            await cryptoModule.storeKey(result.id, key);
+            if (window.CryptoSync?.pushFileKey) await CryptoSync.pushFileKey(result.id, key);
+        }
         addFileActivity(result.id, 'uploaded', result.name);
         createNotification('File uploaded successfully', new Date().toISOString(), true, currentUserLabel());
         return result;
@@ -4607,7 +4617,10 @@ const FileManager = (() => {
 
         try {
             await API.files.updateContent(file.id, form);
-            if (key) await cryptoModule.storeKey(file.id, key);
+            if (key) {
+                await cryptoModule.storeKey(file.id, key);
+                if (window.CryptoSync?.pushFileKey) await CryptoSync.pushFileKey(file.id, key);
+            }
             if (nameToUse !== oldName) {
                 await API.files.update(file.id, { name: nameToUse });
             }

@@ -66,20 +66,36 @@ func (s *PasswordResetService) SendResetEmail(ctx context.Context, emailAddr, si
 
 // ConsumeResetToken validates and consumes a reset token for the given email.
 func (s *PasswordResetService) ConsumeResetToken(ctx context.Context, rawToken, emailAddr string) bool {
-	emailAddr = strings.ToLower(strings.TrimSpace(emailAddr))
-	entry, err := s.resetRepo.GetByTokenHash(ctx, hashResetToken(rawToken))
-	if err != nil || entry == nil {
-		return false
-	}
-	if time.Now().After(entry.ExpiresAt) {
-		_ = s.resetRepo.DeleteByID(ctx, entry.ID)
-		return false
-	}
-	if entry.Email != emailAddr {
+	entry, ok := s.validateResetToken(ctx, rawToken, emailAddr)
+	if !ok || entry == nil {
 		return false
 	}
 	_ = s.resetRepo.DeleteByID(ctx, entry.ID)
 	return true
+}
+
+// PeekResetToken validates a reset token without consuming it.
+func (s *PasswordResetService) PeekResetToken(ctx context.Context, rawToken, emailAddr string) (string, bool) {
+	entry, ok := s.validateResetToken(ctx, rawToken, emailAddr)
+	if !ok || entry == nil {
+		return "", false
+	}
+	return entry.UserID, true
+}
+
+func (s *PasswordResetService) validateResetToken(ctx context.Context, rawToken, emailAddr string) (*domain.PasswordResetToken, bool) {
+	emailAddr = strings.ToLower(strings.TrimSpace(emailAddr))
+	entry, err := s.resetRepo.GetByTokenHash(ctx, hashResetToken(rawToken))
+	if err != nil || entry == nil {
+		return nil, false
+	}
+	if time.Now().After(entry.ExpiresAt) {
+		return nil, false
+	}
+	if entry.Email != emailAddr {
+		return nil, false
+	}
+	return entry, true
 }
 
 func randomToken(n int) string {

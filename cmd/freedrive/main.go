@@ -58,10 +58,12 @@ func main() {
 	shareRepo := sqlite.NewShareRepo(db)
 	commentRepo := sqlite.NewCommentRepo(db)
 	passwordResetRepo := sqlite.NewPasswordResetRepo(db)
+	cryptoRepo := sqlite.NewCryptoRepo(db)
 
 	accessService := service.NewAccessService(shareRepo, fileRepo, folderRepo)
 	shareService := service.NewShareService(shareRepo, fileRepo, folderRepo, userRepo, accessService)
 	passwordResetService := service.NewPasswordResetService(userRepo, passwordResetRepo)
+	cryptoService := service.NewCryptoService(cryptoRepo, fileRepo, accessService)
 
 	authService := service.NewAuthService(userRepo, email2faRepo, cfg.JWTSecret)
 	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo, accessService, folderRepo)
@@ -91,6 +93,7 @@ func main() {
 		shareService,
 		passwordResetService,
 		accessService,
+		cryptoService,
 		fileRepo,
 		userRepo,
 		folderRepo,

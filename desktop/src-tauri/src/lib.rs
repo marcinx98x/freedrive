@@ -1,3 +1,4 @@
+mod account_crypto;
 mod api;
 mod auth_store;
 mod blocking;
@@ -53,6 +54,8 @@ pub fn run() {
             commands::get_shared_with_me,
             commands::open_server_url,
             commands::open_path_in_explorer,
+            commands::import_encryption_keys,
+            commands::export_encryption_keys,
             commands::unregister_explorer_integration,
         ])
         .setup(|app| {
@@ -71,8 +74,11 @@ pub fn run() {
                 }
 
                 #[cfg(windows)]
-                if let Err(e) = crate::cfapi::start(&state) {
-                    eprintln!("CfAPI explorer integration failed: {}", e);
+                {
+                    crate::cfapi::init_app_handle(app.handle().clone());
+                    if let Err(e) = crate::cfapi::start(&state) {
+                        eprintln!("CfAPI explorer integration failed: {}", e);
+                    }
                 }
 
                 let app_handle = app.handle().clone();

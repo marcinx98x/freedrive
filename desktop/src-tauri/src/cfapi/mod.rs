@@ -1,6 +1,8 @@
 #[cfg(windows)]
 mod callbacks;
 #[cfg(windows)]
+pub use callbacks::init_app_handle;
+#[cfg(windows)]
 mod connection;
 #[cfg(windows)]
 mod placeholders;

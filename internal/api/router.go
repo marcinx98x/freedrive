@@ -29,6 +29,7 @@ func NewRouter(
 	shareService *service.ShareService,
 	passwordResetService *service.PasswordResetService,
 	accessService *service.AccessService,
+	cryptoService *service.CryptoService,
 	fileRepo repository.FileRepository,
 	userRepo repository.UserRepository,
 	folderRepo repository.FolderRepository,
@@ -53,7 +54,7 @@ func NewRouter(
 	limiter := middleware.NewRateLimiter(100, 400)
 	r.Use(limiter.Limit)
 
-	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
+	authHandler := handlers.NewAuthHandler(authService, cryptoService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
 	computerHandler := handlers.NewComputerHandler(computerService, folderService)
@@ -63,6 +64,7 @@ func NewRouter(
 	userHandler := handlers.NewUserHandler(userRepo, fileRepo, emailChangeRepo, authService)
 	searchHandler := handlers.NewSearchHandler(searchRepo)
 	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo, accessService)
+	cryptoHandler := handlers.NewCryptoHandler(cryptoService)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
@@ -73,6 +75,7 @@ func NewRouter(
 			r.Post("/logout", authHandler.Logout)
 			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)
+			r.Post("/reset-password/crypto-info", authHandler.ResetPasswordCryptoInfo)
 			r.Post("/confirm-email", authHandler.ConfirmEmail)
 		})
 
@@ -120,6 +123,8 @@ func NewRouter(
 				r.Delete("/{id}/permanent", fileHandler.PermanentDelete)
 				r.Get("/{id}/versions", fileHandler.GetVersions)
 				r.Post("/{id}/versions/{version}/restore", fileHandler.RestoreVersion)
+				r.Get("/{id}/encryption-key", cryptoHandler.GetFileEncryptionKey)
+				r.Put("/{id}/encryption-key", cryptoHandler.PutFileEncryptionKey)
 			})
 
 			r.Route("/folders", func(r chi.Router) {
@@ -148,6 +153,15 @@ func NewRouter(
 			})
 
 			r.Get("/disk-stats", handlers.DiskStats)
+
+			r.Route("/crypto", func(r chi.Router) {
+				r.Get("/account", cryptoHandler.GetAccount)
+				r.Post("/account", cryptoHandler.SetupAccount)
+				r.Put("/account", cryptoHandler.UpdateAccount)
+			})
+
+			r.Get("/encryption-keys", cryptoHandler.ListEncryptionKeys)
+			r.Post("/encryption-keys/bulk", cryptoHandler.BulkPutEncryptionKeys)
 
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)

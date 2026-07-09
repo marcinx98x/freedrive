@@ -46,7 +46,7 @@ export function SignIn({ defaultServerUrl = "http://localhost:8080", onSuccess }
     setError("");
     setLoading(true);
     try {
-      await api.verify2FA(serverUrl, twoFactor.challenge_id, code);
+      await api.verify2FA(serverUrl, twoFactor.challenge_id, code, password);
       onSuccess();
     } catch (err) {
       setError(String(err));
