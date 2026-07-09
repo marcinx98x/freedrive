@@ -199,6 +199,7 @@ const API = (() => {
         get: (id) => request('GET', `/computers/${id}`),
         register: (name, hostname) => request('POST', '/computers/register', { name, hostname }),
         heartbeat: (id) => request('POST', `/computers/${id}/heartbeat`),
+        delete: (id) => request('DELETE', `/computers/${id}`),
     };
 
     const shares = {

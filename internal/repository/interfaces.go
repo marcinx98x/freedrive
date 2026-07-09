@@ -85,7 +85,9 @@ type FileRepository interface {
 type ComputerRepository interface {
 	Create(ctx context.Context, computer *domain.Computer) error
 	GetByID(ctx context.Context, id string) (*domain.Computer, error)
+	GetByOwnerAndHostname(ctx context.Context, ownerID, hostname string) (*domain.Computer, error)
 	ListByOwner(ctx context.Context, ownerID string) ([]domain.Computer, error)
+	Delete(ctx context.Context, id string) error
 	UpdateLastSeen(ctx context.Context, id string, at time.Time) error
 	IsComputerRoot(ctx context.Context, folderID string) (bool, error)
 	IsInComputerTree(ctx context.Context, folderID string) (bool, error)

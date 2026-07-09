@@ -199,6 +199,14 @@ func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) er
 		return fmt.Errorf("folder not found")
 	}
 
+	isComputerRoot, err := s.computerRepo.IsComputerRoot(ctx, folderID)
+	if err != nil {
+		return err
+	}
+	if isComputerRoot {
+		return fmt.Errorf("cannot delete a registered computer folder; remove the device from Computers instead")
+	}
+
 	// Soft-delete the whole subtree so files are not orphaned to root and the
 	// folder can be restored as a whole.
 	if err := s.folderRepo.MoveToTrash(ctx, folderID); err != nil {

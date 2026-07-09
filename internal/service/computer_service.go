@@ -40,11 +40,21 @@ func (s *ComputerService) Get(ctx context.Context, ownerID, computerID string) (
 	return computer, nil
 }
 
-// Register creates a computer root folder and device record.
-// Intended for the future desktop sync client.
+// Register creates a computer root folder and device record, or returns an existing
+// registration for the same owner and hostname.
 func (s *ComputerService) Register(ctx context.Context, ownerID, name, hostname string) (*domain.Computer, error) {
 	if name == "" {
 		return nil, fmt.Errorf("computer name is required")
+	}
+
+	if hostname != "" {
+		existing, err := s.computerRepo.GetByOwnerAndHostname(ctx, ownerID, hostname)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return existing, nil
+		}
 	}
 
 	folder := &domain.Folder{

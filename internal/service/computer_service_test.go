@@ -114,3 +114,32 @@ func TestComputerService_HeartbeatNotFound(t *testing.T) {
 		t.Fatal("expected error for missing computer")
 	}
 }
+
+func TestComputerService_RegisterIsIdempotentByHostname(t *testing.T) {
+	f := setupComputerTest(t)
+
+	first, err := f.svc.Register(f.ctx, f.ownerID, "Work PC", "DESKTOP-1")
+	if err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+
+	second, err := f.svc.Register(f.ctx, f.ownerID, "Work PC", "DESKTOP-1")
+	if err != nil {
+		t.Fatalf("second register: %v", err)
+	}
+
+	if first.ID != second.ID {
+		t.Fatalf("expected same computer id, got %s and %s", first.ID, second.ID)
+	}
+	if first.RootFolderID != second.RootFolderID {
+		t.Fatalf("expected same root folder, got %s and %s", first.RootFolderID, second.RootFolderID)
+	}
+
+	list, err := f.svc.List(f.ctx, f.ownerID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 computer, got %d", len(list))
+	}
+}

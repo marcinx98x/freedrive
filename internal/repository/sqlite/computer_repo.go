@@ -57,10 +57,40 @@ func (r *ComputerRepo) GetByID(ctx context.Context, id string) (*domain.Computer
 	return c, nil
 }
 
+func (r *ComputerRepo) GetByOwnerAndHostname(ctx context.Context, ownerID, hostname string) (*domain.Computer, error) {
+	if hostname == "" {
+		return nil, nil
+	}
+	c := &domain.Computer{}
+	var lastSeen sql.NullTime
+	err := r.reader.QueryRowContext(ctx,
+		`SELECT c.id, c.owner_id, c.name, c.hostname, c.root_folder_id, c.last_seen_at, c.created_at, c.updated_at
+		 FROM computers c
+		 INNER JOIN folders f ON f.id = c.root_folder_id
+		 WHERE c.owner_id = ? AND c.hostname = ? AND f.is_trashed = 0
+		 ORDER BY CASE WHEN c.last_seen_at IS NULL THEN 1 ELSE 0 END, c.last_seen_at DESC, c.created_at DESC
+		 LIMIT 1`, ownerID, hostname,
+	).Scan(&c.ID, &c.OwnerID, &c.Name, &c.Hostname, &c.RootFolderID,
+		&lastSeen, &c.CreatedAt, &c.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastSeen.Valid {
+		c.LastSeenAt = &lastSeen.Time
+	}
+	return c, nil
+}
+
 func (r *ComputerRepo) ListByOwner(ctx context.Context, ownerID string) ([]domain.Computer, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		`SELECT id, owner_id, name, hostname, root_folder_id, last_seen_at, created_at, updated_at
-		 FROM computers WHERE owner_id = ? ORDER BY name`, ownerID)
+		`SELECT c.id, c.owner_id, c.name, c.hostname, c.root_folder_id, c.last_seen_at, c.created_at, c.updated_at
+		 FROM computers c
+		 INNER JOIN folders f ON f.id = c.root_folder_id
+		 WHERE c.owner_id = ? AND f.is_trashed = 0
+		 ORDER BY c.name`, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +133,11 @@ func (r *ComputerRepo) IsInComputerTree(ctx context.Context, folderID string) (b
 		INNER JOIN computers c ON c.root_folder_id = a.id
 	`, folderID).Scan(&count)
 	return count > 0, err
+}
+
+func (r *ComputerRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.writer.ExecContext(ctx, `DELETE FROM computers WHERE id = ?`, id)
+	return err
 }
 
 func (r *ComputerRepo) UpdateLastSeen(ctx context.Context, id string, at time.Time) error {

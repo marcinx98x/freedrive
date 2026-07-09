@@ -56,7 +56,7 @@ func NewRouter(
 	authHandler := handlers.NewAuthHandler(authService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
 	folderHandler := handlers.NewFolderHandler(folderService)
-	computerHandler := handlers.NewComputerHandler(computerService)
+	computerHandler := handlers.NewComputerHandler(computerService, folderService)
 	shareHandler := handlers.NewShareHandler(shareService, fileRepo, userRepo, diskStorage)
 	commentHandler := handlers.NewCommentHandler(commentRepo, accessService, userRepo)
 	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, folderRepo, activityRepo, authService, passwordResetService, diskStorage, dataDir)
@@ -139,6 +139,7 @@ func NewRouter(
 				r.Get("/", computerHandler.List)
 				r.Post("/register", computerHandler.Register)
 				r.Get("/{id}", computerHandler.Get)
+				r.Delete("/{id}", computerHandler.Delete)
 				r.Post("/{id}/heartbeat", computerHandler.Heartbeat)
 			})
 

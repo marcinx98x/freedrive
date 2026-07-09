@@ -13,11 +13,15 @@ import (
 // ComputerHandler handles computer endpoints.
 type ComputerHandler struct {
 	computerService *service.ComputerService
+	folderService   *service.FolderService
 }
 
 // NewComputerHandler creates a new computer handler.
-func NewComputerHandler(computerService *service.ComputerService) *ComputerHandler {
-	return &ComputerHandler{computerService: computerService}
+func NewComputerHandler(computerService *service.ComputerService, folderService *service.FolderService) *ComputerHandler {
+	return &ComputerHandler{
+		computerService: computerService,
+		folderService:   folderService,
+	}
 }
 
 // List handles GET /api/v1/computers
@@ -84,4 +88,23 @@ func (h *ComputerHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, computer)
+}
+
+// Delete handles DELETE /api/v1/computers/{id}
+func (h *ComputerHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	computerID := chi.URLParam(r, "id")
+
+	computer, err := h.computerService.Get(r.Context(), userID, computerID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if err := h.folderService.PermanentDelete(r.Context(), computer.RootFolderID, userID); err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

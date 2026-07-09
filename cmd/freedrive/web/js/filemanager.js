@@ -341,7 +341,14 @@ const FileManager = (() => {
         if (item.owner_name) return item.owner_name;
         const me = getCurrentUser();
         if (item.owner_id && me.id && item.owner_id === me.id) return currentUserLabel();
-        return item.shared_by_name || 'Admin';
+        return item.shared_by_name || 'Unknown';
+    }
+
+    function isComputerListEntry(item) {
+        return currentPage === 'computers'
+            && !currentFolderId
+            && item
+            && item.computer_id;
     }
 
     async function refreshSharedByMeCache() {
@@ -903,6 +910,7 @@ const FileManager = (() => {
                 .filter((c) => c.root_folder_id)
                 .map((c) => ({
                     id: c.root_folder_id,
+                    owner_id: c.owner_id,
                     name: c.name || c.hostname || 'Computer',
                     mime_type: 'application/x-freedrive-computer',
                     updated_at: c.last_seen_at || c.updated_at || c.created_at,
@@ -2314,10 +2322,11 @@ const FileManager = (() => {
 
     function syncTrashActionLabels(target = contextTarget) {
         const trashMode = isTrashMode(target);
+        const computerList = currentPage === 'computers' && !currentFolderId;
 
         setActionLabel(
             document.getElementById('bulk-delete'),
-            trashMode ? TrashCopy.deleteForever : 'Delete',
+            trashMode ? TrashCopy.deleteForever : (computerList ? 'Remove device' : 'Delete'),
         );
         setActionLabel(document.getElementById('bulk-restore'), TrashCopy.restore);
 
@@ -2382,8 +2391,14 @@ const FileManager = (() => {
         });
 
         if (actionMap.delete) {
-            actionMap.delete.textContent = inTrash ? TrashCopy.deleteForever : TrashCopy.moveToTrash;
-            setActionLabel(actionMap.delete, actionMap.delete.textContent);
+            const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
+            if (computerEntry) {
+                actionMap.delete.textContent = 'Remove device';
+                setActionLabel(actionMap.delete, 'Remove device');
+            } else {
+                actionMap.delete.textContent = inTrash ? TrashCopy.deleteForever : TrashCopy.moveToTrash;
+                setActionLabel(actionMap.delete, actionMap.delete.textContent);
+            }
         }
         if (actionMap.restore) {
             actionMap.restore.textContent = TrashCopy.restore;
@@ -2398,6 +2413,16 @@ const FileManager = (() => {
             const showApproval = !inTrash && target && target.type === 'file' && canWriteFileItem(target.data);
             setElementHidden(actionMap.request_approval, !showApproval);
             actionMap.request_approval.style.display = showApproval ? '' : 'none';
+        }
+
+        const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
+        if (computerEntry) {
+            ['move', 'share', 'get_link', 'request_approval', 'copy', 'rename', 'offline', 'open_with', 'star'].forEach((action) => {
+                if (actionMap[action]) {
+                    setElementHidden(actionMap[action], true);
+                    actionMap[action].style.display = 'none';
+                }
+            });
         }
 
         if (inTrash) {
@@ -2713,7 +2738,26 @@ const FileManager = (() => {
         Components.showModal('File information', html, [{ text: 'Close' }]);
     }
 
+    async function removeComputerDevice(data) {
+        const name = data.name || 'this device';
+        const ok = await Components.confirm(
+            'Remove device?',
+            `Remove "${name}" and all synced files from FreeDrive? This cannot be undone.`,
+            'Remove device',
+        );
+        if (!ok) return;
+        await API.computers.delete(data.computer_id);
+        Components.toast('Device removed', 'success');
+        clearSelection();
+        refresh();
+    }
+
     async function moveToTrash(type, data, isTrash) {
+        if (type === 'folder' && isComputerListEntry(data)) {
+            await removeComputerDevice(data);
+            return;
+        }
+
         if (isTrashMode({ isTrash })) {
             const ok = await Components.confirm(
                 TrashCopy.deleteForeverTitle,
@@ -3294,6 +3338,26 @@ const FileManager = (() => {
     async function bulkDelete() {
         const ids = Array.from(selectedItems);
         if (!ids.length) return;
+
+        if (currentPage === 'computers' && !currentFolderId) {
+            const devices = ids
+                .map((id) => findSelectedPayload(id))
+                .filter((payload) => payload && isComputerListEntry(payload.data));
+            if (!devices.length) return;
+            const ok = await Components.confirm(
+                'Remove devices?',
+                `Remove ${devices.length} device(s) and all synced files from FreeDrive? This cannot be undone.`,
+                'Remove devices',
+            );
+            if (!ok) return;
+            for (const payload of devices) {
+                await API.computers.delete(payload.data.computer_id);
+            }
+            clearSelection();
+            Components.toast('Devices removed', 'success');
+            refresh();
+            return;
+        }
 
         if (inTrashView()) {
             const count = ids.length;
