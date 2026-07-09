@@ -1,0 +1,177 @@
+use crate::api::types::FolderContents;
+use crate::api::ApiClient;
+use crate::db::{
+    config_get, config_set, get_file_key, my_drive_get_placeholder, my_drive_upsert_placeholder,
+    DbHandle,
+};
+use crate::error::{AppError, AppResult};
+use std::path::{Path, PathBuf};
+
+const ROOT_FOLDER_CONFIG_KEY: &str = "my_drive_root_folder_id";
+/// Stored when GET /folders/root returns children without a folder object.
+pub const MY_DRIVE_CLOUD_ROOT_SENTINEL: &str = "cloud-root";
+
+pub fn ensure_my_drive_folder() -> AppResult<PathBuf> {
+    crate::auth_store::my_drive_dir()
+}
+
+pub fn relative_path_from_sync_root(sync_root: &Path, full_path: &Path) -> Option<String> {
+    let root_str = path_display(sync_root);
+    let full_str = path_display(full_path);
+
+    if full_str.eq_ignore_ascii_case(&root_str) {
+        return Some(String::new());
+    }
+
+    let prefix = format!("{}\\", root_str);
+    if full_str.len() <= prefix.len() || !full_str[..prefix.len()].eq_ignore_ascii_case(&prefix) {
+        return None;
+    }
+
+    Some(full_str[prefix.len()..].to_string())
+}
+
+fn path_display(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_string()
+}
+
+pub fn is_under_my_drive(relative: &str) -> bool {
+    relative.eq_ignore_ascii_case("My Drive")
+        || relative.starts_with("My Drive\\")
+        || relative.starts_with("My Drive/")
+}
+
+pub fn store_root_folder_id(db: &DbHandle, folder_id: &str) -> AppResult<()> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    config_set(&conn, ROOT_FOLDER_CONFIG_KEY, folder_id)?;
+    my_drive_upsert_placeholder(&conn, "My Drive", folder_id, "folder", None)?;
+    Ok(())
+}
+
+pub fn resolve_my_drive_root_id(db: &DbHandle) -> AppResult<String> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    Ok(config_get(&conn, ROOT_FOLDER_CONFIG_KEY)?.unwrap_or_else(|| "root".to_string()))
+}
+
+pub fn resolve_folder_id(db: &DbHandle, relative_path: &str) -> AppResult<Option<String>> {
+    if relative_path.eq_ignore_ascii_case("My Drive") {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        if let Some(id) = config_get(&conn, ROOT_FOLDER_CONFIG_KEY)? {
+            return Ok(Some(id));
+        }
+        return Ok(None);
+    }
+
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    if let Some((remote_id, item_type)) = my_drive_get_placeholder(&conn, relative_path)? {
+        if item_type == "folder" {
+            return Ok(Some(remote_id));
+        }
+    }
+    Ok(None)
+}
+
+pub async fn fetch_folder_contents(
+    api: &ApiClient,
+    db: &DbHandle,
+    sync_root: &Path,
+    parent_relative: &str,
+    folder_id: Option<&str>,
+) -> AppResult<FolderContents> {
+    let contents = if parent_relative.eq_ignore_ascii_case("My Drive") && folder_id.is_none() {
+        api.get_my_drive_root().await?
+    } else {
+        let fid = folder_id
+            .ok_or_else(|| AppError::msg("missing folder id for My Drive subfolder"))?;
+        api.get_folder_contents(fid).await?
+    };
+
+    if parent_relative.eq_ignore_ascii_case("My Drive") {
+        if let Some(ref folder) = contents.folder {
+            store_root_folder_id(db, &folder.id)?;
+        } else {
+            store_root_folder_id(db, MY_DRIVE_CLOUD_ROOT_SENTINEL)?;
+        }
+    }
+
+    let parent_remote = if parent_relative.eq_ignore_ascii_case("My Drive") {
+        contents.folder.as_ref().map(|f| f.id.as_str())
+    } else {
+        folder_id
+    };
+
+    let parent_base = PathBuf::from(parent_relative);
+    {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        for folder in &contents.folders {
+            let rel = parent_base
+                .join(&folder.name)
+                .to_string_lossy()
+                .replace('/', "\\");
+            my_drive_upsert_placeholder(
+                &conn,
+                &rel,
+                &folder.id,
+                "folder",
+                parent_remote,
+            )?;
+        }
+        for file in &contents.files {
+            let rel = parent_base
+                .join(&file.name)
+                .to_string_lossy()
+                .replace('/', "\\");
+            my_drive_upsert_placeholder(&conn, &rel, &file.id, "file", parent_remote)?;
+        }
+    }
+
+    let _ = sync_root;
+    Ok(contents)
+}
+
+pub async fn hydrate_file(
+    api: &ApiClient,
+    db: &DbHandle,
+    file_id: &str,
+) -> AppResult<Vec<u8>> {
+    let key_b64url = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        get_file_key(&conn, file_id)?
+    };
+    api.download_file(file_id, key_b64url.as_deref()).await
+}
+
+pub fn sync_root_path() -> AppResult<PathBuf> {
+    crate::auth_store::sync_root_dir(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_path_from_sync_root_windows() {
+        let root = PathBuf::from(r"C:\Users\me\FreeDrive");
+        let full = PathBuf::from(r"C:\Users\me\FreeDrive\My Drive\Docs");
+        let rel = relative_path_from_sync_root(&root, &full).unwrap();
+        assert_eq!(rel, "My Drive\\Docs");
+    }
+
+    #[test]
+    fn relative_path_from_volume_relative_normalized() {
+        let root = PathBuf::from(r"C:\Users\me\FreeDrive");
+        let full = PathBuf::from(r"C:\Users\me\FreeDrive\My Drive");
+        let rel = relative_path_from_sync_root(&root, &full).unwrap();
+        assert_eq!(rel, "My Drive");
+    }
+
+    #[test]
+    fn relative_path_sync_root_is_empty() {
+        let root = PathBuf::from(r"C:\Users\me\FreeDrive");
+        let rel = relative_path_from_sync_root(&root, &root).unwrap();
+        assert_eq!(rel, "");
+    }
+}

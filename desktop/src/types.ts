@@ -1,3 +1,11 @@
+export interface ExplorerIntegrationStatus {
+  connected: boolean;
+  registered: boolean;
+  finalized: boolean;
+  sync_root_path: string;
+  my_drive_path: string;
+}
+
 export type AppScreen =
   | "loading"
   | "signin"
@@ -97,4 +105,12 @@ export interface AppNotification {
   description: string;
   isNew?: boolean;
   actions?: { label: string; action: string }[];
+}
+
+export interface SharedItem {
+  share: { id: string; created_at?: string };
+  item_type: string;
+  item_id: string;
+  item_name: string;
+  owner_name?: string;
 }

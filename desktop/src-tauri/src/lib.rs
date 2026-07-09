@@ -1,10 +1,12 @@
 mod api;
 mod auth_store;
 mod blocking;
+mod cfapi;
 mod commands;
 mod crypto;
 mod db;
 mod error;
+mod my_drive;
 mod state;
 mod sync;
 
@@ -12,8 +14,13 @@ use state::AppState;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Manager, RunEvent, WindowEvent,
 };
+
+fn shutdown_cfapi() {
+    #[cfg(windows)]
+    crate::cfapi::stop();
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,10 +47,13 @@ pub fn run() {
             commands::pause_sync,
             commands::resume_sync,
             commands::open_drive_folder,
+            commands::get_explorer_integration_status,
             commands::get_profile,
             commands::get_storage_info,
+            commands::get_shared_with_me,
             commands::open_server_url,
             commands::open_path_in_explorer,
+            commands::unregister_explorer_integration,
         ])
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -60,9 +70,13 @@ pub fn run() {
                     state.set_sync_engine(engine);
                 }
 
+                #[cfg(windows)]
+                if let Err(e) = crate::cfapi::start(&state) {
+                    eprintln!("CfAPI explorer integration failed: {}", e);
+                }
+
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     if let Some(state) = app_handle.try_state::<AppState>() {
                         let _ = commands::restore_sync_on_startup(&state, &app_handle).await;
                     }
@@ -106,6 +120,7 @@ pub fn run() {
                         }
                     }
                     "quit" => {
+                        shutdown_cfapi();
                         app.exit(0);
                     }
                     _ => {}
@@ -134,6 +149,11 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| {
+            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                shutdown_cfapi();
+            }
+        });
 }

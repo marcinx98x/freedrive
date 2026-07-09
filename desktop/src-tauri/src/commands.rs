@@ -1,6 +1,6 @@
-use crate::api::types::{LoginSuccess, StorageInfo, User};
+use crate::api::types::{LoginSuccess, SharedItem, StorageInfo, User};
 use crate::api::ApiClient;
-use crate::auth_store::{clear_auth, load_auth, mirror_dir, save_auth, StoredAuth};
+use crate::auth_store::{clear_auth, load_auth, my_drive_path, save_auth, sync_root_dir, StoredAuth};
 use crate::db::{
     config_get, config_set, list_activity, list_sync_folders, prepare_login_session,
     reset_session_on_logout, save_local_sync_folders,
@@ -50,6 +50,15 @@ pub struct SystemFolder {
     pub label: String,
     pub path: String,
     pub suggested: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExplorerIntegrationStatus {
+    pub connected: bool,
+    pub registered: bool,
+    pub finalized: bool,
+    pub sync_root_path: String,
+    pub my_drive_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,6 +314,11 @@ async fn finish_login(
         eprintln!("setup_computer on login failed: {}", e);
     }
 
+    #[cfg(windows)]
+    if let Err(e) = crate::cfapi::start(state) {
+        eprintln!("CfAPI explorer integration failed: {}", e);
+    }
+
     if !folders_to_remap.is_empty() {
         let eng = engine.clone();
         let st = state.db.clone();
@@ -346,6 +360,8 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), String> {
     if let Ok(engine) = state.sync_engine() {
         engine.shutdown();
     }
+    #[cfg(windows)]
+    crate::cfapi::stop();
     clear_auth().map_err(|e: crate::error::AppError| e.to_string())?;
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -542,8 +558,32 @@ pub async fn resume_sync(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn open_drive_folder(app: AppHandle) -> Result<(), String> {
-    let dir = mirror_dir().map_err(|e: crate::error::AppError| e.to_string())?;
+pub async fn get_explorer_integration_status(
+    state: State<'_, AppState>,
+) -> Result<ExplorerIntegrationStatus, String> {
+    let sync_root = sync_root_dir(false).map_err(|e: crate::error::AppError| e.to_string())?;
+    let my_drive = my_drive_path(false).map_err(|e: crate::error::AppError| e.to_string())?;
+    let (connected, registered, finalized) =
+        crate::cfapi::integration_status(&state.db).map_err(|e| e.to_string())?;
+    Ok(ExplorerIntegrationStatus {
+        connected,
+        registered,
+        finalized,
+        sync_root_path: sync_root.to_string_lossy().into_owned(),
+        my_drive_path: my_drive.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+pub async fn open_drive_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::cfapi::ensure_connected(&state).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let dir = my_drive_path(false).map_err(|e: crate::error::AppError| e.to_string())?;
+    #[cfg(not(windows))]
+    let dir = sync_root_dir(false).map_err(|e: crate::error::AppError| e.to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -565,6 +605,16 @@ pub async fn get_storage_info(state: State<'_, AppState>) -> Result<StorageInfo,
         .api()
         .map_err(|e| e.to_string())?
         .get_my_storage()
+        .await
+        .map_err(|e: crate::error::AppError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_shared_with_me(state: State<'_, AppState>) -> Result<Vec<SharedItem>, String> {
+    state
+        .api()
+        .map_err(|e| e.to_string())?
+        .get_shared_with_me()
         .await
         .map_err(|e: crate::error::AppError| e.to_string())
 }
@@ -592,4 +642,13 @@ pub async fn open_path_in_explorer(app: AppHandle, path: String) -> Result<(), S
     app.opener()
         .open_path(&path, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// Emergency recovery: disconnect and unregister CfAPI sync root (Windows only).
+#[tauri::command]
+pub async fn unregister_explorer_integration(state: State<'_, AppState>) -> Result<(), String> {
+    #[cfg(windows)]
+    return crate::cfapi::unregister(&state);
+    #[cfg(not(windows))]
+    Ok(())
 }

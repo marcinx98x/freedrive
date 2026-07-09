@@ -56,6 +56,12 @@ fn init_schema(conn: &Connection) -> AppResult<()> {
             remote_file_id TEXT PRIMARY KEY,
             key_b64url TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS my_drive_placeholders (
+            relative_path TEXT PRIMARY KEY,
+            remote_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            parent_remote_id TEXT
+        );
         "#,
     )?;
     purge_mirror_sync_state_once(conn)?;
@@ -526,6 +532,45 @@ pub fn delete_file_key(conn: &Connection, remote_file_id: &str) -> AppResult<()>
     Ok(())
 }
 
+pub fn my_drive_upsert_placeholder(
+    conn: &Connection,
+    relative_path: &str,
+    remote_id: &str,
+    item_type: &str,
+    parent_remote_id: Option<&str>,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO my_drive_placeholders (relative_path, remote_id, item_type, parent_remote_id)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(relative_path) DO UPDATE SET
+           remote_id = excluded.remote_id,
+           item_type = excluded.item_type,
+           parent_remote_id = excluded.parent_remote_id",
+        params![relative_path, remote_id, item_type, parent_remote_id],
+    )?;
+    Ok(())
+}
+
+pub fn my_drive_get_placeholder(
+    conn: &Connection,
+    relative_path: &str,
+) -> AppResult<Option<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT remote_id, item_type FROM my_drive_placeholders WHERE relative_path = ?1",
+    )?;
+    let mut rows = stmt.query(params![relative_path])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some((row.get(0)?, row.get(1)?)))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn my_drive_clear_placeholders(conn: &Connection) -> AppResult<()> {
+    conn.execute("DELETE FROM my_drive_placeholders", [])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,5 +679,15 @@ mod tests {
             get_folder_mapping(&conn, id, "other").unwrap().as_deref(),
             Some("f-other")
         );
+    }
+
+    #[test]
+    fn my_drive_placeholder_roundtrip() {
+        let conn = test_conn();
+        init_schema(&conn).unwrap();
+        my_drive_upsert_placeholder(&conn, "My Drive\\Docs", "f-1", "folder", Some("root-1")).unwrap();
+        let row = my_drive_get_placeholder(&conn, "My Drive\\Docs").unwrap();
+        assert_eq!(row.as_ref().map(|r| r.0.as_str()), Some("f-1"));
+        assert_eq!(row.as_ref().map(|r| r.1.as_str()), Some("folder"));
     }
 }

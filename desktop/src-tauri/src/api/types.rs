@@ -96,3 +96,26 @@ pub struct StorageInfo {
     #[serde(default)]
     pub free_bytes: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserShare {
+    pub id: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedItem {
+    pub share: UserShare,
+    pub item_type: String,
+    pub item_id: String,
+    pub item_name: String,
+    #[serde(default)]
+    pub owner_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedWithMeResponse {
+    #[serde(default)]
+    pub items: Vec<SharedItem>,
+}

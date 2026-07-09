@@ -213,7 +213,14 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 type="button"
                 className="btn-text"
                 style={{ marginTop: 16 }}
-                onClick={() => api.openDriveFolder()}
+                onClick={async () => {
+                  setError("");
+                  try {
+                    await api.openDriveFolder();
+                  } catch (err) {
+                    setError(String(err));
+                  }
+                }}
               >
                 → Open File Explorer to see Drive files
               </button>

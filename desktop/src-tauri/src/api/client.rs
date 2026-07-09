@@ -396,6 +396,18 @@ impl ApiClient {
             .await
     }
 
+    pub async fn get_my_drive_root(&self) -> AppResult<FolderContents> {
+        self.request_json(reqwest::Method::GET, "/folders/root", None, false, 2)
+            .await
+    }
+
+    pub async fn get_shared_with_me(&self) -> AppResult<Vec<SharedItem>> {
+        let resp: SharedWithMeResponse = self
+            .request_json(reqwest::Method::GET, "/shares/with-me", None, false, 2)
+            .await?;
+        Ok(resp.items)
+    }
+
     pub async fn logout(&self) -> AppResult<()> {
 
         let refresh_token = self.inner.read().refresh_token.clone();

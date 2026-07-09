@@ -15,12 +15,14 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
 - **Profile menu** — server avatar, storage bar, Manage storage, Sign out / Sign in with another account
 - **System tray** — minimize to tray, pause/resume sync from the menu
+- **Windows Explorer integration** (Windows 10 1809+) — **FreeDrive** in the sidebar and under **This PC**, with **My Drive** showing server files as cloud placeholders (download on open)
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
 - [Rust](https://www.rust-lang.org/tools/install) (for Tauri)
 - [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload (Windows)
+- **Windows 10 version 1809 or later** for Explorer Cloud Files (CfAPI) integration
 - A running **FreeDrive server** (from repo root: `go run ./cmd/freedrive`)
 
 Install Visual Studio Build Tools (C++ compiler + linker):
@@ -106,6 +108,38 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 - Encryption keys are stored locally in `%APPDATA%\FreeDrive\sync.db`.
 - Files uploaded from the **web browser** may not decrypt on desktop unless the key was stored on this PC.
 
+### Windows Explorer (FreeDrive in sidebar)
+
+- Sign in and keep the desktop app running.
+- Open File Explorer — **FreeDrive** should appear in the navigation pane and under **This PC**.
+- Open **FreeDrive → My Drive** to browse cloud content. Files download when you open them.
+- Requires **Windows 10 1809+**. CfAPI + Shell registration happen on first login after install, not during MSI/NSIS install.
+- **Updating or reinstalling** the app does not reset Explorer integration — flags live in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_shell_registered`).
+
+#### CfAPI recovery (`0x80070057` / “cloud file provider is not running”)
+
+If Explorer shows *cloud file provider is not running* or the terminal logs `CfRegisterSyncRoot failed: 0x80070057`, local DB state may be out of sync with Windows. The app now auto-recovers on startup (connect-first). For manual recovery:
+
+```powershell
+# Option A — restore DB flag (when Windows still has the sync root registered)
+@'
+import sqlite3
+c = sqlite3.connect(r"%APPDATA%\FreeDrive\sync.db")
+c.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('cf_sync_root_registered', 'true')")
+c.commit()
+print("ok")
+'@ | python -
+```
+
+Restart the app (`npm run tauri dev` or the installed build). Check `%APPDATA%\FreeDrive\sync.log` for `cfapi: explorer integration started`.
+
+```text
+# Option B — full reset via Tauri devtools console (app must be running)
+await window.__TAURI__.core.invoke('unregister_explorer_integration')
+```
+
+Then restart the app for a clean re-registration.
+
 ### `link.exe` not found
 
 Install MSVC Build Tools (see Prerequisites), restart the terminal, or use `scripts\dev.cmd`.
@@ -137,7 +171,8 @@ See [`docs/desktop-api.md`](../docs/desktop-api.md) for the endpoint list used b
 | `%APPDATA%/FreeDrive/sync.db` | Sync state database |
 | `%APPDATA%/FreeDrive/auth.json` | Session tokens |
 | `%APPDATA%/FreeDrive/sync.log` | Sync debug log |
-| `%USERPROFILE%/FreeDrive/` | Downloaded cloud files mirror |
+| `%USERPROFILE%/FreeDrive/` | CfAPI sync root (Windows Explorer provider) |
+| `%USERPROFILE%/FreeDrive/My Drive/` | My Drive view — server folders/files as placeholders |
 
 ## License
 

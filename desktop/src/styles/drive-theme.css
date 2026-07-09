@@ -632,6 +632,96 @@ input {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+  align-items: start;
+}
+
+.home-left-column,
+.home-right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-panel-title {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.shared-with-mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.notification-mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.notification-mini-card {
+  background: var(--fd-bg-card);
+  border-radius: var(--fd-radius-sm);
+  padding: 12px 14px;
+}
+
+.notification-mini-card-top {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.notification-icon-sm {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+.notification-mini-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-mini-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.notification-mini-title {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.notification-mini-description {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fd-text-secondary);
+  margin: 0;
+}
+
+.notification-mini-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.home-see-all-link {
+  color: var(--fd-accent);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.home-see-all-link:hover {
+  text-decoration: underline;
 }
 
 .card {

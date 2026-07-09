@@ -25,6 +25,7 @@ Base URL: configured at sign-in (e.g. `http://localhost:8080`).
 | Method | Path | Purpose |
 |--------|------|---------|
 | `POST` | `/api/v1/folders` | Create or resolve folder under computer root |
+| `GET` | `/api/v1/folders/root` | My Drive root contents (Windows Explorer CfAPI) |
 | `GET` | `/api/v1/folders/{id}` | List folder contents (poll / mirror) |
 
 ## Files
@@ -35,9 +36,23 @@ Base URL: configured at sign-in (e.g. `http://localhost:8080`).
 | `PUT` | `/api/v1/files/{id}/content` | Update file content |
 | `GET` | `/api/v1/files/{id}/download` | Download encrypted blob |
 
+## Shares
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/shares/with-me` | List files and folders shared with the current user (Home panel) |
+
 ## Implementation reference
 
 Rust client: [`desktop/src-tauri/src/api/client.rs`](../desktop/src-tauri/src/api/client.rs)
+
+## Windows Explorer (CfAPI)
+
+On Windows 10 1809+ the desktop app registers a **Cloud Files** sync root at `%USERPROFILE%\FreeDrive\` after sign-in. Explorer shows **FreeDrive** in the navigation pane and under **This PC**. The `My Drive\` subfolder lists server content as cloud placeholders; files hydrate on open via `GET /api/v1/files/{id}/download`.
+
+- Registration: `desktop/src-tauri/src/cfapi/`
+- Placeholder cache: SQLite table `my_drive_placeholders` in `sync.db`
+- Requires the desktop app to be running while browsing placeholders
 
 ## Versioning
 

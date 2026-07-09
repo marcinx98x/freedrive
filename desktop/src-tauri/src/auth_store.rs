@@ -119,9 +119,29 @@ pub fn data_dir() -> AppResult<PathBuf> {
 }
 
 pub fn mirror_dir() -> AppResult<PathBuf> {
+    sync_root_dir(true)
+}
+
+/// Sync root path for CfAPI. When `create` is false, avoids touching the path
+/// (required while the folder is a registered cloud sync root without a provider).
+pub fn sync_root_dir(create: bool) -> AppResult<PathBuf> {
     let dir = dirs::home_dir()
         .ok_or_else(|| AppError::msg("cannot resolve home directory"))?
         .join("FreeDrive");
-    fs::create_dir_all(&dir)?;
+    if create {
+        fs::create_dir_all(&dir)?;
+    }
+    Ok(dir)
+}
+
+pub fn my_drive_dir() -> AppResult<PathBuf> {
+    my_drive_path(true)
+}
+
+pub fn my_drive_path(create: bool) -> AppResult<PathBuf> {
+    let dir = sync_root_dir(create)?.join("My Drive");
+    if create {
+        fs::create_dir_all(&dir)?;
+    }
     Ok(dir)
 }

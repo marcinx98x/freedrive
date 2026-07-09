@@ -3,8 +3,10 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ActivityItem,
   AuthState,
+  ExplorerIntegrationStatus,
   LoginResult,
   SelectedFolder,
+  SharedItem,
   StorageInfo,
   SyncFolder,
   SyncProgress,
@@ -36,8 +38,11 @@ export const api = {
   pauseSync: () => invoke<void>("pause_sync"),
   resumeSync: () => invoke<void>("resume_sync"),
   openDriveFolder: () => invoke<void>("open_drive_folder"),
+  getExplorerIntegrationStatus: () =>
+    invoke<ExplorerIntegrationStatus>("get_explorer_integration_status"),
   getProfile: () => invoke<User>("get_profile"),
   getStorageInfo: () => invoke<StorageInfo>("get_storage_info"),
+  getSharedWithMe: () => invoke<SharedItem[]>("get_shared_with_me"),
   openServerUrl: (path?: string) => invoke<void>("open_server_url", { path }),
   openPathInExplorer: (path: string) =>
     invoke<void>("open_path_in_explorer", { path }),
