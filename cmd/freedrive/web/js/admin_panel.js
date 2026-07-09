@@ -10,6 +10,7 @@ const AdminPanel = (() => {
             default_quota_gb: 10,
             registration: 'invite',
             max_upload_mb: 512,
+            allowed_types_unlimited: false,
             allowed_types: [
                 // Obrazy
                 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tiff', 'tif', 'ico', 'heic', 'heif', 'avif', 'raw',
@@ -1502,11 +1503,15 @@ const AdminPanel = (() => {
             </div>
             <div class="types-chip-wrap">
                 <h4>Allowed file types</h4>
-                <div class="chip-row" id="allowed-type-chip-row">
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; cursor:pointer;">
+                    <input type="checkbox" data-setting="general.allowed_types_unlimited" ${g.allowed_types_unlimited ? 'checked' : ''} style="width:18px; height:18px;">
+                    <span>Without limits — accept all file types</span>
+                </label>
+                <div class="chip-row" id="allowed-type-chip-row" style="${g.allowed_types_unlimited ? 'opacity:0.5; pointer-events:none;' : ''}">
                     ${g.allowed_types.map((t) => `<span class="admin-chip">.${esc(t)} <button data-admin-action="remove-type-chip" data-type="${esc(t)}">×</button></span>`).join('')}
                 </div>
-                <div class="chip-add-row">
-                    <input class="admin-input filetype-input" id="new-type-chip" placeholder="Add file type... e.g. .webp">
+                <div class="chip-add-row" style="${g.allowed_types_unlimited ? 'opacity:0.5; pointer-events:none;' : ''}">
+                    <input class="admin-input filetype-input" id="new-type-chip" placeholder="Add file type... e.g. .webp" ${g.allowed_types_unlimited ? 'disabled' : ''}>
                     <span class="enter-hint">↵</span>
                 </div>
             </div>
@@ -2683,6 +2688,7 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'add-type-chip') {
+                    if (state.settingsDraft.general.allowed_types_unlimited) return;
                     const input = document.getElementById('new-type-chip');
                     const value = String(input?.value || '').replace(/^\./, '').trim().toLowerCase();
                     if (!value) return;
@@ -2696,6 +2702,7 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'remove-type-chip') {
+                    if (state.settingsDraft.general.allowed_types_unlimited) return;
                     const type = btn.getAttribute('data-type');
                     state.settingsDraft.general.allowed_types = state.settingsDraft.general.allowed_types.filter((x) => x !== type);
                     state.settingsDirty = true;
@@ -2927,6 +2934,10 @@ const AdminPanel = (() => {
                 }
                 state.settingsDirty = JSON.stringify(state.settingsDraft) !== JSON.stringify(state.settings);
                 validateSettings();
+                if (key === 'general.allowed_types_unlimited' && state.section === 'settings' && state.settingsTab === 'general') {
+                    renderSection();
+                    return;
+                }
                 if (state.section === 'settings') {
                     const saveBtn = document.querySelector('[data-admin-action="save-settings"]');
                     if (saveBtn) saveBtn.disabled = !state.settingsDirty || Object.keys(state.settingsErrors).length > 0;
@@ -2949,6 +2960,7 @@ const AdminPanel = (() => {
         if (typeInput) {
             typeInput.addEventListener('keydown', (e) => {
                 if (e.key !== 'Enter') return;
+                if (state.settingsDraft.general.allowed_types_unlimited) return;
                 e.preventDefault();
                 const value = String(typeInput.value || '').replace(/^\./, '').trim().toLowerCase();
                 if (!value) return;

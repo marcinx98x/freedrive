@@ -102,6 +102,11 @@ func MaxUploadMB() int {
 	return asInt(general(load())["max_upload_mb"], 0)
 }
 
+// AllowedTypesUnlimited returns true when the admin disabled the extension whitelist.
+func AllowedTypesUnlimited() bool {
+	return asBool(general(load())["allowed_types_unlimited"], false)
+}
+
 // AllowedTypes returns lowercase file extensions without dots.
 func AllowedTypes() []string {
 	raw, ok := general(load())["allowed_types"].([]interface{})

@@ -1,0 +1,160 @@
+import { useState } from "react";
+import { api } from "../api/tauri";
+import { Logo } from "../components/Logo";
+
+interface SignInProps {
+  defaultServerUrl?: string;
+  onSuccess: () => void;
+}
+
+export function SignIn({ defaultServerUrl = "http://localhost:8080", onSuccess }: SignInProps) {
+  const [serverUrl, setServerUrl] = useState(defaultServerUrl);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [twoFactor, setTwoFactor] = useState<{
+    challenge_id: string;
+    email_masked: string;
+  } | null>(null);
+  const [code, setCode] = useState("");
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const result = await api.login(serverUrl, email, password);
+      if (result.type === "two_factor") {
+        setTwoFactor({
+          challenge_id: result.challenge_id,
+          email_masked: result.email_masked,
+        });
+      } else {
+        onSuccess();
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handle2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!twoFactor) return;
+    setError("");
+    setLoading(true);
+    try {
+      await api.verify2FA(serverUrl, twoFactor.challenge_id, code);
+      onSuccess();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openRegister = () => {
+    const base = serverUrl.replace(/\/$/, "");
+    window.open(`${base}/#/register`, "_blank");
+  };
+
+  return (
+    <div className="signin-layout">
+      <div className="signin-left">
+        <div className="signin-header">
+          <Logo />
+          <button type="button" className="icon-btn">⋮</button>
+        </div>
+
+        {!twoFactor ? (
+          <>
+            <h1 className="signin-title">Sign in to get started</h1>
+            <p className="signin-subtitle">
+              To start using FreeDrive, sign in or create a new account on your server.
+            </p>
+            {error && <div className="error-banner">{error}</div>}
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label htmlFor="server">Server URL</label>
+                <input
+                  id="server"
+                  type="url"
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  placeholder="https://drive.example.com"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="email">Email</label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="password">Password</label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="btn-primary" disabled={loading}>
+                  {loading ? "Signing in…" : "Sign in"}
+                </button>
+                <button type="button" className="btn-text" onClick={openRegister}>
+                  Create account
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <>
+            <h1 className="signin-title">Two-factor authentication</h1>
+            <p className="signin-subtitle">
+              Enter the code sent to {twoFactor.email_masked}
+            </p>
+            {error && <div className="error-banner">{error}</div>}
+            <form onSubmit={handle2FA}>
+              <div className="form-group">
+                <label htmlFor="code">Verification code</label>
+                <input
+                  id="code"
+                  type="text"
+                  inputMode="numeric"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="btn-primary" disabled={loading}>
+                  Verify
+                </button>
+                <button
+                  type="button"
+                  className="btn-text"
+                  onClick={() => setTwoFactor(null)}
+                >
+                  Back
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </div>
+      <div className="signin-right">
+        <div className="signin-illustration" aria-hidden />
+      </div>
+    </div>
+  );
+}

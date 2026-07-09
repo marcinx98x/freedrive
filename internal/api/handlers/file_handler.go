@@ -43,7 +43,7 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	maxBytes := adminsettings.EffectiveMaxUploadBytes(h.maxUpload)
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB memory
+	if err := r.ParseMultipartForm(64 << 20); err != nil { // 64MB memory
 		writeError(w, "file too large or invalid form", http.StatusBadRequest)
 		return
 	}
@@ -61,11 +61,13 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		name = header.Filename
 	}
 
-	if allowed := adminsettings.AllowedTypes(); len(allowed) > 0 {
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
-		if ext == "" || !containsString(allowed, ext) {
-			writeError(w, "file type not allowed", http.StatusBadRequest)
-			return
+	if !adminsettings.AllowedTypesUnlimited() {
+		if allowed := adminsettings.AllowedTypes(); len(allowed) > 0 {
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+			if ext == "" || !containsString(allowed, ext) {
+				writeError(w, "file type not allowed", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	mimeType := r.FormValue("mime_type")
@@ -284,7 +286,7 @@ func (h *FileHandler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 
 	maxBytes := adminsettings.EffectiveMaxUploadBytes(h.maxUpload)
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(64 << 20); err != nil { // 64MB memory
 		writeError(w, "file too large or invalid form", http.StatusBadRequest)
 		return
 	}
@@ -300,11 +302,13 @@ func (h *FileHandler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = header.Filename
 	}
-	if allowed := adminsettings.AllowedTypes(); len(allowed) > 0 {
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
-		if ext == "" || !containsString(allowed, ext) {
-			writeError(w, "file type not allowed", http.StatusBadRequest)
-			return
+	if !adminsettings.AllowedTypesUnlimited() {
+		if allowed := adminsettings.AllowedTypes(); len(allowed) > 0 {
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+			if ext == "" || !containsString(allowed, ext) {
+				writeError(w, "file type not allowed", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	mimeType := r.FormValue("mime_type")

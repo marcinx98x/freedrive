@@ -94,7 +94,7 @@ FreeDrive is ideal for:
 ### 2. Sidebar: My Drive & Computers
 
 - **My Drive** — primary file space with an expandable sidebar folder tree (lazy-loaded folders, expand/collapse chevrons, path sync on navigation)
-- **Computers** — separate sidebar section for desktop backup/sync (isolated from My Drive root folders; API-ready for future desktop clients)
+- **Computers** — separate sidebar section for desktop backup/sync (isolated from My Drive root folders); the [`desktop/`](desktop/) Tauri client registers here and syncs local folders
 - Drive-style pill highlights on nav rows, with chevrons inside the active/hover area
 
 ### 3. File Lifecycle
@@ -202,6 +202,7 @@ Admin settings are enforced at runtime (not UI-only):
 - **Require 2FA for all users** — forces email verification at sign-in (no admin exemption)
 - **Versioning** — enable/disable file versioning and set `keep_versions`
 - **Total capacity** — server-wide storage cap blocks uploads and content updates when exceeded
+- **Allowed file types** — extension whitelist in General settings; enable **Without limits** to accept any file type
 
 Security panel also surfaces suspicious logins, active sessions, and session revocation.
 
@@ -594,6 +595,27 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 
 ---
 
+## Desktop Client (beta)
+
+The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app (Tauri 2 + React + Rust). It talks to the server over the same REST API as the web UI.
+
+- Sign in, onboarding, folder sync, system tray, pause/resume
+- **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
+- **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
+- **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out / Sign in with another account
+- **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`)
+- Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
+- See [`desktop/README.md`](desktop/README.md) for dev setup and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
+
+Quick start (from repo root):
+
+```bash
+go run ./cmd/freedrive          # terminal 1 — server
+cd desktop && npm install && npm run tauri dev   # terminal 2 — desktop
+```
+
+---
+
 ## Project Structure
 
 ```text
@@ -621,6 +643,13 @@ scripts/
 docs/
   index.html              # project landing page
   screenshots/            # marketing screenshots
+  desktop-api.md          # REST endpoints used by the desktop client
+
+desktop/                  # Tauri desktop sync client (React + Rust)
+  src/                    # frontend UI
+  src-tauri/              # native shell, sync engine, API client
+  package.json
+  README.md               # build & dev instructions
 ```
 
 ---
