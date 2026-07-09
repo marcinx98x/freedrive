@@ -56,6 +56,12 @@ fn init_schema(conn: &Connection) -> AppResult<()> {
             remote_file_id TEXT PRIMARY KEY,
             key_b64url TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS pending_file_keys (
+            folder_id TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            key_b64url TEXT NOT NULL,
+            PRIMARY KEY (folder_id, file_name)
+        );
         CREATE TABLE IF NOT EXISTS my_drive_placeholders (
             relative_path TEXT PRIMARY KEY,
             remote_id TEXT NOT NULL,
@@ -196,6 +202,7 @@ fn clear_sync_data(conn: &Connection) -> AppResult<()> {
         DELETE FROM sync_folders;
         DELETE FROM sync_activity;
         DELETE FROM file_keys;
+        DELETE FROM pending_file_keys;
         DELETE FROM app_config WHERE key IN ('computer_id', 'computer_root_id', 'initial_sync_complete');
         "#,
     )?;
@@ -532,6 +539,60 @@ pub fn delete_file_key(conn: &Connection, remote_file_id: &str) -> AppResult<()>
     Ok(())
 }
 
+pub fn store_pending_file_key(
+    conn: &Connection,
+    folder_id: &str,
+    file_name: &str,
+    key_b64url: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO pending_file_keys (folder_id, file_name, key_b64url) VALUES (?1, ?2, ?3)
+         ON CONFLICT(folder_id, file_name) DO UPDATE SET key_b64url = excluded.key_b64url",
+        params![folder_id, file_name, key_b64url],
+    )?;
+    Ok(())
+}
+
+pub fn get_pending_file_key(
+    conn: &Connection,
+    folder_id: &str,
+    file_name: &str,
+) -> AppResult<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT key_b64url FROM pending_file_keys WHERE folder_id = ?1 AND file_name = ?2",
+    )?;
+    let mut rows = stmt.query(params![folder_id, file_name])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(row.get(0)?))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_pending_file_key(
+    conn: &Connection,
+    folder_id: &str,
+    file_name: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM pending_file_keys WHERE folder_id = ?1 AND file_name = ?2",
+        params![folder_id, file_name],
+    )?;
+    Ok(())
+}
+
+pub fn has_any_pending_file_key(conn: &Connection, file_name: &str) -> AppResult<bool> {
+    let mut stmt = conn.prepare(
+        "SELECT 1 FROM pending_file_keys WHERE file_name = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![file_name])?;
+    Ok(rows.next()?.is_some())
+}
+
+fn normalize_my_drive_relative_path(relative_path: &str) -> String {
+    relative_path.replace('/', "\\")
+}
+
 pub fn my_drive_upsert_placeholder(
     conn: &Connection,
     relative_path: &str,
@@ -539,6 +600,7 @@ pub fn my_drive_upsert_placeholder(
     item_type: &str,
     parent_remote_id: Option<&str>,
 ) -> AppResult<()> {
+    let relative_path = normalize_my_drive_relative_path(relative_path);
     conn.execute(
         "INSERT INTO my_drive_placeholders (relative_path, remote_id, item_type, parent_remote_id)
          VALUES (?1, ?2, ?3, ?4)
@@ -555,8 +617,9 @@ pub fn my_drive_get_placeholder(
     conn: &Connection,
     relative_path: &str,
 ) -> AppResult<Option<(String, String)>> {
+    let relative_path = normalize_my_drive_relative_path(relative_path);
     let mut stmt = conn.prepare(
-        "SELECT remote_id, item_type FROM my_drive_placeholders WHERE relative_path = ?1",
+        "SELECT remote_id, item_type FROM my_drive_placeholders WHERE relative_path = ?1 COLLATE NOCASE",
     )?;
     let mut rows = stmt.query(params![relative_path])?;
     if let Some(row) = rows.next()? {
@@ -566,9 +629,31 @@ pub fn my_drive_get_placeholder(
     }
 }
 
+pub fn my_drive_get_placeholder_by_remote_id(
+    conn: &Connection,
+    remote_id: &str,
+) -> AppResult<Option<(String, String, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT relative_path, item_type, parent_remote_id FROM my_drive_placeholders WHERE remote_id = ?1",
+    )?;
+    let mut rows = stmt.query(params![remote_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?)))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn my_drive_clear_placeholders(conn: &Connection) -> AppResult<()> {
     conn.execute("DELETE FROM my_drive_placeholders", [])?;
     Ok(())
+}
+
+#[cfg(test)]
+pub fn in_memory_db() -> DbHandle {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    init_schema(&conn).expect("schema");
+    Arc::new(Mutex::new(conn))
 }
 
 #[cfg(test)]
@@ -689,5 +774,38 @@ mod tests {
         let row = my_drive_get_placeholder(&conn, "My Drive\\Docs").unwrap();
         assert_eq!(row.as_ref().map(|r| r.0.as_str()), Some("f-1"));
         assert_eq!(row.as_ref().map(|r| r.1.as_str()), Some("folder"));
+    }
+
+    #[test]
+    fn pending_file_key_roundtrip() {
+        let conn = test_conn();
+        store_pending_file_key(&conn, "folder-1", "doc.pdf", "key-abc").unwrap();
+        assert_eq!(
+            get_pending_file_key(&conn, "folder-1", "doc.pdf").unwrap().as_deref(),
+            Some("key-abc")
+        );
+        assert!(has_any_pending_file_key(&conn, "doc.pdf").unwrap());
+        delete_pending_file_key(&conn, "folder-1", "doc.pdf").unwrap();
+        assert_eq!(get_pending_file_key(&conn, "folder-1", "doc.pdf").unwrap(), None);
+    }
+
+    #[test]
+    fn my_drive_placeholder_lookup_by_remote_id() {
+        let conn = test_conn();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\Docs\\file.bin",
+            "file-remote",
+            "file",
+            Some("folder-remote"),
+        )
+        .unwrap();
+        let row = my_drive_get_placeholder_by_remote_id(&conn, "file-remote").unwrap();
+        assert_eq!(row.as_ref().map(|r| r.0.as_str()), Some("My Drive\\Docs\\file.bin"));
+        assert_eq!(row.as_ref().map(|r| r.1.as_str()), Some("file"));
+        assert_eq!(
+            row.as_ref().and_then(|r| r.2.as_deref()),
+            Some("folder-remote")
+        );
     }
 }

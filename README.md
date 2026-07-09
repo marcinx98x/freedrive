@@ -604,8 +604,10 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out / Sign in with another account
 - **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`)
+- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive` in File Explorer as the cloud sync root (Windows 10 1809+)
+- **My Drive in Explorer** — subfolder with server folders/files as cloud placeholders; files download when opened
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
-- See [`desktop/README.md`](desktop/README.md) for dev setup and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
+- See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
 
 Quick start (from repo root):
 

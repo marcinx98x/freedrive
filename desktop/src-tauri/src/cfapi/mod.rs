@@ -199,11 +199,13 @@ fn ensure_my_drive_placeholder(
     sync_root: &std::path::Path,
 ) -> Result<(), String> {
     use crate::cfapi::placeholders::{
-        create_named_folder_placeholder, is_duplicate_placeholder_error, MY_DRIVE_FOLDER_NAME,
+        create_named_folder_placeholder, ensure_cloud_placeholder, is_duplicate_placeholder_error,
+        MY_DRIVE_FOLDER_NAME,
     };
     use crate::my_drive::resolve_my_drive_root_id;
 
     let remote_id = resolve_my_drive_root_id(db).map_err(|e| e.to_string())?;
+    let my_drive_path = sync_root.join(MY_DRIVE_FOLDER_NAME);
     match create_named_folder_placeholder(sync_root, MY_DRIVE_FOLDER_NAME, &remote_id) {
         Ok(()) => {
             cfapi_log("My Drive placeholder created");
@@ -211,6 +213,8 @@ fn ensure_my_drive_placeholder(
         }
         Err(e) if is_duplicate_placeholder_error(&e) => {
             cfapi_log("My Drive placeholder already exists");
+            ensure_cloud_placeholder(&my_drive_path, "folder", &remote_id)
+                .map_err(|e| e.to_string())?;
             Ok(())
         }
         Err(e) => Err(e.to_string()),

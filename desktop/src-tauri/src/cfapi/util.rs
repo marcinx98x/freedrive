@@ -1,7 +1,9 @@
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use windows::core::GUID;
-use windows::Win32::Storage::CloudFilters::{CF_CALLBACK_INFO, CF_FS_METADATA};
+use windows::Win32::Storage::CloudFilters::{
+    CF_CALLBACK_INFO, CF_FS_METADATA, CF_OPERATION_PARAMETERS,
+};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO};
 
 /// Stable provider GUID shown in Explorer as FreeDrive.
@@ -60,6 +62,11 @@ pub fn file_fs_metadata(size: i64, updated_unix: i64) -> CF_FS_METADATA {
 pub fn parse_rfc3339_unix(s: &str) -> i64 {
     let _ = s;
     0
+}
+
+/// CfExecute ParamSize = offsetof(union) + sizeof(active variant).
+pub fn cf_operation_param_size<T>() -> u32 {
+    (std::mem::offset_of!(CF_OPERATION_PARAMETERS, Anonymous) + std::mem::size_of::<T>()) as u32
 }
 
 /// Build a full Win32 path from CfAPI callback fields (`C:` + `\Users\...\FreeDrive`).
@@ -126,10 +133,17 @@ pub fn notify_shell_updated() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Storage::CloudFilters::CF_OPERATION_PARAMETERS_0_7;
 
     #[test]
     fn combine_volume_path_matches_drive_path() {
         let path = combine_volume_path("C:", r"\Users\me\FreeDrive");
         assert_eq!(path.to_string_lossy().replace('/', "\\"), r"C:\Users\me\FreeDrive");
+    }
+
+    #[test]
+    fn cf_operation_param_size_includes_union_offset() {
+        let size = cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_7>();
+        assert!(size > std::mem::size_of::<CF_OPERATION_PARAMETERS_0_7>() as u32);
     }
 }

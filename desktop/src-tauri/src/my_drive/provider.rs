@@ -1,11 +1,13 @@
 use crate::api::types::FolderContents;
 use crate::api::ApiClient;
 use crate::db::{
-    config_get, config_set, get_file_key, my_drive_get_placeholder, my_drive_upsert_placeholder,
+    config_get, config_set, get_file_key, get_pending_file_key, has_any_pending_file_key,
+    my_drive_get_placeholder, my_drive_get_placeholder_by_remote_id, my_drive_upsert_placeholder,
     DbHandle,
 };
 use crate::error::{AppError, AppResult};
 use std::path::{Path, PathBuf};
+use windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO;
 
 const ROOT_FOLDER_CONFIG_KEY: &str = "my_drive_root_folder_id";
 /// Stored when GET /folders/root returns children without a folder object.
@@ -56,6 +58,60 @@ pub fn resolve_my_drive_root_id(db: &DbHandle) -> AppResult<String> {
     Ok(config_get(&conn, ROOT_FOLDER_CONFIG_KEY)?.unwrap_or_else(|| "root".to_string()))
 }
 
+pub fn resolve_folder_id_from_identity(info: &CF_CALLBACK_INFO) -> Option<String> {
+    if info.FileIdentity.is_null() || info.FileIdentityLength == 0 {
+        return None;
+    }
+    let identity = unsafe {
+        std::slice::from_raw_parts(
+            info.FileIdentity as *const u8,
+            info.FileIdentityLength as usize,
+        )
+    };
+    let s = std::str::from_utf8(identity).ok()?;
+    let (item_type, remote_id) = s.split_once(':')?;
+    if item_type == "folder" {
+        Some(remote_id.to_string())
+    } else {
+        None
+    }
+}
+
+pub enum FolderIdSource {
+    Identity,
+    Database,
+    RootConfig,
+}
+
+pub fn resolve_folder_id_for_fetch(
+    db: &DbHandle,
+    info: &CF_CALLBACK_INFO,
+    relative_path: &str,
+) -> AppResult<(Option<String>, FolderIdSource)> {
+    if let Some(id) = resolve_folder_id_from_identity(info) {
+        if !id.is_empty() && id != MY_DRIVE_CLOUD_ROOT_SENTINEL {
+            return Ok((Some(id), FolderIdSource::Identity));
+        }
+    }
+
+    if relative_path.eq_ignore_ascii_case("My Drive") {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        if let Some(id) = config_get(&conn, ROOT_FOLDER_CONFIG_KEY)? {
+            if id != MY_DRIVE_CLOUD_ROOT_SENTINEL {
+                return Ok((Some(id), FolderIdSource::RootConfig));
+            }
+            return Ok((None, FolderIdSource::RootConfig));
+        }
+        return Ok((None, FolderIdSource::RootConfig));
+    }
+
+    if let Some(id) = resolve_folder_id(db, relative_path)? {
+        return Ok((Some(id), FolderIdSource::Database));
+    }
+
+    Ok((None, FolderIdSource::Database))
+}
+
 pub fn resolve_folder_id(db: &DbHandle, relative_path: &str) -> AppResult<Option<String>> {
     if relative_path.eq_ignore_ascii_case("My Drive") {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
@@ -81,7 +137,12 @@ pub async fn fetch_folder_contents(
     parent_relative: &str,
     folder_id: Option<&str>,
 ) -> AppResult<FolderContents> {
-    let contents = if parent_relative.eq_ignore_ascii_case("My Drive") && folder_id.is_none() {
+    let use_root_endpoint = parent_relative.eq_ignore_ascii_case("My Drive")
+        && folder_id
+            .map(|id| id.is_empty() || id == MY_DRIVE_CLOUD_ROOT_SENTINEL)
+            .unwrap_or(true);
+
+    let contents = if use_root_endpoint {
         api.get_my_drive_root().await?
     } else {
         let fid = folder_id
@@ -137,11 +198,48 @@ pub async fn hydrate_file(
     db: &DbHandle,
     file_id: &str,
 ) -> AppResult<Vec<u8>> {
-    let key_b64url = {
-        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-        get_file_key(&conn, file_id)?
-    };
-    api.download_file(file_id, key_b64url.as_deref()).await
+    let key_b64url = resolve_encryption_key(db, file_id)?;
+    api.download_file(file_id, Some(&key_b64url)).await
+}
+
+fn resolve_encryption_key(db: &DbHandle, file_id: &str) -> AppResult<String> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    if let Some(key) = get_file_key(&conn, file_id)? {
+        return Ok(key);
+    }
+
+    let mut pending_file_name: Option<String> = None;
+    if let Some((rel_path, item_type, parent_remote_id)) =
+        my_drive_get_placeholder_by_remote_id(&conn, file_id)?
+    {
+        if item_type != "file" {
+            return Err(AppError::msg("FETCH_DATA on non-file"));
+        }
+        let file_name = Path::new(&rel_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| AppError::msg("invalid file path in placeholder"))?;
+        pending_file_name = Some(file_name.to_string());
+        let folder_id = parent_remote_id.unwrap_or_else(|| {
+            config_get(&conn, ROOT_FOLDER_CONFIG_KEY)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "root".to_string())
+        });
+        if let Some(key) = get_pending_file_key(&conn, &folder_id, file_name)? {
+            return Ok(key);
+        }
+    }
+
+    if let Some(ref name) = pending_file_name {
+        if has_any_pending_file_key(&conn, name)? {
+            return Err(AppError::msg("file is still uploading"));
+        }
+    }
+
+    Err(AppError::msg(
+        "encryption key not available on this device (uploaded via web?)",
+    ))
 }
 
 pub fn sync_root_path() -> AppResult<PathBuf> {
@@ -173,5 +271,26 @@ mod tests {
         let root = PathBuf::from(r"C:\Users\me\FreeDrive");
         let rel = relative_path_from_sync_root(&root, &root).unwrap();
         assert_eq!(rel, "");
+    }
+
+    #[test]
+    fn resolve_encryption_key_uses_pending_during_upload() {
+        use crate::db::{in_memory_db, my_drive_upsert_placeholder, store_pending_file_key};
+
+        let db = in_memory_db();
+        {
+            let conn = db.lock().unwrap();
+            my_drive_upsert_placeholder(
+                &conn,
+                "My Drive\\a.bin",
+                "fid-1",
+                "file",
+                Some("f-parent"),
+            )
+            .unwrap();
+            store_pending_file_key(&conn, "f-parent", "a.bin", "pending-key").unwrap();
+        }
+        let key = resolve_encryption_key(&db, "fid-1").unwrap();
+        assert_eq!(key, "pending-key");
     }
 }

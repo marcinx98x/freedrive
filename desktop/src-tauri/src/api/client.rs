@@ -4,6 +4,8 @@ use crate::auth_store::{save_auth, StoredAuth};
 
 use crate::crypto::{self, generate_file_key, key_to_b64url};
 
+use crate::db::{delete_pending_file_key, store_pending_file_key, DbHandle};
+
 use crate::error::{AppError, AppResult};
 
 use rand::RngCore;
@@ -672,6 +674,8 @@ impl ApiClient {
 
         &self,
 
+        db: &DbHandle,
+
         local_path: &Path,
 
         name: &str,
@@ -680,9 +684,23 @@ impl ApiClient {
 
     ) -> AppResult<(FileRecord, [u8; 32])> {
 
-        self.upload_multipart_with_retry("/files/upload", local_path, name, Some(folder_id), None)
+        self.upload_multipart_with_retry(
 
-            .await
+            Some(db),
+
+            "/files/upload",
+
+            local_path,
+
+            name,
+
+            Some(folder_id),
+
+            None,
+
+        )
+
+        .await
 
     }
 
@@ -703,6 +721,8 @@ impl ApiClient {
     ) -> AppResult<(FileRecord, [u8; 32])> {
 
         self.upload_multipart_with_retry(
+
+            None,
 
             &format!("/files/{}/content", file_id),
 
@@ -725,6 +745,8 @@ impl ApiClient {
     async fn upload_multipart_with_retry(
 
         &self,
+
+        db: Option<&DbHandle>,
 
         path: &str,
 
@@ -792,6 +814,30 @@ impl ApiClient {
 
 
 
+            if let (Some(db), Some(folder_id)) = (db, prepared.folder_id.as_deref()) {
+
+                if existing_key.is_none() {
+
+                    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+
+                    store_pending_file_key(
+
+                        &conn,
+
+                        folder_id,
+
+                        &prepared.name,
+
+                        &key_to_b64url(&prepared.key),
+
+                    )?;
+
+                }
+
+            }
+
+
+
             crate::sync::log::sync_log(format!(
 
                 "encrypt ok {} ({} bytes)",
@@ -832,6 +878,20 @@ impl ApiClient {
 
                 Ok(rec) => {
 
+                    if let (Some(db), Some(folder_id)) = (db, prepared.folder_id.as_deref()) {
+
+                        if existing_key.is_none() {
+
+                            if let Ok(conn) = db.lock() {
+
+                                let _ = delete_pending_file_key(&conn, folder_id, &prepared.name);
+
+                            }
+
+                        }
+
+                    }
+
                     crate::sync::log::sync_log(format!("http ok {}", prepared.name));
 
                     return Ok((rec, prepared.key));
@@ -861,6 +921,20 @@ impl ApiClient {
                         tokio::time::sleep(Duration::from_millis(400)).await;
 
                         continue;
+
+                    }
+
+                    if let (Some(db), Some(folder_id)) = (db, prepared.folder_id.as_deref()) {
+
+                        if existing_key.is_none() {
+
+                            if let Ok(conn) = db.lock() {
+
+                                let _ = delete_pending_file_key(&conn, folder_id, &prepared.name);
+
+                            }
+
+                        }
 
                     }
 

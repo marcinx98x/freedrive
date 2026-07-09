@@ -1,29 +1,30 @@
 use crate::api::ApiClient;
 use crate::cfapi::placeholders::{
-    create_named_folder_placeholder, create_placeholders, is_duplicate_placeholder_error,
-    MY_DRIVE_FOLDER_NAME,
+    build_placeholder_infos, complete_fetch_placeholders, count_existing_children,
+    create_named_folder_placeholder, ensure_cloud_placeholder, filter_new_entries,
+    is_duplicate_placeholder_error, mark_directory_populated, transfer_or_complete_fetch,
+    transfer_placeholders_via_callback, PlaceholderEntry, MY_DRIVE_FOLDER_NAME,
 };
 use crate::cfapi::util::parse_file_identity;
 use crate::db::DbHandle;
 use crate::error::AppResult;
-use crate::cfapi::util::callback_full_path;
-use crate::cfapi::util::notify_directory_updated;
+use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_directory_updated};
 use crate::my_drive::{
     fetch_folder_contents, hydrate_file, is_under_my_drive, relative_path_from_sync_root,
-    resolve_folder_id, resolve_my_drive_root_id,
+    resolve_folder_id_for_fetch, resolve_my_drive_root_id, FolderIdSource,
 };
 use crate::sync::log::sync_log;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use windows::Win32::Foundation::{NTSTATUS, STATUS_SUCCESS};
+use windows::Win32::Foundation::{NTSTATUS, STATUS_CLOUD_FILE_UNSUCCESSFUL, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
     CfExecute, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS, CF_OPERATION_ACK_DATA_FLAGS,
     CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
-    CF_OPERATION_PARAMETERS_0_0, CF_OPERATION_PARAMETERS_0_6, CF_OPERATION_PARAMETERS_0_7,
-    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_NONE,
-    CF_OPERATION_TYPE_ACK_DATA, CF_OPERATION_TYPE_TRANSFER_DATA,
-    CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+    CF_OPERATION_PARAMETERS_0_0, CF_OPERATION_PARAMETERS_0_6,
+    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_ACK_DATA,
+    CF_OPERATION_TYPE_TRANSFER_DATA,
 };
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -35,6 +36,39 @@ struct CallbackContext {
 }
 
 static CONTEXT: OnceLock<Mutex<Option<CallbackContext>>> = OnceLock::new();
+static CANCELLED_PLACEHOLDER_REQUESTS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+
+fn cancelled_requests() -> &'static Mutex<HashSet<i64>> {
+    CANCELLED_PLACEHOLDER_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn is_placeholder_request_cancelled(request_key: i64) -> bool {
+    if request_key == 0 {
+        return false;
+    }
+    cancelled_requests()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&request_key))
+}
+
+fn mark_placeholder_request_cancelled(request_key: i64) {
+    if request_key == 0 {
+        return;
+    }
+    if let Ok(mut set) = cancelled_requests().lock() {
+        set.insert(request_key);
+    }
+}
+
+fn clear_placeholder_request_cancelled(request_key: i64) {
+    if request_key == 0 {
+        return;
+    }
+    if let Ok(mut set) = cancelled_requests().lock() {
+        set.remove(&request_key);
+    }
+}
 
 pub fn init_context(db: DbHandle, sync_root: PathBuf, api: ApiClient) {
     let slot = CONTEXT.get_or_init(|| Mutex::new(None));
@@ -52,6 +86,9 @@ pub fn clear_context() {
         if let Ok(mut guard) = slot.lock() {
             *guard = None;
         }
+    }
+    if let Ok(mut set) = cancelled_requests().lock() {
+        set.clear();
     }
 }
 
@@ -78,6 +115,14 @@ fn log_callback_error(kind: &str, error: &str) {
     cfapi_callback_log(&format!("{} error: {}", kind, error));
 }
 
+fn folder_id_source_label(source: FolderIdSource) -> &'static str {
+    match source {
+        FolderIdSource::Identity => "identity",
+        FolderIdSource::Database => "database",
+        FolderIdSource::RootConfig => "root_config",
+    }
+}
+
 pub unsafe extern "system" fn fetch_placeholders(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
@@ -88,15 +133,44 @@ pub unsafe extern "system" fn fetch_placeholders(
     }
     let info = &*info;
 
-    let result = std::panic::catch_unwind(|| handle_fetch_placeholders(info));
-    match &result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => log_callback_error("FETCH_PLACEHOLDERS", e),
-        Err(_) => log_callback_error("FETCH_PLACEHOLDERS", "callback panicked"),
+    match std::panic::catch_unwind(|| handle_fetch_placeholders(info)) {
+        Ok(Ok(count)) => {
+            cfapi_callback_log(&format!("TRANSFER_PLACEHOLDERS ok entries={}", count));
+        }
+        Ok(Err(e)) => {
+            log_callback_error("FETCH_PLACEHOLDERS", &e);
+            if let Err(ack_err) = complete_fetch_placeholders(info, 0, 0) {
+                log_callback_error("TRANSFER_PLACEHOLDERS", &ack_err.to_string());
+            }
+        }
+        Err(_) => {
+            log_callback_error("FETCH_PLACEHOLDERS", "callback panicked");
+            if let Err(ack_err) = complete_fetch_placeholders(info, 0, 0) {
+                log_callback_error("TRANSFER_PLACEHOLDERS", &ack_err.to_string());
+            }
+        }
     }
 
-    // Never fail the provider — Explorer treats NTSTATUS failure as "provider exited".
-    let _ = ack_placeholders(info, STATUS_SUCCESS);
+    clear_placeholder_request_cancelled(info.RequestKey);
+}
+
+pub unsafe extern "system" fn cancel_fetch_placeholders(
+    info: *const CF_CALLBACK_INFO,
+    params: *const CF_CALLBACK_PARAMETERS,
+) {
+    let _ = params;
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    if info.RequestKey == 0 {
+        return;
+    }
+    mark_placeholder_request_cancelled(info.RequestKey);
+    cfapi_callback_log(&format!(
+        "CANCEL_FETCH_PLACEHOLDERS request_key={}",
+        info.RequestKey
+    ));
 }
 
 pub unsafe extern "system" fn fetch_data(
@@ -113,16 +187,33 @@ pub unsafe extern "system" fn fetch_data(
     let length = fetch.RequiredLength;
 
     let result = std::panic::catch_unwind(|| handle_fetch_data(info, params));
-    match &result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => log_callback_error("FETCH_DATA", e),
-        Err(_) => log_callback_error("FETCH_DATA", "callback panicked"),
-    }
+    let hydrate_ok = match &result {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            log_callback_error("FETCH_DATA", e);
+            false
+        }
+        Err(_) => {
+            log_callback_error("FETCH_DATA", "callback panicked");
+            false
+        }
+    };
 
-    let _ = ack_data(info, STATUS_SUCCESS, offset, length);
+    let ack_status = if hydrate_ok {
+        STATUS_SUCCESS
+    } else {
+        STATUS_CLOUD_FILE_UNSUCCESSFUL
+    };
+    if let Err(e) = ack_data(info, ack_status, offset, length) {
+        log_callback_error("ACK_DATA", &e.to_string());
+    }
 }
 
-fn handle_fetch_placeholders(info: &CF_CALLBACK_INFO) -> Result<(), String> {
+fn handle_fetch_placeholders(info: &CF_CALLBACK_INFO) -> Result<u32, String> {
+    if is_placeholder_request_cancelled(info.RequestKey) {
+        return unsafe { complete_fetch_placeholders(info, 0, 0).map_err(|e| e.to_string()) };
+    }
+
     let full_path = callback_full_path(info)?;
     let ctx = with_context(|c| (c.sync_root.clone(), c.db.clone(), c.api.clone()))
         .ok_or_else(|| "CfAPI context not initialized".to_string())?;
@@ -138,25 +229,45 @@ fn handle_fetch_placeholders(info: &CF_CALLBACK_INFO) -> Result<(), String> {
 
     if sync_root_fetch_requires_my_drive_placeholder(&relative) {
         let folder_id = resolve_my_drive_root_id(&ctx.1).map_err(|e| e.to_string())?;
+        let my_drive_path = ctx.0.join(MY_DRIVE_FOLDER_NAME);
         cfapi_callback_log("FETCH_PLACEHOLDERS sync root -> My Drive placeholder");
+        if my_drive_path.exists() {
+            ensure_cloud_placeholder(&my_drive_path, "folder", &folder_id)
+                .map_err(|e| e.to_string())?;
+        }
         match create_named_folder_placeholder(&ctx.0, MY_DRIVE_FOLDER_NAME, &folder_id) {
-            Ok(()) => {
-                notify_directory_updated(&ctx.0);
-                return Ok(());
-            }
-            Err(e) if is_duplicate_placeholder_error(&e) => {
-                notify_directory_updated(&ctx.0);
-                return Ok(());
-            }
+            Ok(()) => {}
+            Err(e) if is_duplicate_placeholder_error(&e) => {}
             Err(e) => return Err(e.to_string()),
         }
+        let entry = PlaceholderEntry::folder(MY_DRIVE_FOLDER_NAME, &folder_id);
+        let count = unsafe {
+            transfer_or_complete_fetch(info, std::slice::from_ref(&entry), 1)
+                .map_err(|e| e.to_string())?
+        };
+        cfapi_callback_log(&format!(
+            "sync root transfer My Drive entries=1 transferred={}",
+            count
+        ));
+        notify_directory_updated(&ctx.0);
+        return Ok(count);
     }
 
     if !is_under_my_drive(&relative) {
-        return Ok(());
+        return unsafe { complete_fetch_placeholders(info, 0, 0).map_err(|e| e.to_string()) };
     }
 
-    let folder_id = resolve_folder_id(&ctx.1, &relative).map_err(|e| e.to_string())?;
+    let (folder_id, id_source) =
+        resolve_folder_id_for_fetch(&ctx.1, info, &relative).map_err(|e| e.to_string())?;
+    cfapi_callback_log(&format!(
+        "FETCH_PLACEHOLDERS folder_id={:?} source={}",
+        folder_id,
+        folder_id_source_label(id_source)
+    ));
+
+    if is_placeholder_request_cancelled(info.RequestKey) {
+        return unsafe { complete_fetch_placeholders(info, 0, 0).map_err(|e| e.to_string()) };
+    }
 
     let sync_root = ctx.0.clone();
     let relative_owned = relative.clone();
@@ -176,24 +287,89 @@ fn handle_fetch_placeholders(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         },
     )?;
 
-    let stats = create_placeholders(&parent_dir, &contents.folders, &contents.files)
-        .map_err(|e| e.to_string())?;
-    cfapi_callback_log(&format!(
-        "FETCH_PLACEHOLDERS created {} skipped {} under {:?}",
-        stats.created,
-        stats.skipped_duplicates,
-        relative
-    ));
-    notify_directory_updated(&parent_dir);
+    if is_placeholder_request_cancelled(info.RequestKey) {
+        return unsafe { complete_fetch_placeholders(info, 0, 0).map_err(|e| e.to_string()) };
+    }
 
-    Ok(())
+    let total = (contents.folders.len() + contents.files.len()) as u32;
+    let existing = count_existing_children(&parent_dir, &contents.folders, &contents.files);
+
+    let count = if total == 0 {
+        mark_directory_populated(&parent_dir).map_err(|e| e.to_string())?;
+        cfapi_callback_log(&format!(
+            "mark_directory_populated empty path={}",
+            parent_dir.display()
+        ));
+        unsafe { complete_fetch_placeholders(info, 0, 0).map_err(|e| e.to_string())? };
+        0
+    } else if existing >= total {
+        let entries = build_placeholder_infos(&contents.folders, &contents.files);
+        cfapi_callback_log(&format!(
+            "subfolder transfer total={} existing={} path={}",
+            total,
+            existing,
+            parent_dir.display()
+        ));
+        let count = unsafe {
+            transfer_or_complete_fetch(info, &entries, total).map_err(|e| e.to_string())?
+        };
+        if count < total {
+            cfapi_callback_log(&format!(
+                "subfolder complete_fetch fallback total={} processed={}",
+                total, count
+            ));
+        }
+        if let Err(e) = mark_directory_populated(&parent_dir) {
+            cfapi_callback_log(&format!(
+                "mark_directory_populated warning path={}: {}",
+                parent_dir.display(),
+                e
+            ));
+        } else {
+            cfapi_callback_log(&format!(
+                "mark_directory_populated path={} existing={}",
+                parent_dir.display(),
+                existing
+            ));
+        }
+        count
+    } else {
+        let new_entries =
+            filter_new_entries(&parent_dir, &contents.folders, &contents.files);
+        let stats = crate::cfapi::placeholders::create_placeholders(
+            &parent_dir,
+            &contents.folders,
+            &contents.files,
+        )
+        .map_err(|e| e.to_string())?;
+        cfapi_callback_log(&format!(
+            "FETCH_PLACEHOLDERS created {} skipped {} (total {}) under {:?}",
+            stats.created,
+            stats.skipped_duplicates,
+            total,
+            relative
+        ));
+        let transferred = unsafe {
+            transfer_placeholders_via_callback(info, &new_entries, total)
+                .map_err(|e| e.to_string())?
+        };
+        cfapi_callback_log(&format!(
+            "transfer_placeholders path={} transferred={} total={}",
+            parent_dir.display(),
+            transferred,
+            total
+        ));
+        transferred
+    };
+
+    notify_directory_updated(&parent_dir);
+    Ok(count)
 }
 
 fn handle_fetch_data(
     info: &CF_CALLBACK_INFO,
     params: &CF_CALLBACK_PARAMETERS,
 ) -> Result<(), String> {
-    let _full_path = callback_full_path(info)?;
     let identity = unsafe {
         std::slice::from_raw_parts(
             info.FileIdentity as *const u8,
@@ -249,7 +425,7 @@ unsafe fn transfer_data(
         SyncStatus: std::ptr::null(),
     };
     let mut op_params = CF_OPERATION_PARAMETERS {
-        ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS_0_6>() as u32,
+        ParamSize: cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_6>(),
         Anonymous: CF_OPERATION_PARAMETERS_0 {
             TransferData: CF_OPERATION_PARAMETERS_0_6 {
                 Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
@@ -262,33 +438,6 @@ unsafe fn transfer_data(
     };
     CfExecute(&op_info, &mut op_params)
         .map_err(|e| crate::error::AppError::msg(format!("CfExecute TRANSFER_DATA: {}", e)))
-}
-
-unsafe fn ack_placeholders(info: &CF_CALLBACK_INFO, status: NTSTATUS) -> AppResult<()> {
-    let op_info = CF_OPERATION_INFO {
-        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
-        Type: CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
-        ConnectionKey: info.ConnectionKey,
-        TransferKey: info.TransferKey,
-        CorrelationVector: info.CorrelationVector,
-        RequestKey: info.RequestKey,
-        SyncStatus: std::ptr::null(),
-    };
-    let mut op_params = CF_OPERATION_PARAMETERS {
-        ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS_0_7>() as u32,
-        Anonymous: CF_OPERATION_PARAMETERS_0 {
-            TransferPlaceholders: CF_OPERATION_PARAMETERS_0_7 {
-                Flags: CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_NONE,
-                CompletionStatus: status,
-                PlaceholderTotalCount: 0,
-                PlaceholderArray: std::ptr::null_mut(),
-                PlaceholderCount: 0,
-                EntriesProcessed: 0,
-            },
-        },
-    };
-    CfExecute(&op_info, &mut op_params)
-        .map_err(|e| crate::error::AppError::msg(format!("CfExecute TRANSFER_PLACEHOLDERS: {}", e)))
 }
 
 unsafe fn ack_data(
@@ -307,7 +456,7 @@ unsafe fn ack_data(
         SyncStatus: std::ptr::null(),
     };
     let mut op_params = CF_OPERATION_PARAMETERS {
-        ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS_0_0>() as u32,
+        ParamSize: cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_0>(),
         Anonymous: CF_OPERATION_PARAMETERS_0 {
             AckData: CF_OPERATION_PARAMETERS_0_0 {
                 Flags: CF_OPERATION_ACK_DATA_FLAGS(0),
@@ -329,5 +478,12 @@ mod tests {
     fn sync_root_requires_my_drive_placeholder() {
         assert!(sync_root_fetch_requires_my_drive_placeholder(""));
         assert!(!sync_root_fetch_requires_my_drive_placeholder("My Drive"));
+    }
+
+    #[test]
+    fn cancel_ignored_for_request_key_zero() {
+        assert!(!is_placeholder_request_cancelled(0));
+        mark_placeholder_request_cancelled(0);
+        assert!(!is_placeholder_request_cancelled(0));
     }
 }

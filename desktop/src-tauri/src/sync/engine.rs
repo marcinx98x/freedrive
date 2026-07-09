@@ -1370,7 +1370,7 @@ impl SyncEngine {
                 },
                 || {
                     self.api
-                        .upload_file(file_path, file_name, &remote_folder_id)
+                        .upload_file(&self.db, file_path, file_name, &remote_folder_id)
                 },
             )
             .await;

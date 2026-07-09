@@ -15,7 +15,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
 - **Profile menu** — server avatar, storage bar, Manage storage, Sign out / Sign in with another account
 - **System tray** — minimize to tray, pause/resume sync from the menu
-- **Windows Explorer integration** (Windows 10 1809+) — **FreeDrive** in the sidebar and under **This PC**, with **My Drive** showing server files as cloud placeholders (download on open)
+- **Windows Explorer integration** (Windows 10 1809+) — open `%USERPROFILE%\FreeDrive` in File Explorer (address bar or **Open Drive folder** in the app) while the desktop client is running; **My Drive** shows server folders/files as cloud placeholders (download on open)
 
 ## Prerequisites
 
@@ -108,13 +108,14 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 - Encryption keys are stored locally in `%APPDATA%\FreeDrive\sync.db`.
 - Files uploaded from the **web browser** may not decrypt on desktop unless the key was stored on this PC.
 
-### Windows Explorer (FreeDrive in sidebar)
+### Windows Explorer (FreeDrive sync root)
 
-- Sign in and keep the desktop app running.
-- Open File Explorer — **FreeDrive** should appear in the navigation pane and under **This PC**.
-- Open **FreeDrive → My Drive** to browse cloud content. Files download when you open them.
-- Requires **Windows 10 1809+**. CfAPI + Shell registration happen on first login after install, not during MSI/NSIS install.
-- **Updating or reinstalling** the app does not reset Explorer integration — flags live in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_shell_registered`).
+- Sign in and keep the desktop app running (system tray).
+- Open File Explorer and go to `%USERPROFILE%\FreeDrive` (or use **Open Drive folder** in the app).
+- Open **My Drive** inside that folder to browse cloud content. Files download when you open them.
+- Requires **Windows 10 1809+**. CfAPI connects synchronously on startup / login (`connect-first` recovery if Windows already has the sync root registered).
+- Integration state lives in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_finalize_complete`). Updating or reinstalling the app does not reset a working registration.
+- If you previously used a build that registered Explorer sidebar entries, run **Unregister Explorer integration** in app settings (or `unregister_explorer_integration`) once to clear stale shell registry from older builds.
 
 #### CfAPI recovery (`0x80070057` / “cloud file provider is not running”)
 
