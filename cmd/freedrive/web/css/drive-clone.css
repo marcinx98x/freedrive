@@ -917,6 +917,22 @@ body {
   display: none !important;
 }
 
+.app:not(.admin-mode).reserve-toolbar-slot .toolbar-slot {
+  min-height: 48px;
+  flex-shrink: 0;
+}
+
+.app:not(.admin-mode).reserve-toolbar-slot .selection-bar.hidden {
+  display: flex !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  height: 48px !important;
+  border-bottom-color: transparent !important;
+  background: transparent !important;
+  transform: none !important;
+}
+
 .app:not(.admin-mode) .topbar-actions .btn-icon {
   width: 36px !important;
   height: 36px !important;

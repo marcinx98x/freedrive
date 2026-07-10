@@ -94,7 +94,7 @@ FreeDrive is ideal for:
 ### 2. Sidebar: My Drive & Computers
 
 - **My Drive** — primary file space with an expandable sidebar folder tree (lazy-loaded folders, expand/collapse chevrons, path sync on navigation)
-- **Computers** — separate sidebar section for desktop backup/sync (isolated from My Drive root folders); the [`desktop/`](desktop/) Tauri client registers here and syncs local folders
+- **Computers** — separate sidebar section for desktop backup/sync (isolated from My Drive root folders); the [`desktop/`](desktop/) Tauri client registers here and syncs local folders; stable toolbar height when selecting items (no layout jump)
 - Drive-style pill highlights on nav rows, with chevrons inside the active/hover area
 
 ### 3. File Lifecycle

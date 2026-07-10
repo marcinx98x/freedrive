@@ -933,6 +933,7 @@ const FileManager = (() => {
             }
             await updateStorageInfo();
             syncTrashActionLabels();
+            syncToolbarSlot();
         } catch (err) {
             Components.toast(`Failed to load computers: ${err.message}`, 'error');
             renderComputersEmptyState();
@@ -967,6 +968,7 @@ const FileManager = (() => {
             }
             await updateStorageInfo();
             syncTrashActionLabels();
+            syncToolbarSlot();
         } catch (err) {
             Components.toast(`Failed to load computer folder: ${err.message}`, 'error');
             await loadComputers();
@@ -2540,6 +2542,12 @@ const FileManager = (() => {
         syncSelectionStyles();
     }
 
+    function syncToolbarSlot() {
+        const app = document.getElementById('app');
+        const gridVisible = !document.getElementById('file-grid')?.classList.contains('hidden');
+        app?.classList.toggle('reserve-toolbar-slot', currentPage === 'computers' && gridVisible);
+    }
+
     function updateSelectionUI() {
         const bar = document.getElementById('selection-bar');
         const count = document.getElementById('selection-count');
@@ -2551,6 +2559,7 @@ const FileManager = (() => {
             if (currentPage === 'files' || currentPage === 'search') {
                 chipBar?.classList.remove('hidden');
             }
+            syncToolbarSlot();
             return;
         }
 
@@ -2558,6 +2567,7 @@ const FileManager = (() => {
         syncTrashActionLabels();
         chipBar?.classList.add('hidden');
         bar.classList.remove('hidden');
+        syncToolbarSlot();
     }
 
     async function handleContextAction(action, target) {
