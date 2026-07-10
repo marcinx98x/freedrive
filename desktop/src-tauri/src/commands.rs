@@ -289,6 +289,7 @@ pub async fn restore_sync_on_startup(state: &AppState, app: &AppHandle) -> AppRe
         .map_err(|e| AppError::msg(e))?;
 
     if !pending_initial {
+        engine.set_sync_status(SyncStatusKind::Syncing, "Syncing…");
         let eng = engine.clone();
         let app_handle = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -597,16 +598,31 @@ pub async fn save_sync_config(
         .map(|f| (f.path, f.label))
         .collect();
 
+    let folders_changed = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let old: std::collections::HashSet<String> = list_sync_folders(&conn)
+            .map_err(|e: crate::error::AppError| e.to_string())?
+            .into_iter()
+            .map(|f| f.local_path)
+            .collect();
+        let new: std::collections::HashSet<String> =
+            pairs.iter().map(|(p, _)| p.clone()).collect();
+        old != new
+    };
+
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         save_local_sync_folders(&conn, &pairs)
             .map_err(|e: crate::error::AppError| e.to_string())?;
-        crate::db::config_set(&conn, "initial_sync_complete", "false")
-            .map_err(|e: crate::error::AppError| e.to_string())?;
+        if folders_changed {
+            crate::db::config_set(&conn, "initial_sync_complete", "false")
+                .map_err(|e: crate::error::AppError| e.to_string())?;
+        }
     }
 
     let app_handle = app.clone();
     let pairs_bg = pairs.clone();
+    let run_initial = folders_changed || !initial_sync_complete(&state.db);
     tauri::async_runtime::spawn(async move {
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
@@ -622,7 +638,7 @@ pub async fn save_sync_config(
             .into_iter()
             .map(|(p, _)| PathBuf::from(p))
             .collect();
-        if let Err(e) = start_sync_services(&app_state, &app_handle, engine, paths, true, false) {
+        if let Err(e) = start_sync_services(&app_state, &app_handle, engine, paths, run_initial, true) {
             eprintln!("start_sync_services after save_sync_config failed: {}", e);
         }
     });

@@ -675,7 +675,7 @@ input {
 /* Home cards */
 .home-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -685,6 +685,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
 }
 
 .home-panel-title {
@@ -773,6 +774,8 @@ input {
   background: var(--fd-bg-elevated);
   border-radius: var(--fd-radius);
   padding: 24px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .status-card-header {
@@ -780,6 +783,7 @@ input {
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .status-icon {
@@ -914,6 +918,7 @@ input {
 
 .status-check {
   color: var(--fd-success);
+  flex-shrink: 0;
 }
 
 .quick-links {
@@ -964,6 +969,7 @@ input {
 .sync-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .sync-table th {
@@ -975,10 +981,32 @@ input {
   border-bottom: 1px solid var(--fd-border);
 }
 
+.sync-table th:first-child,
+.sync-table td:first-child {
+  width: 55%;
+}
+
 .sync-table td {
   padding: 12px;
   font-size: 14px;
   border-bottom: 1px solid var(--fd-border);
+}
+
+.sync-table td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-table td:first-child > div {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sync-table td:first-child > div > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sync-table tr:last-child td {
@@ -1020,6 +1048,7 @@ input {
 .status-error-mark {
   color: #f28b82;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .sync-table tr.row-error td {

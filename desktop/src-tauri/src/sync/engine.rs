@@ -116,6 +116,7 @@ pub struct SyncEngine {
     upload_semaphore: Arc<Semaphore>,
     download_semaphore: Arc<Semaphore>,
     pending_paths: Mutex<VecDeque<PathBuf>>,
+    pending_removals: Mutex<VecDeque<PathBuf>>,
     status: RwLock<SyncStatus>,
     computer_id: RwLock<Option<String>>,
     computer_root_id: RwLock<Option<String>>,
@@ -133,6 +134,7 @@ impl SyncEngine {
             upload_semaphore: Arc::new(Semaphore::new(UPLOAD_CONCURRENCY)),
             download_semaphore: Arc::new(Semaphore::new(DOWNLOAD_CONCURRENCY)),
             pending_paths: Mutex::new(VecDeque::new()),
+            pending_removals: Mutex::new(VecDeque::new()),
             status: RwLock::new(SyncStatus {
                 status: SyncStatusKind::UpToDate,
                 message: "Ready".into(),
@@ -213,18 +215,6 @@ impl SyncEngine {
             return;
         }
 
-        if self.is_initial_sync_running() {
-            let mut queue = self.pending_paths.lock();
-            let canonical = path.canonicalize().unwrap_or(path.clone());
-            if !queue
-                .iter()
-                .any(|p| p.canonicalize().unwrap_or(p.clone()) == canonical)
-            {
-                queue.push_back(path);
-            }
-            return;
-        }
-
         let engine = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             let _ = engine.sync_file_path(&path).await;
@@ -232,7 +222,19 @@ impl SyncEngine {
     }
 
     pub fn enqueue_file_removed(self: &Arc<Self>, path: PathBuf) {
-        if self.is_paused() || self.is_initial_sync_running() {
+        if self.is_paused() {
+            return;
+        }
+
+        if self.is_initial_sync_running() {
+            let mut queue = self.pending_removals.lock();
+            let canonical = path.canonicalize().unwrap_or(path.clone());
+            if !queue
+                .iter()
+                .any(|p| p.canonicalize().unwrap_or(p.clone()) == canonical)
+            {
+                queue.push_back(path);
+            }
             return;
         }
 
@@ -247,6 +249,16 @@ impl SyncEngine {
             let mut queue = self.pending_paths.lock();
             queue.drain(..).collect()
         };
+        let removals: Vec<PathBuf> = {
+            let mut queue = self.pending_removals.lock();
+            queue.drain(..).collect()
+        };
+
+        sync_log(format!(
+            "drain started — {} queued uploads, {} queued removals",
+            paths.len(),
+            removals.len()
+        ));
 
         let mut seen = HashSet::new();
         let mut deduped = Vec::new();
@@ -257,6 +269,7 @@ impl SyncEngine {
             }
         }
 
+        let upload_count = deduped.len();
         let mut join_set = JoinSet::new();
         for path in deduped {
             while join_set.len() >= UPLOAD_CONCURRENCY {
@@ -275,6 +288,24 @@ impl SyncEngine {
         }
 
         while join_set.join_next().await.is_some() {}
+
+        let mut seen_removals = HashSet::new();
+        let mut removals_processed = 0u64;
+        for path in removals {
+            let key = path.canonicalize().unwrap_or(path.clone());
+            if !seen_removals.insert(key) {
+                continue;
+            }
+            if self.delete_remote_file(&path).await.is_ok() {
+                removals_processed += 1;
+            }
+        }
+
+        sync_log(format!(
+            "drain finished — {} uploads, {} removals processed",
+            upload_count,
+            removals_processed
+        ));
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -636,10 +667,12 @@ impl SyncEngine {
         {
             return Ok(());
         }
-        let _guard = InitialSyncGuard {
-            flag: &self.initial_sync_running,
+        let result = {
+            let _guard = InitialSyncGuard {
+                flag: &self.initial_sync_running,
+            };
+            Self::sync_single_folder_inner(&self, sync_folder_id).await
         };
-        let result = Self::sync_single_folder_inner(&self, sync_folder_id).await;
         self.drain_pending_paths().await;
         result
     }
@@ -684,12 +717,15 @@ impl SyncEngine {
         {
             return Ok(());
         }
-        let _guard = InitialSyncGuard {
-            flag: &self.initial_sync_running,
-        };
+        let result = {
+            let _guard = InitialSyncGuard {
+                flag: &self.initial_sync_running,
+            };
 
-        sync_log("background verify started");
-        let result = Self::run_background_verify_inner(&self).await;
+            self.set_status(SyncStatusKind::Syncing, "Syncing…");
+            sync_log("background verify started");
+            Self::run_background_verify_inner(&self).await
+        };
         self.drain_pending_paths().await;
         sync_log("background verify finished");
         result
@@ -778,11 +814,13 @@ impl SyncEngine {
         {
             return Ok(());
         }
-        let _guard = InitialSyncGuard {
-            flag: &self.initial_sync_running,
+        let result = {
+            let _guard = InitialSyncGuard {
+                flag: &self.initial_sync_running,
+            };
+            sync_log("initial sync started");
+            Self::run_initial_sync_inner(&self).await
         };
-        sync_log("initial sync started");
-        let result = Self::run_initial_sync_inner(&self).await;
         self.drain_pending_paths().await;
         sync_log("initial sync finished");
         result
@@ -884,7 +922,9 @@ impl SyncEngine {
             return Ok((0, 0, 0, 0));
         }
 
-        let show_ui = mode == ScanMode::Interactive;
+        // Progress always shown so Home reflects background verify; activity only for interactive scans.
+        let show_progress = true;
+        let show_activity = mode == ScanMode::Interactive;
         sync_log(format!("scan start {} ({:?})", local_root, mode));
 
         let walk_root = root.clone();
@@ -898,7 +938,7 @@ impl SyncEngine {
         let total = files.len() as u64;
         sync_log(format!("scan complete — {} files", total));
 
-        if show_ui {
+        if show_progress {
             self.emit_progress(&SyncProgress {
                 phase: "scanning".into(),
                 processed: 0,
@@ -968,7 +1008,8 @@ impl SyncEngine {
                     self.apply_scan_file_result(
                         sync_folder_id,
                         total,
-                        show_ui,
+                        show_progress,
+                        show_activity,
                         res,
                         &mut uploaded,
                         &mut skipped,
@@ -1014,7 +1055,7 @@ impl SyncEngine {
                             job_processed,
                             total,
                             false,
-                            show_ui,
+                            show_activity,
                         )
                         .await
                 });
@@ -1051,7 +1092,8 @@ impl SyncEngine {
             self.apply_scan_file_result(
                 sync_folder_id,
                 total,
-                show_ui,
+                show_progress,
+                show_activity,
                 res,
                 &mut uploaded,
                 &mut skipped,
@@ -1074,7 +1116,7 @@ impl SyncEngine {
     }
 
     async fn sync_file_path_unlocked(&self, path: &Path) -> AppResult<()> {
-        if self.is_paused() || self.is_initial_sync_running() || !path.is_file() {
+        if self.is_paused() || !path.is_file() {
             return Ok(());
         }
 
@@ -1117,7 +1159,8 @@ impl SyncEngine {
         &self,
         sync_folder_id: i64,
         total: u64,
-        show_ui: bool,
+        show_progress: bool,
+        show_activity: bool,
         res: Result<FileSyncJobResult, tokio::task::JoinError>,
         uploaded: &mut u64,
         skipped: &mut u64,
@@ -1161,7 +1204,7 @@ impl SyncEngine {
             Err(e) => {
                 *errors += 1;
                 let msg = e.to_string();
-                if show_ui {
+                if show_activity {
                     self.emit_activity(&job.name, &msg, job.size, "error");
                 }
                 self.record_sync_failure(
@@ -1176,7 +1219,7 @@ impl SyncEngine {
             }
         }
 
-        if show_ui {
+        if show_progress {
             self.emit_progress(&SyncProgress {
                 phase: "syncing".into(),
                 processed: job.processed,
