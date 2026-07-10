@@ -1186,6 +1186,9 @@ impl SyncEngine {
         };
 
         if file_looks_unchanged_from_state(existing.as_ref(), mtime) {
+            if show_ui {
+                self.emit_activity(file_name, "Up to date", size, "synced");
+            }
             return Ok(SyncAttemptResult::Done(FileSyncOutcome::Unchanged));
         }
 
@@ -1240,6 +1243,9 @@ impl SyncEngine {
                         None,
                         "synced",
                     );
+                }
+                if show_ui {
+                    self.emit_activity(file_name, "Up to date", size, "synced");
                 }
                 return Ok(SyncAttemptResult::Done(FileSyncOutcome::Unchanged));
             }
@@ -1633,7 +1639,25 @@ fn should_skip_file(name: &str) -> bool {
     if lower.starts_with('.') || lower.starts_with("~$") {
         return true;
     }
+    const GIT_INTERNAL: &[&str] = &[
+        "fetch_head",
+        "head",
+        "index",
+        "orig_head",
+        "packed-refs",
+        "commit_editmsg",
+        "merge_head",
+        "cherry_pick_head",
+        "rebase_merge",
+    ];
+    if GIT_INTERNAL.contains(&lower.as_str()) {
+        return true;
+    }
     false
+}
+
+fn should_skip_dir(name: &str) -> bool {
+    matches!(name, ".git" | ".svn" | "node_modules")
 }
 
 fn collect_files(root: &Path) -> Vec<PathBuf> {
@@ -1653,7 +1677,13 @@ fn walk_files_incremental(root: &Path, mut on_file: impl FnMut(PathBuf)) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                let dir_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if !should_skip_dir(dir_name) {
+                    stack.push(path);
+                }
             } else if path.is_file() {
                 on_file(path);
             }

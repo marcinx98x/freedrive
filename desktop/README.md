@@ -8,7 +8,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 
 - **Sign in** to your FreeDrive server (JWT auth + 2FA support)
 - **Onboarding wizard** — choose folders to sync (Desktop, Documents, Downloads, or custom)
-- **Background sync** — uploads local changes, polls for remote changes
+- **Background sync** — uploads local changes, polls for remote changes; skips `.git`, `node_modules`, and `.svn` folders during scan
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan; if initial sync was never completed, startup resumes full sync with a “Resuming sync…” status
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
 - **Google Drive-style sidebar** — SVG icons for Home, Sync activity, and Notifications with alert badge; top bar uses matching SVG icons (pause/play, settings, help, lock)
