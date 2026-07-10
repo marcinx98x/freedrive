@@ -576,6 +576,21 @@ input {
   color: var(--fd-text);
 }
 
+.crypto-lock-indicator {
+  cursor: default;
+}
+
+.crypto-lock-indicator:hover {
+  background: transparent;
+  color: var(--fd-text-secondary);
+}
+
+.crypto-lock-indicator .nav-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--fd-text-secondary);
+}
+
 .avatar-btn {
   width: 32px;
   height: 32px;

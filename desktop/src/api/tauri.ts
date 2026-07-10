@@ -107,6 +107,14 @@ export function onCryptoKeyQueued(cb: (message: string) => void) {
   return listen<string>("crypto-key-queued", (e) => cb(e.payload));
 }
 
+export function onCryptoUnlocked(cb: () => void) {
+  return listen<void>("crypto-unlocked", () => cb());
+}
+
+export function onCryptoUnlockFailed(cb: (message: string) => void) {
+  return listen<string>("crypto-unlock-failed", (e) => cb(e.payload));
+}
+
 export function formatRelativeTime(iso: string | null): string {
   if (!iso) return "Never";
   const diff = Date.now() - new Date(iso).getTime();

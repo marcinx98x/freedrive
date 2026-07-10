@@ -167,6 +167,14 @@ fn emit_crypto_sync_stats(app: &AppHandle, stats: &crate::account_crypto::Crypto
     }
 }
 
+fn emit_crypto_unlocked(app: &AppHandle) {
+    let _ = app.emit("crypto-unlocked", ());
+}
+
+fn emit_crypto_unlock_failed(app: &AppHandle, message: &str) {
+    let _ = app.emit("crypto-unlock-failed", message.to_string());
+}
+
 async fn ensure_crypto_unlocked(state: &AppState, app: &AppHandle) -> Result<(), String> {
     let auth = load_auth()
         .map_err(|e: crate::error::AppError| e.to_string())?
@@ -187,6 +195,7 @@ async fn ensure_crypto_unlocked(state: &AppState, app: &AppHandle) -> Result<(),
     .await
     .map_err(|e: crate::error::AppError| e.to_string())?
     {
+        emit_crypto_unlocked(app);
         emit_crypto_sync_stats(app, &stats);
     }
     Ok(())
@@ -367,9 +376,18 @@ async fn finish_login(
                         let _ = app.emit("crypto-recovery-setup", code);
                     }
                 }
+                emit_crypto_unlocked(app);
                 emit_crypto_sync_stats(app, &unlock.sync_stats);
             }
-            Err(e) => eprintln!("encryption unlock failed: {}", e),
+            Err(e) => {
+                eprintln!("encryption unlock failed: {}", e);
+                let message = if e.to_string().to_lowercase().contains("decrypt") {
+                    "Could not unlock encryption — check your password.".to_string()
+                } else {
+                    format!("Could not unlock encryption: {}", e)
+                };
+                emit_crypto_unlock_failed(app, &message);
+            }
         }
     } else if let Some(stats) = crate::account_crypto::ensure_unlocked_from_keyring(
         &client,
@@ -379,6 +397,7 @@ async fn finish_login(
     .await
     .map_err(|e: crate::error::AppError| e.to_string())?
     {
+        emit_crypto_unlocked(app);
         emit_crypto_sync_stats(app, &stats);
     }
 
@@ -831,12 +850,55 @@ pub async fn unregister_explorer_integration(state: State<'_, AppState>) -> Resu
 #[derive(Debug, Serialize)]
 pub struct CryptoStatus {
     pub unlocked: bool,
+    pub server_has_crypto: bool,
+    pub needs_recovery: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct CryptoAccountStatusResponse {
+    has_crypto: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct EncryptionKeysListStatus {
+    keys: Vec<serde_json::Value>,
 }
 
 #[tauri::command]
-pub fn get_crypto_status() -> Result<CryptoStatus, String> {
+pub async fn get_crypto_status(state: State<'_, AppState>) -> Result<CryptoStatus, String> {
+    let unlocked = if let Ok(Some(auth)) = load_auth().map_err(|e: crate::error::AppError| e.to_string()) {
+        let user: serde_json::Value =
+            serde_json::from_str(&auth.user_json).map_err(|e| e.to_string())?;
+        if let Some(user_id) = user.get("id").and_then(|v| v.as_str()) {
+            crate::account_crypto::get_uek(user_id).is_some()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    let mut server_has_crypto = false;
+    let mut needs_recovery = false;
+    if let Ok(client) = state.api() {
+        if let Ok(raw) = client.get_crypto_account().await {
+            if let Ok(account) = serde_json::from_value::<CryptoAccountStatusResponse>(raw) {
+                server_has_crypto = account.has_crypto;
+                if !account.has_crypto {
+                    if let Ok(keys_raw) = client.list_encryption_keys("").await {
+                        if let Ok(resp) =
+                            serde_json::from_value::<EncryptionKeysListStatus>(keys_raw)
+                        {
+                            needs_recovery = !resp.keys.is_empty();
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(CryptoStatus {
-        unlocked: crate::account_crypto::is_unlocked(),
+        unlocked,
+        server_has_crypto,
+        needs_recovery,
     })
 }
 
@@ -870,6 +932,7 @@ pub async fn unlock_crypto_recovery(
     )
     .await
     .map_err(|e: crate::error::AppError| e.to_string())?;
+    emit_crypto_unlocked(&app);
     emit_crypto_sync_stats(&app, &stats);
     Ok(stats)
 }

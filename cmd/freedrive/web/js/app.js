@@ -172,6 +172,27 @@ const App = (() => {
             </div>`
             : '';
 
+        let needsRecovery = false;
+        if (window.CryptoSync?.detectNeedsRecovery) {
+            try {
+                needsRecovery = await CryptoSync.detectNeedsRecovery();
+            } catch { /* ignore */ }
+        }
+        const recoveryBanner = needsRecovery
+            ? `<div id="settings-crypto-recovery-banner" style="margin-bottom:12px;padding:12px 14px;border-radius:8px;background:#fce8e6;color:#c5221f;font-size:13px;line-height:1.45;">
+                Server lost encryption account data, but encrypted file keys are still on the server. Enter your recovery code below to restore access.
+            </div>`
+            : '';
+        const recoverySection = needsRecovery
+            ? `<div id="settings-crypto-recovery-section" style="margin-bottom:12px;">
+                <input id="settings-crypto-recovery-input" type="text" placeholder="xxxx-xxxx-..."
+                    style="width:100%;height:40px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
+                <button type="button" class="btn btn-secondary" id="settings-crypto-recovery-restore-btn" style="margin-top:8px;">
+                    Restore encryption
+                </button>
+            </div>`
+            : '';
+
         Components.showModal('Settings', `
             <div class="drive-settings-modal" style="padding: 8px 0;">
                 <div class="drive-settings-profile" style="margin-bottom: 24px;">
@@ -207,15 +228,18 @@ const App = (() => {
                     ${pendingBanner}
                     <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8eaed;">
                         <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Encryption</div>
+                        ${recoveryBanner}
                         <p style="margin:0 0 8px;font-size:12px;color:#5f6368;line-height:1.45;">
-                            Status: <strong id="settings-crypto-status">${window.CryptoSync?.isUnlocked?.() ? 'Active' : 'Locked'}</strong>
-                            — sign in with your password to unlock. Keys sync automatically across devices.
+                            Status: <strong id="settings-crypto-status">${window.CryptoSync?.isUnlocked?.() ? 'Active' : 'Inactive'}</strong>
+                            — encryption unlocks automatically when you sign in. Keys sync across your devices.
                         </p>
-                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-                            <button type="button" class="btn btn-secondary" id="settings-crypto-unlock-btn">Unlock with password</button>
-                            <button type="button" class="btn btn-secondary" id="settings-crypto-recovery-btn">Emergency: recovery code</button>
-                            <button type="button" class="btn btn-secondary" id="settings-crypto-rotate-btn">Rotate encryption key</button>
-                        </div>
+                        ${recoverySection}
+                        <details style="font-size:13px;color:#5f6368;margin-bottom:12px;">
+                            <summary style="cursor:pointer;">Advanced: rotate encryption key</summary>
+                            <button type="button" class="btn btn-secondary" id="settings-crypto-rotate-btn" style="margin-top:8px;">
+                                Rotate encryption key
+                            </button>
+                        </details>
                         <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Manual backup (optional)</div>
                         <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
                             Export/import below only if you need to move keys manually between browsers.
@@ -344,18 +368,22 @@ const App = (() => {
             }
         });
 
-        document.getElementById('settings-crypto-unlock-btn')?.addEventListener('click', async () => {
-            if (!window.CryptoSync?.showUnlockModal) return;
-            const ok = await CryptoSync.showUnlockModal();
-            const statusEl = document.getElementById('settings-crypto-status');
-            if (ok && statusEl) statusEl.textContent = 'Active';
-        });
-
-        document.getElementById('settings-crypto-recovery-btn')?.addEventListener('click', async () => {
-            if (!window.CryptoSync?.showRecoveryUnlockModal) return;
-            const ok = await CryptoSync.showRecoveryUnlockModal();
-            const statusEl = document.getElementById('settings-crypto-status');
-            if (ok && statusEl) statusEl.textContent = 'Active';
+        document.getElementById('settings-crypto-recovery-restore-btn')?.addEventListener('click', async () => {
+            const recovery = String(document.getElementById('settings-crypto-recovery-input')?.value || '').trim();
+            if (!recovery) {
+                Components.toast('Enter your recovery code', 'error');
+                return;
+            }
+            try {
+                await CryptoSync.restoreWithRecoveryCode(recovery);
+                const statusEl = document.getElementById('settings-crypto-status');
+                if (statusEl) statusEl.textContent = 'Active';
+                document.getElementById('settings-crypto-recovery-banner')?.remove();
+                document.getElementById('settings-crypto-recovery-section')?.remove();
+                Components.toast('Encryption restored', 'success');
+            } catch (err) {
+                Components.toast(err?.message || 'Recovery failed', 'error');
+            }
         });
 
         document.getElementById('settings-crypto-rotate-btn')?.addEventListener('click', async () => {
@@ -915,6 +943,9 @@ const App = (() => {
         document.getElementById('logout-btn')?.addEventListener('click', async () => {
             profileDropdown?.classList.add('hidden');
             try { await API.auth.logout(); } catch {}
+            if (window.CryptoSync?.lockAndClearDevice) {
+                await CryptoSync.lockAndClearDevice();
+            }
             API.clearAuth();
             SidebarTree.invalidateAll();
             showAuth();

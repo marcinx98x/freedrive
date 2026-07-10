@@ -7,16 +7,79 @@ use crate::db::{
 use crate::error::{AppError, AppResult};
 use parking_lot::Mutex;
 use rand::RngCore;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde::Deserialize;
+use serde::de::{self, Visitor};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::LazyLock;
 
 static UEK: LazyLock<Mutex<Option<[u8; 32]>>> = LazyLock::new(|| Mutex::new(None));
+
+fn decode_key_salt_base64(value: &str) -> AppResult<Vec<u8>> {
+    BASE64_STANDARD
+        .decode(value.trim())
+        .map_err(|e| AppError::msg(format!("invalid key_salt base64: {}", e)))
+}
+
+fn deserialize_key_salt<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct KeySaltVisitor;
+
+    impl<'de> Visitor<'de> for KeySaltVisitor {
+        type Value = Option<Vec<u8>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("base64 string, byte array, or null")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            decode_key_salt_base64(value)
+                .map(Some)
+                .map_err(de::Error::custom)
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut bytes = Vec::new();
+            while let Some(byte) = seq.next_element()? {
+                bytes.push(byte);
+            }
+            Ok(Some(bytes))
+        }
+    }
+
+    deserializer.deserialize_any(KeySaltVisitor)
+}
 
 #[derive(Debug, Deserialize)]
 struct CryptoAccountResponse {
     has_crypto: bool,
     has_recovery: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_key_salt")]
     key_salt: Option<Vec<u8>>,
     wrapped_uek: Option<String>,
     wrapped_uek_recovery: Option<String>,
@@ -118,6 +181,12 @@ pub struct UnlockResult {
     pub sync_stats: CryptoSyncStats,
 }
 
+async fn server_has_orphaned_file_keys(client: &ApiClient) -> AppResult<bool> {
+    let resp: EncryptionKeysListResponse =
+        serde_json::from_value(client.list_encryption_keys("").await?)?;
+    Ok(!resp.keys.is_empty())
+}
+
 pub async fn unlock_after_login(
     client: &ApiClient,
     db: &DbHandle,
@@ -127,6 +196,11 @@ pub async fn unlock_after_login(
     let account: CryptoAccountResponse =
         serde_json::from_value(client.get_crypto_account().await?)?;
     if !account.has_crypto {
+        if server_has_orphaned_file_keys(client).await? {
+            return Err(AppError::msg(
+                "server encryption account missing but file keys remain — recovery code required",
+            ));
+        }
         let uek = generate_file_key();
         let recovery_key = generate_file_key();
         let mut salt = [0u8; 16];
@@ -490,4 +564,24 @@ pub async fn resolve_file_key(
     Err(AppError::msg(
         "encryption key not available on this device (uploaded via web?)",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crypto_account_response_parses_go_base64_key_salt() {
+        let json = r#"{"has_crypto":true,"has_recovery":true,"key_salt":"dGVzdC1zYWx0LTE2Ynl0ZXM=","wrapped_uek":"abc","wrapped_uek_recovery":"def"}"#;
+        let account: CryptoAccountResponse = serde_json::from_str(json).unwrap();
+        assert!(account.has_crypto);
+        assert_eq!(account.key_salt.unwrap(), b"test-salt-16bytes");
+    }
+
+    #[test]
+    fn crypto_account_response_parses_web_byte_array_key_salt() {
+        let json = r#"{"has_crypto":true,"key_salt":[116,101,115,116],"wrapped_uek":"abc"}"#;
+        let account: CryptoAccountResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(account.key_salt.unwrap(), b"test");
+    }
 }

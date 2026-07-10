@@ -14,6 +14,8 @@ export interface ExportEncryptionKeysResult {
 
 export interface CryptoStatus {
   unlocked: boolean;
+  server_has_crypto: boolean;
+  needs_recovery: boolean;
 }
 
 export interface CryptoSyncStats {

@@ -6,6 +6,9 @@
 var CryptoModule = window.CryptoModule = (() => {
     const DB_NAME = 'freedrive_keys';
     const STORE_NAME = 'encryption_keys';
+    const DEVICE_STORE = 'device_crypto';
+    const DB_VERSION = 2;
+    const DEVICE_KEY_ID = 'device_key_v1';
     const ALGO = { name: 'AES-GCM', length: 256 };
 
     function getSubtleCrypto() {
@@ -27,19 +30,85 @@ var CryptoModule = window.CryptoModule = (() => {
         return Boolean(window.crypto?.subtle && window.crypto?.getRandomValues);
     }
 
-    // Open IndexedDB for key storage
     function openDB() {
         return new Promise((resolve, reject) => {
-            const req = indexedDB.open(DB_NAME, 1);
+            const req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onupgradeneeded = () => {
                 const db = req.result;
                 if (!db.objectStoreNames.contains(STORE_NAME)) {
                     db.createObjectStore(STORE_NAME);
                 }
+                if (!db.objectStoreNames.contains(DEVICE_STORE)) {
+                    db.createObjectStore(DEVICE_STORE);
+                }
             };
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
         });
+    }
+
+    async function idbGet(storeName, key) {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readonly');
+            const req = tx.objectStore(storeName).get(key);
+            req.onsuccess = () => resolve(req.result ?? null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function idbPut(storeName, key, value) {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).put(value, key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async function idbDelete(storeName, key) {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).delete(key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async function getOrCreateDeviceKey() {
+        const existing = await idbGet(DEVICE_STORE, DEVICE_KEY_ID);
+        if (existing) {
+            return new Uint8Array(base64UrlToArrayBuffer(existing));
+        }
+        const deviceKey = generateRawBytes(32);
+        await idbPut(DEVICE_STORE, DEVICE_KEY_ID, arrayBufferToBase64Url(deviceKey.buffer));
+        return deviceKey;
+    }
+
+    function deviceUekKey(userId) {
+        return `uek_${userId}`;
+    }
+
+    async function persistDeviceUek(userId, uekBytes) {
+        if (!userId || !uekBytes || uekBytes.length !== 32) return;
+        const deviceKey = await getOrCreateDeviceKey();
+        const wrapped = await wrapRawKey(uekBytes, deviceKey);
+        await idbPut(DEVICE_STORE, deviceUekKey(userId), wrapped);
+    }
+
+    async function restoreDeviceUek(userId) {
+        if (!userId) return null;
+        const wrapped = await idbGet(DEVICE_STORE, deviceUekKey(userId));
+        if (!wrapped) return null;
+        const deviceKey = await getOrCreateDeviceKey();
+        return await unwrapRawKey(wrapped, deviceKey);
+    }
+
+    async function clearDeviceUek(userId) {
+        if (!userId) return;
+        await idbDelete(DEVICE_STORE, deviceUekKey(userId));
     }
 
     // Generate a new AES-GCM-256 key
@@ -359,5 +428,8 @@ var CryptoModule = window.CryptoModule = (() => {
         parseRecoveryCode,
         rawKeyToCryptoKey,
         PBKDF2_ITERATIONS,
+        persistDeviceUek,
+        restoreDeviceUek,
+        clearDeviceUek,
     };
 })();

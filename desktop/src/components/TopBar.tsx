@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import type { SyncStatus, User } from "../types";
+import { NavIcon } from "./NavIcons";
 import { UserAvatar } from "./UserAvatar";
 
 interface TopBarProps {
@@ -39,17 +40,11 @@ export function TopBar({
       <div className="topbar-actions">
         {cryptoUnlocked !== undefined && (
           <span
-            className="crypto-status-pill"
-            title={cryptoUnlocked ? "Encryption active" : "Encryption locked — sign in with password"}
-            style={{
-              fontSize: 12,
-              padding: "4px 10px",
-              borderRadius: 12,
-              background: cryptoUnlocked ? "#e6f4ea" : "#fce8e6",
-              color: cryptoUnlocked ? "#137333" : "#c5221f",
-            }}
+            className="icon-btn crypto-lock-indicator"
+            title={cryptoUnlocked ? "Encryption unlocked" : "Encryption locked"}
+            aria-label={cryptoUnlocked ? "Encryption unlocked" : "Encryption locked"}
           >
-            {cryptoUnlocked ? "🔒 Active" : "🔒 Locked"}
+            <NavIcon name={cryptoUnlocked ? "lock" : "lock_open"} />
           </span>
         )}
         <button

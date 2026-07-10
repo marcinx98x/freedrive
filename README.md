@@ -118,9 +118,10 @@ FreeDrive is ideal for:
 
 - Profile settings modal (name, avatar photo)
 - Forgot-password flow with SQLite-persisted reset tokens (survives server restart; single-use)
-- **Cross-device encryption** — account key (UEK) and per-file keys sync via server; unlock with password on web or desktop to decrypt files on any device
-- **Recovery code** — emergency unlock when password is forgotten (set up on first encryption or after key rotation)
-- **Key rotation** — re-wrap account and file keys with a new password-derived key from Settings (web and desktop)
+- **Cross-device encryption** — account key (UEK) and per-file keys sync via server; unlocks automatically when you sign in with your password
+- **Device unlock cache** — web UI wraps the UEK with a per-browser device key (IndexedDB) so encryption stays active across page refreshes; cleared on logout
+- **Recovery code** — emergency restore when the server loses account crypto metadata but file keys remain (e.g. after a data reset); also used when password is forgotten
+- **Key rotation** — re-wrap account and file keys with a new password-derived key from Settings (web and desktop, under Advanced)
 - Password reset can re-wrap the account key when crypto metadata is supplied
 - Secure email change with confirmation link sent to the new address
 - Security center for per-user email 2FA toggle
@@ -283,9 +284,10 @@ Global limiter enabled in router:
 File payloads are encrypted client-side (AES-GCM) before upload. The server stores ciphertext blobs and **wrapped** encryption keys only — it never receives the user's raw account key (UEK) or per-file keys.
 
 - **Web UI** — WebCrypto encrypts/decrypts in the browser; keys are wrapped with a password-derived key and synced via `/api/v1/crypto/*`
-- **Desktop client** — same UEK + file-key model; keys sync on sign-in, UEK cached in OS keyring, pending file keys flushed when back online
-- **Unlock flows** — password unlock at sign-in; recovery code in Settings when locked; key rotation re-wraps all file keys
-- **Password reset** — optional crypto metadata lets users re-wrap the account key without losing access to existing files (when recovery was configured)
+- **Desktop client** — same UEK + file-key model; auto-unlock on sign-in, UEK cached in OS keyring, pending file keys flushed when back online
+- **Auto-unlock** — password at sign-in unlocks encryption; no separate unlock step in normal use
+- **Recovery** — if account crypto metadata is missing on the server but wrapped file keys exist, Settings prompts for a recovery code to restore access
+- **Logout** — clears device-local encryption state (web IndexedDB + desktop keyring session)
 - On plain HTTP (non-localhost), the web UI warns and may upload without browser-side encryption
 
 If your threat model requires strict end-to-end guarantees, review key handling and server-side wrapped-key storage before production rollout.
@@ -626,7 +628,7 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 
 - Sign in, onboarding, folder sync, system tray, pause/resume
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
-- **Encryption status** — top bar shows Active/Locked; Settings supports recovery-code unlock and key rotation
+- **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out / Sign in with another account

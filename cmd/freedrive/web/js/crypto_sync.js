@@ -4,10 +4,69 @@
 
 var CryptoSync = window.CryptoSync = (() => {
     const SYNC_CURSOR_KEY = 'fd_crypto_sync_since';
+    const NEEDS_RECOVERY_KEY = 'fd_crypto_needs_recovery';
     const ERR_UNLOCK_REQUIRED = 'FD_CRYPTO_UNLOCK_REQUIRED';
     const ERR_KEY_NOT_ON_SERVER = 'FD_CRYPTO_KEY_NOT_ON_SERVER';
+    const ERR_NEEDS_RECOVERY = 'FD_CRYPTO_NEEDS_RECOVERY';
     let uekRaw = null;
     let recoveryKeyRaw = null;
+
+    function currentUserId() {
+        return API.getUser?.()?.id || null;
+    }
+
+    async function persistDeviceUnlock(userId) {
+        if (!userId || !uekRaw) return;
+        await CryptoModule.persistDeviceUek(userId, uekRaw);
+    }
+
+    async function tryRestoreDeviceUnlock(userId) {
+        const uid = userId || currentUserId();
+        if (!uid) return false;
+        try {
+            const restored = await CryptoModule.restoreDeviceUek(uid);
+            if (!restored || restored.length !== 32) return false;
+            uekRaw = restored;
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async function clearDeviceUnlock(userId) {
+        const uid = userId || currentUserId();
+        if (!uid) return;
+        await CryptoModule.clearDeviceUek(uid);
+    }
+
+    function setNeedsRecovery(flag) {
+        if (flag) {
+            localStorage.setItem(NEEDS_RECOVERY_KEY, 'true');
+        } else {
+            localStorage.removeItem(NEEDS_RECOVERY_KEY);
+        }
+    }
+
+    function getNeedsRecovery() {
+        return localStorage.getItem(NEEDS_RECOVERY_KEY) === 'true';
+    }
+
+    async function detectNeedsRecovery() {
+        if (!API.isLoggedIn()) return false;
+        try {
+            const account = await API.crypto.getAccount();
+            if (account?.has_crypto) {
+                setNeedsRecovery(false);
+                return false;
+            }
+            const data = await API.crypto.listKeys('');
+            const needs = (data?.keys || []).length > 0;
+            setNeedsRecovery(needs);
+            return needs;
+        } catch {
+            return getNeedsRecovery();
+        }
+    }
 
     function canUse() {
         return Boolean(window.CryptoModule?.canEncrypt?.());
@@ -22,13 +81,25 @@ var CryptoSync = window.CryptoSync = (() => {
         recoveryKeyRaw = null;
     }
 
+    async function lockAndClearDevice(userId) {
+        const uid = userId || currentUserId();
+        lock();
+        if (uid) {
+            await clearDeviceUnlock(uid);
+        }
+        setNeedsRecovery(false);
+    }
+
     function describeFileKeyError(err) {
         const code = err?.code || err?.message || '';
+        if (code === ERR_NEEDS_RECOVERY) {
+            return 'Server lost encryption account data but file keys remain. Open Settings and enter your recovery code.';
+        }
         if (code === ERR_UNLOCK_REQUIRED) {
-            return 'Unlock encryption with your password (refresh the page if needed).';
+            return 'Sign out and sign in again with your password to restore file access.';
         }
         if (code === ERR_KEY_NOT_ON_SERVER) {
-            return 'This file\'s encryption key is not on the server yet. Open FreeDrive on the device where you uploaded it (signed in with your password), or upload the file again.';
+            return 'This file\'s encryption key is not on the server yet. Wait for sync from the device that uploaded it, or upload the file again.';
         }
         return err?.message || 'Encryption key not available';
     }
@@ -103,26 +174,41 @@ var CryptoSync = window.CryptoSync = (() => {
     async function unlockWithPassword(password) {
         const account = await API.crypto.getAccount();
         if (!account?.has_crypto) {
+            if (await detectNeedsRecovery()) {
+                const err = new Error(ERR_NEEDS_RECOVERY);
+                err.code = ERR_NEEDS_RECOVERY;
+                throw err;
+            }
             const recoveryCode = await setupNewAccount(password);
+            await persistDeviceUnlock(currentUserId());
             const stats = await syncAllKeysWithStats();
             toastSyncStats(stats);
             return { setup: true, recoveryCode, stats };
         }
         uekRaw = await unwrapUekWithPassword(account, password);
+        await persistDeviceUnlock(currentUserId());
         const stats = await syncAllKeysWithStats();
         toastSyncStats(stats);
+        setNeedsRecovery(false);
         return { setup: false, stats };
     }
 
     async function unlockWithRecovery(recoveryCode) {
         const account = await API.crypto.getAccount();
         if (!account?.has_crypto) {
-            throw new Error('Encryption is not set up for this account');
+            throw new Error('Server encryption account is missing. Recovery requires server backup data.');
         }
         uekRaw = await unwrapUekWithRecovery(account, recoveryCode);
+        await persistDeviceUnlock(currentUserId());
         const stats = await syncAllKeysWithStats();
         toastSyncStats(stats);
+        setNeedsRecovery(false);
         return { setup: false, stats };
+    }
+
+    async function restoreWithRecoveryCode(recoveryCode) {
+        const result = await unlockWithRecovery(recoveryCode);
+        return result;
     }
 
     async function rotateAccountKey(password) {
@@ -159,6 +245,7 @@ var CryptoSync = window.CryptoSync = (() => {
         });
         uekRaw = newUek;
         recoveryKeyRaw = newRecoveryKey;
+        await persistDeviceUnlock(currentUserId());
         const stats = await syncAllKeysWithStats();
         toastSyncStats(stats);
         return {
@@ -184,6 +271,7 @@ var CryptoSync = window.CryptoSync = (() => {
             wrapped_uek_recovery: wrappedRecovery || undefined,
         });
         uekRaw = current;
+        await persistDeviceUnlock(currentUserId());
     }
 
     async function rewrapAfterPasswordReset(newPassword, recoveryCode) {
@@ -204,6 +292,7 @@ var CryptoSync = window.CryptoSync = (() => {
             wrapped_uek: wrappedUek,
             wrapped_uek_recovery: wrappedRecovery || undefined,
         });
+        await persistDeviceUnlock(currentUserId());
     }
 
     function getSyncCursor() {
@@ -282,6 +371,11 @@ var CryptoSync = window.CryptoSync = (() => {
         let key = await CryptoModule.getKey(fileId);
         if (key) return key;
         if (!isUnlocked()) {
+            if (getNeedsRecovery()) {
+                const err = new Error(ERR_NEEDS_RECOVERY);
+                err.code = ERR_NEEDS_RECOVERY;
+                throw err;
+            }
             const err = new Error(ERR_UNLOCK_REQUIRED);
             err.code = ERR_UNLOCK_REQUIRED;
             throw err;
@@ -343,110 +437,49 @@ var CryptoSync = window.CryptoSync = (() => {
         });
     }
 
-    async function showUnlockModal() {
-        return new Promise((resolve) => {
-            Components.showModal(
-                'Unlock encryption',
-                `<p style="margin:0 0 12px;font-size:14px;color:#5f6368;line-height:1.45;">
-                    Enter your account password to access encrypted files on this device.
-                </p>
-                <label style="display:block;margin-bottom:12px;">
-                    <span style="font-size:13px;font-weight:500;color:#5f6368;">Password</span>
-                    <input id="crypto-unlock-password" type="password" autocomplete="current-password"
-                        style="width:100%;height:40px;margin-top:6px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
-                </label>`,
-                [
-                    { text: 'Cancel', action: () => { resolve(false); } },
-                    {
-                        text: 'Unlock',
-                        class: 'btn-primary',
-                        close: false,
-                        action: async () => {
-                            const password = String(document.getElementById('crypto-unlock-password')?.value || '');
-                            if (!password) {
-                                Components.toast('Enter your password', 'error');
-                                return false;
-                            }
-                            try {
-                                await unlockWithPassword(password);
-                                Components.hideModal();
-                                resolve(true);
-                                return true;
-                            } catch (err) {
-                                Components.toast(err?.message || 'Unlock failed', 'error');
-                                return false;
-                            }
-                        },
-                    },
-                ],
-            );
-        });
-    }
-
-    async function showRecoveryUnlockModal() {
-        return new Promise((resolve) => {
-            Components.showModal(
-                'Unlock with recovery code',
-                `<p style="margin:0 0 12px;font-size:14px;color:#5f6368;line-height:1.45;">
-                    Use this only if you cannot unlock with your password (for example after a password reset).
-                </p>
-                <label style="display:block;">
-                    <span style="font-size:13px;font-weight:500;color:#5f6368;">Recovery code</span>
-                    <input id="crypto-settings-recovery" type="text" placeholder="xxxx-xxxx-..."
-                        style="width:100%;height:40px;margin-top:6px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
-                </label>`,
-                [
-                    { text: 'Cancel', action: () => { resolve(false); } },
-                    {
-                        text: 'Unlock',
-                        class: 'btn-primary',
-                        close: false,
-                        action: async () => {
-                            const recovery = String(document.getElementById('crypto-settings-recovery')?.value || '').trim();
-                            if (!recovery) {
-                                Components.toast('Enter recovery code', 'error');
-                                return false;
-                            }
-                            try {
-                                await unlockWithRecovery(recovery);
-                                Components.hideModal();
-                                resolve(true);
-                                return true;
-                            } catch (err) {
-                                Components.toast(err?.message || 'Unlock failed', 'error');
-                                return false;
-                            }
-                        },
-                    },
-                ],
-            );
-        });
-    }
-
     async function ensureUnlockedAfterLogin(password) {
         if (!canUse()) return true;
         try {
+            const userId = currentUserId();
+            if (userId && await tryRestoreDeviceUnlock(userId)) {
+                try {
+                    await syncAllKeysWithStats();
+                } catch { /* ignore */ }
+                setNeedsRecovery(false);
+                return true;
+            }
             const result = await unlockWithPassword(password);
             if (result.setup && result.recoveryCode) {
                 await showRecoverySetupModal(result.recoveryCode);
             }
             return true;
         } catch (err) {
-            Components.toast(err?.message || 'Encryption unlock failed', 'error');
+            if (err?.code === ERR_NEEDS_RECOVERY) {
+                await detectNeedsRecovery();
+                return true;
+            }
+            Components.toast(err?.message || 'Encryption setup failed', 'error');
             return false;
         }
     }
 
     async function ensureUnlockedOnAppLoad() {
         if (!canUse() || !API.isLoggedIn()) return true;
+        await detectNeedsRecovery();
         if (isUnlocked()) {
             try {
-                const stats = await syncAllKeysWithStats();
-                toastSyncStats(stats);
+                await syncAllKeysWithStats();
             } catch { /* ignore background sync errors */ }
             return true;
         }
-        return showUnlockModal();
+        const userId = currentUserId();
+        if (userId && await tryRestoreDeviceUnlock(userId)) {
+            try {
+                await syncAllKeysWithStats();
+            } catch { /* ignore */ }
+            return true;
+        }
+        return true;
     }
 
     async function buildCryptoUpdateForReset(token, email, newPassword, recoveryCode) {
@@ -470,8 +503,10 @@ var CryptoSync = window.CryptoSync = (() => {
         canUse,
         isUnlocked,
         lock,
+        lockAndClearDevice,
         unlockWithPassword,
         unlockWithRecovery,
+        restoreWithRecoveryCode,
         rotateAccountKey,
         rewrapWithNewPassword,
         rewrapAfterPasswordReset,
@@ -479,12 +514,13 @@ var CryptoSync = window.CryptoSync = (() => {
         pushFileKey,
         ensureFileKey,
         describeFileKeyError,
+        detectNeedsRecovery,
+        getNeedsRecovery,
         ERR_UNLOCK_REQUIRED,
         ERR_KEY_NOT_ON_SERVER,
+        ERR_NEEDS_RECOVERY,
         ensureUnlockedAfterLogin,
         ensureUnlockedOnAppLoad,
-        showUnlockModal,
-        showRecoveryUnlockModal,
         showRecoverySetupModal,
         buildCryptoUpdateForReset,
     };

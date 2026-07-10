@@ -4244,7 +4244,7 @@ const FileManager = (() => {
                 throw new Error(
                     window.CryptoSync?.describeFileKeyError
                         ? CryptoSync.describeFileKeyError({ code: CryptoSync.ERR_UNLOCK_REQUIRED })
-                        : 'Encryption key not available. Unlock encryption with your password.',
+                        : 'Sign out and sign in again with your password.',
                 );
             }
             if (!iv) return blob;
