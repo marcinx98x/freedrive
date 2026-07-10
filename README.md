@@ -633,7 +633,7 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out
 - **Non-blocking sign-in** — encryption unlock, sync restore, and Explorer (CfAPI) integration run in the background so the UI returns immediately after login
-- **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`)
+- **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`); if initial sync was interrupted, startup resumes the full sync instead of verify-only
 - **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider connects in the background and reconnects automatically before opening the folder
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — subfolder with server folders/files as cloud placeholders; files download when opened

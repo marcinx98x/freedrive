@@ -7,7 +7,7 @@ use crate::db::{
 };
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::sync::engine::SyncEngine;
+use crate::sync::engine::{initial_sync_complete, SyncEngine, SyncStatusKind};
 use crate::sync::watcher::WatcherHandle;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -275,17 +275,24 @@ pub async fn restore_sync_on_startup(state: &AppState, app: &AppHandle) -> AppRe
 
     let paths: Vec<PathBuf> = folders.iter().map(|f| PathBuf::from(&f.local_path)).collect();
 
-    start_sync_services(state, app, engine.clone(), paths, false, true)
+    let pending_initial = !initial_sync_complete(&state.db);
+    if pending_initial {
+        engine.set_sync_status(SyncStatusKind::Syncing, "Resuming sync…");
+    }
+
+    start_sync_services(state, app, engine.clone(), paths, pending_initial, true)
         .map_err(|e| AppError::msg(e))?;
 
-    let eng = engine.clone();
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = eng.clone().run_background_verify().await {
-            eprintln!("background verify on startup failed: {}", e);
-        }
-        let _ = app_handle.emit("sync-status-changed", eng.get_status());
-    });
+    if !pending_initial {
+        let eng = engine.clone();
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = eng.clone().run_background_verify().await {
+                eprintln!("background verify on startup failed: {}", e);
+            }
+            let _ = app_handle.emit("sync-status-changed", eng.get_status());
+        });
+    }
 
     Ok(())
 }

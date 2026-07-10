@@ -242,6 +242,10 @@ impl SyncEngine {
         self.set_status(SyncStatusKind::Error, message);
     }
 
+    pub fn set_sync_status(&self, kind: SyncStatusKind, message: impl Into<String>) {
+        self.set_status(kind, message);
+    }
+
     fn set_status(&self, kind: SyncStatusKind, message: impl Into<String>) {
         let mut st = self.status.write();
         st.status = kind;
@@ -685,6 +689,10 @@ impl SyncEngine {
             });
         } else if matches!(self.get_status().status, SyncStatusKind::Syncing) {
             self.set_status(SyncStatusKind::UpToDate, "Up to date");
+        }
+
+        if !initial_sync_complete(&self.db) && total_errors == 0 {
+            self.mark_initial_sync_complete();
         }
 
         Ok(())
