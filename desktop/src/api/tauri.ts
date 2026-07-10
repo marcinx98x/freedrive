@@ -9,6 +9,7 @@ import type {
   SharedItem,
   StorageInfo,
   SyncFolder,
+  SyncMode,
   SyncProgress,
   SyncStatus,
   SystemFolder,
@@ -41,6 +42,15 @@ export const api = {
   getSyncActivity: () => invoke<ActivityItem[]>("get_sync_activity"),
   getSyncFolders: () => invoke<SyncFolder[]>("get_sync_folders"),
   addSyncFolder: (path: string) => invoke<string>("add_sync_folder", { path }),
+  removeSyncFolder: (folder_id: number) =>
+    invoke<void>("remove_sync_folder", { folder_id }),
+  openPreferencesWindow: () => invoke<void>("open_preferences_window"),
+  getSyncMode: () => invoke<SyncMode>("get_sync_mode"),
+  setSyncMode: (mode: SyncMode) => invoke<void>("set_sync_mode", { mode }),
+  getLaunchOnLogin: () => invoke<boolean>("get_launch_on_login"),
+  setLaunchOnLogin: (enabled: boolean) =>
+    invoke<void>("set_launch_on_login", { enabled }),
+  openSyncLogFolder: () => invoke<void>("open_sync_log_folder"),
   pauseSync: () => invoke<void>("pause_sync"),
   resumeSync: () => invoke<void>("resume_sync"),
   openDriveFolder: () => invoke<void>("open_drive_folder"),

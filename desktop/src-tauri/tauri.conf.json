@@ -20,6 +20,17 @@
         "minHeight": 600,
         "resizable": true,
         "decorations": true
+      },
+      {
+        "label": "preferences",
+        "title": "FreeDrive Preferences",
+        "width": 960,
+        "height": 640,
+        "minWidth": 800,
+        "minHeight": 520,
+        "resizable": true,
+        "decorations": true,
+        "visible": false
       }
     ],
     "security": {

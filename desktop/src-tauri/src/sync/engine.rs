@@ -1511,6 +1511,10 @@ impl SyncEngine {
             return Ok(());
         }
 
+        if !sync_mode_is_mirror(&self.db) {
+            return Ok(());
+        }
+
         let sync_folders = {
             let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
             list_sync_folders(&conn)?
@@ -1759,4 +1763,24 @@ pub fn initial_sync_complete(db: &DbHandle) -> bool {
 
 pub fn has_pending_sync(db: &DbHandle) -> bool {
     !initial_sync_complete(db)
+}
+
+const SYNC_MODE_KEY: &str = "sync_mode";
+
+pub fn get_sync_mode(db: &DbHandle) -> String {
+    db.lock()
+        .ok()
+        .and_then(|c| config_get(&c, SYNC_MODE_KEY).ok().flatten())
+        .filter(|v| v == "stream" || v == "mirror")
+        .unwrap_or_else(|| "mirror".to_string())
+}
+
+pub fn sync_mode_is_mirror(db: &DbHandle) -> bool {
+    get_sync_mode(db) == "mirror"
+}
+
+pub fn set_sync_mode(db: &DbHandle, mode: &str) -> AppResult<()> {
+    let normalized = if mode == "stream" { "stream" } else { "mirror" };
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    config_set(&conn, SYNC_MODE_KEY, normalized)
 }

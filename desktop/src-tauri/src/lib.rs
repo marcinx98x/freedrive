@@ -31,6 +31,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![] as Vec<&str>),
+        ))
         .manage(AppState::new(db))
         .invoke_handler(tauri::generate_handler![
             commands::get_auth_state,
@@ -45,6 +49,13 @@ pub fn run() {
             commands::get_sync_activity,
             commands::get_sync_folders,
             commands::add_sync_folder,
+            commands::remove_sync_folder,
+            commands::open_preferences_window,
+            commands::get_sync_mode,
+            commands::set_sync_mode,
+            commands::get_launch_on_login,
+            commands::set_launch_on_login,
+            commands::open_sync_log_folder,
             commands::pause_sync,
             commands::resume_sync,
             commands::open_drive_folder,
@@ -149,8 +160,11 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                let label = window.label();
+                if label == "main" || label == "preferences" {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
         })
         .build(tauri::generate_context!())

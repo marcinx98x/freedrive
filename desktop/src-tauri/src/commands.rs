@@ -2,8 +2,8 @@ use crate::api::types::{LoginSuccess, SharedItem, StorageInfo, User};
 use crate::api::ApiClient;
 use crate::auth_store::{clear_auth, load_auth, my_drive_path, save_auth, sync_root_dir, StoredAuth};
 use crate::db::{
-    config_get, config_set, import_file_keys, list_activity, list_all_file_keys, list_sync_folders,
-    prepare_login_session, reset_session_on_logout, save_local_sync_folders,
+    config_get, config_set, delete_sync_folder, import_file_keys, list_activity, list_all_file_keys,
+    list_sync_folders, prepare_login_session, reset_session_on_logout, save_local_sync_folders,
 };
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -702,6 +702,68 @@ pub async fn add_sync_folder(
     });
 
     Ok(format!("Added {} to sync", label))
+}
+
+#[tauri::command]
+pub async fn open_preferences_window(app: AppHandle) -> Result<(), String> {
+    let w = app
+        .get_webview_window("preferences")
+        .ok_or_else(|| "Preferences window is not available".to_string())?;
+    w.show().map_err(|e| e.to_string())?;
+    w.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_sync_folder(
+    state: State<'_, AppState>,
+    folder_id: i64,
+) -> Result<(), String> {
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        if !delete_sync_folder(&conn, folder_id).map_err(|e: AppError| e.to_string())? {
+            return Err("Sync folder not found".into());
+        }
+    }
+
+    if let Ok(engine) = state.sync_engine() {
+        restart_watcher(&state, engine)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_sync_mode(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(crate::sync::engine::get_sync_mode(&state.db))
+}
+
+#[tauri::command]
+pub fn set_sync_mode(state: State<'_, AppState>, mode: String) -> Result<(), String> {
+    crate::sync::engine::set_sync_mode(&state.db, &mode).map_err(|e: AppError| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_launch_on_login(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_launch_on_login(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn open_sync_log_folder(app: AppHandle) -> Result<(), String> {
+    let dir = crate::auth_store::data_dir().map_err(|e: AppError| e.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

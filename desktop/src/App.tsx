@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "./api/tauri";
 import { MainApp } from "./screens/MainApp";
 import { OnboardingWizard } from "./screens/OnboardingWizard";
+import { PreferencesApp } from "./screens/PreferencesApp";
 import { SignIn } from "./screens/SignIn";
 import { Welcome } from "./screens/Welcome";
 import type { AppScreen, User } from "./types";
 import "./styles/drive-theme.css";
 
-function App() {
+function MainShell() {
   const [screen, setScreen] = useState<AppScreen>("loading");
   const [user, setUser] = useState<User | null>(null);
   const [serverUrl, setServerUrl] = useState<string | null>(null);
@@ -95,6 +97,24 @@ function App() {
       )}
     </div>
   );
+}
+
+function App() {
+  const [windowLabel, setWindowLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWindowLabel(getCurrentWindow().label);
+  }, []);
+
+  if (!windowLabel) {
+    return <div className="loading-screen">Loading…</div>;
+  }
+
+  if (windowLabel === "preferences") {
+    return <PreferencesApp />;
+  }
+
+  return <MainShell />;
 }
 
 export default App;

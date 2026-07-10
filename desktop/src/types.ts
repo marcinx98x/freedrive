@@ -113,6 +113,10 @@ export interface ActivityItem {
   created_at: string;
 }
 
+export type SyncMode = "stream" | "mirror";
+
+export type PreferencesTab = "my-computer" | "freedrive";
+
 export type MainView = "home" | "sync" | "notifications";
 
 export interface StorageInfo {

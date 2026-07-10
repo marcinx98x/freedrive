@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, onCryptoKeyQueued, onCryptoKeysSynced, onCryptoRecoverySetup, onCryptoUnlockFailed, onCryptoUnlocked, onMyDriveHydrateFailed, onSyncActivity, onSyncProgress, onSyncStatusChanged } from "../api/tauri";
+import {
+  api,
+  onCryptoKeyQueued,
+  onCryptoKeysSynced,
+  onCryptoRecoverySetup,
+  onCryptoUnlockFailed,
+  onCryptoUnlocked,
+  onMyDriveHydrateFailed,
+  onSyncActivity,
+  onSyncProgress,
+  onSyncStatusChanged,
+} from "../api/tauri";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { Sidebar } from "../components/Sidebar";
 import { TopBar } from "../components/TopBar";
@@ -7,7 +18,14 @@ import { useNotifications } from "../hooks/useNotifications";
 import { Home } from "./Home";
 import { Notifications } from "./Notifications";
 import { SyncActivity } from "./SyncActivity";
-import type { ActivityItem, MainView, StorageInfo, SyncStatus, User } from "../types";
+import type {
+  ActivityItem,
+  MainView,
+  StorageInfo,
+  SyncProgress,
+  SyncStatus,
+  User,
+} from "../types";
 
 interface MainAppProps {
   user: User | null;
@@ -26,41 +44,29 @@ const defaultStatus: SyncStatus = {
 export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProps) {
   const [view, setView] = useState<MainView>("home");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(defaultStatus);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [search, setSearch] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileAnchor, setProfileAnchor] = useState<DOMRect | null>(null);
-  const [settingsError, setSettingsError] = useState("");
-  const [keysImportMessage, setKeysImportMessage] = useState("");
-  const [keysImporting, setKeysImporting] = useState(false);
-  const [keysExporting, setKeysExporting] = useState(false);
   const [hydrateWarning, setHydrateWarning] = useState("");
   const [folderError, setFolderError] = useState("");
   const [explorerWarning, setExplorerWarning] = useState("");
-  const [signingOut, setSigningOut] = useState(false);
   const [cryptoUnlocked, setCryptoUnlocked] = useState(false);
-  const [serverHasCrypto, setServerHasCrypto] = useState(false);
   const [cryptoUnlockError, setCryptoUnlockError] = useState("");
   const [needsCryptoRecovery, setNeedsCryptoRecovery] = useState(false);
-  const [recoveryCode, setRecoveryCode] = useState("");
-  const [recoveryUnlocking, setRecoveryUnlocking] = useState(false);
-  const [rotatePassword, setRotatePassword] = useState("");
-  const [rotatingKey, setRotatingKey] = useState(false);
 
   const refreshCryptoStatus = useCallback(async () => {
     try {
       const status = await api.getCryptoStatus();
       setCryptoUnlocked(status.unlocked);
-      setServerHasCrypto(status.server_has_crypto);
       setNeedsCryptoRecovery(status.needs_recovery);
       if (status.unlocked) {
         setCryptoUnlockError("");
       }
     } catch {
       setCryptoUnlocked(false);
-      setServerHasCrypto(false);
       setNeedsCryptoRecovery(false);
     }
   }, []);
@@ -125,11 +131,25 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         /* optional status */
       });
     const unsubs: (() => void)[] = [];
-    onSyncStatusChanged(setSyncStatus).then((u) => unsubs.push(u));
+    onSyncStatusChanged((status) => {
+      setSyncStatus(status);
+      if (status.status !== "syncing") {
+        setSyncProgress(null);
+      }
+    }).then((u) => unsubs.push(u));
     onSyncProgress((progress) => {
-      if (progress.phase === "scanning") return;
+      if (progress.phase === "done") {
+        setSyncProgress(null);
+        return;
+      }
+      if (
+        progress.total > 0 ||
+        progress.phase === "syncing" ||
+        progress.message?.startsWith("Scanning complete")
+      ) {
+        setSyncProgress(progress);
+      }
       if (progress.show_in_ui === false) return;
-      if (!progress.message || progress.message.startsWith("Scanning complete")) return;
       if (progress.phase === "syncing") {
         setSyncStatus((prev) => ({
           ...prev,
@@ -164,24 +184,17 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         event.message.includes("encryption key not available");
       setHydrateWarning(
         isWebKey
-          ? "Could not decrypt this file yet. Sign out and sign in again to sync encryption keys, or use Settings export/import as backup."
+          ? "Could not decrypt this file yet. Sign out and sign in again to sync encryption keys, or open Preferences for export/import."
           : event.message,
       );
     }).then((u) => unsubs.push(u));
-    onCryptoRecoverySetup((code) => {
-      setKeysImportMessage(
-        `Save this recovery code in a safe place: ${code}`,
-      );
-      setShowSettings(true);
+    onCryptoRecoverySetup(() => {
+      api.openPreferencesWindow().catch(console.error);
       setCryptoUnlocked(true);
     }).then((u) => unsubs.push(u));
-    onCryptoKeysSynced((stats) => {
-      const total = stats.pulled + stats.pushed + stats.pending_flushed;
-      if (total > 0) {
-        setKeysImportMessage(`Synced ${total} encryption key${total === 1 ? "" : "s"}.`);
-        setCryptoUnlocked(true);
-        setCryptoUnlockError("");
-      }
+    onCryptoKeysSynced(() => {
+      setCryptoUnlocked(true);
+      setCryptoUnlockError("");
     }).then((u) => unsubs.push(u));
     onCryptoUnlocked(() => {
       setCryptoUnlocked(true);
@@ -222,101 +235,13 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     }
   };
 
-  const handleExportEncryptionKeys = async () => {
-    setSettingsError("");
-    setKeysImportMessage("");
-    setKeysExporting(true);
-    try {
-      const result = await api.exportEncryptionKeys();
-      setKeysImportMessage(
-        `Exported ${result.exported} encryption key${result.exported === 1 ? "" : "s"} to ${result.path}.`,
-      );
-    } catch (err) {
-      const message = String(err);
-      if (!message.includes("Export cancelled")) {
-        setSettingsError(message);
-      }
-    } finally {
-      setKeysExporting(false);
-    }
-  };
-
-  const handleImportEncryptionKeys = async () => {
-    setSettingsError("");
-    setKeysImportMessage("");
-    setKeysImporting(true);
-    try {
-      const result = await api.importEncryptionKeys();
-      setKeysImportMessage(`Imported ${result.imported} encryption key${result.imported === 1 ? "" : "s"}.`);
-      setHydrateWarning("");
-    } catch (err) {
-      const message = String(err);
-      if (!message.includes("No file selected")) {
-        setSettingsError(message);
-      }
-    } finally {
-      setKeysImporting(false);
-    }
-  };
-
-  const handleUnlockRecovery = async () => {
-    setSettingsError("");
-    if (!recoveryCode.trim()) {
-      setSettingsError("Enter recovery code");
-      return;
-    }
-    setRecoveryUnlocking(true);
-    try {
-      const stats = await api.unlockCryptoRecovery(recoveryCode.trim());
-      const total = stats.pulled + stats.pushed + stats.pending_flushed;
-      setKeysImportMessage(
-        total > 0
-          ? `Encryption restored and synced ${total} key${total === 1 ? "" : "s"}.`
-          : "Encryption restored.",
-      );
-      setCryptoUnlocked(true);
-      setNeedsCryptoRecovery(false);
-      setRecoveryCode("");
-    } catch (err) {
-      setSettingsError(String(err));
-    } finally {
-      setRecoveryUnlocking(false);
-    }
-  };
-
-  const handleRotateCryptoKey = async () => {
-    setSettingsError("");
-    if (!rotatePassword) {
-      setSettingsError("Enter your password to rotate the encryption key");
-      return;
-    }
-    setRotatingKey(true);
-    try {
-      const result = await api.rotateCryptoKey(rotatePassword);
-      setKeysImportMessage(
-        `Encryption key rotated. Save the new recovery code: ${result.recovery_code}`,
-      );
-      setRotatePassword("");
-      setCryptoUnlocked(true);
-    } catch (err) {
-      setSettingsError(String(err));
-    } finally {
-      setRotatingKey(false);
-    }
-  };
-
   const handleSignOut = async () => {
-    setSettingsError("");
-    setSigningOut(true);
     try {
       await api.logout();
-      setShowSettings(false);
       setProfileOpen(false);
       onLogout();
     } catch (err) {
-      setSettingsError(String(err));
-    } finally {
-      setSigningOut(false);
+      console.error("sign out failed:", err);
     }
   };
 
@@ -332,6 +257,10 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     }
   };
 
+  const recoveryBanner = needsCryptoRecovery
+    ? "Encryption recovery required. Open Preferences → Settings → Encryption & keys."
+    : "";
+
   return (
     <div className="main-layout">
       <Sidebar
@@ -341,9 +270,13 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         onOpenFolder={handleOpenDriveFolder}
       />
       <div className="main-content">
-        {(folderError || explorerWarning || hydrateWarning || cryptoUnlockError) && (
+        {(folderError ||
+          explorerWarning ||
+          hydrateWarning ||
+          cryptoUnlockError ||
+          recoveryBanner) && (
           <div className="error-banner" style={{ margin: "8px 16px 0" }}>
-            {cryptoUnlockError || hydrateWarning || folderError || explorerWarning}
+            {cryptoUnlockError || recoveryBanner || hydrateWarning || folderError || explorerWarning}
           </div>
         )}
         <TopBar
@@ -354,10 +287,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           onSearchChange={setSearch}
           onPauseResume={handlePauseResume}
           onOpenSettings={() => {
-            setSettingsError("");
-            setKeysImportMessage("");
-            setShowSettings(true);
-            refreshCryptoStatus();
+            api.openPreferencesWindow().catch(console.error);
           }}
           onProfileClick={(rect) => {
             setProfileAnchor(rect);
@@ -368,20 +298,18 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           {view === "home" && (
             <Home
               syncStatus={syncStatus}
+              syncProgress={syncProgress}
               activity={activity}
               notifications={notifications}
               onDismiss={dismiss}
               onGoToNotifications={() => setView("notifications")}
+              onViewSyncActivity={() => setView("sync")}
               onResumeSync={handlePauseResume}
               onFoldersChanged={refresh}
             />
           )}
           {view === "sync" && (
-            <SyncActivity
-              syncStatus={syncStatus}
-              activity={activity}
-              search={search}
-            />
+            <SyncActivity syncStatus={syncStatus} activity={activity} search={search} />
           )}
           {view === "notifications" && (
             <Notifications
@@ -404,124 +332,6 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           onSignOut={handleSignOut}
         />
       )}
-
-      {showSettings && (
-        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
-          <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Settings</h2>
-            {settingsError && <div className="error-banner">{settingsError}</div>}
-            <div className="form-group">
-              <label>Server URL</label>
-              <p className="settings-info-value">{serverUrl || "—"}</p>
-            </div>
-            <div className="form-group">
-              <label>Encryption</label>
-              {needsCryptoRecovery && (
-                <div className="error-banner" style={{ marginBottom: 12 }}>
-                  Server lost encryption account data, but encrypted file keys are still on the server.
-                  Enter your recovery code below to restore access.
-                </div>
-              )}
-              {cryptoUnlockError && (
-                <div className="error-banner" style={{ marginBottom: 12 }}>
-                  {cryptoUnlockError}
-                </div>
-              )}
-              {serverHasCrypto && !cryptoUnlocked && !cryptoUnlockError && !needsCryptoRecovery && (
-                <div className="error-banner" style={{ marginBottom: 12 }}>
-                  Encryption is active on the server but not unlocked on this device.
-                  Sign out and sign in again with your password.
-                </div>
-              )}
-              <p className="settings-hint">
-                {cryptoUnlocked
-                  ? "Encryption is unlocked on this device. Keys sync across your devices."
-                  : serverHasCrypto
-                    ? "Encryption is configured on the server but not unlocked on this device. Sign out and sign in again with your password."
-                    : "Encryption unlocks automatically when you sign in. Keys sync across your devices."}
-              </p>
-              {needsCryptoRecovery && (
-                <>
-                  <input
-                    type="text"
-                    placeholder="xxxx-xxxx-..."
-                    value={recoveryCode}
-                    onChange={(e) => setRecoveryCode(e.target.value)}
-                    style={{ width: "100%", marginBottom: 8 }}
-                  />
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    style={{ marginBottom: 12 }}
-                    onClick={handleUnlockRecovery}
-                    disabled={recoveryUnlocking}
-                  >
-                    {recoveryUnlocking ? "Restoring…" : "Restore encryption"}
-                  </button>
-                </>
-              )}
-              <details className="settings-advanced" style={{ marginBottom: 12 }}>
-                <summary style={{ cursor: "pointer", fontSize: 13, color: "#5f6368" }}>
-                  Advanced: rotate encryption key
-                </summary>
-                <p className="settings-hint" style={{ marginTop: 8 }}>
-                  Use if you suspect your encryption key was compromised. Requires your password.
-                </p>
-                <input
-                  type="password"
-                  placeholder="Account password"
-                  value={rotatePassword}
-                  onChange={(e) => setRotatePassword(e.target.value)}
-                  style={{ width: "100%" }}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ marginTop: 8 }}
-                  onClick={handleRotateCryptoKey}
-                  disabled={rotatingKey}
-                >
-                  {rotatingKey ? "Rotating…" : "Rotate encryption key"}
-                </button>
-              </details>
-              <label>Manual backup (optional)</label>
-              <p className="settings-hint">
-                Export/import below only if you need to move keys manually between devices.
-              </p>
-              {keysImportMessage && (
-                <div className="success-banner">{keysImportMessage}</div>
-              )}
-              <div className="settings-actions" style={{ marginBottom: 0, justifyContent: "flex-start", gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleExportEncryptionKeys}
-                  disabled={keysExporting || keysImporting}
-                >
-                  {keysExporting ? "Exporting…" : "Export encryption keys…"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleImportEncryptionKeys}
-                  disabled={keysImporting || keysExporting}
-                >
-                  {keysImporting ? "Importing…" : "Import encryption keys…"}
-                </button>
-              </div>
-            </div>
-            <div className="settings-actions">
-              <button type="button" className="btn-secondary" onClick={() => setShowSettings(false)}>
-                Close
-              </button>
-              <button type="button" className="btn-primary" onClick={handleSignOut} disabled={signingOut}>
-                {signingOut ? "Signing out…" : "Sign out"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
-

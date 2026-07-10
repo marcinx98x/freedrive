@@ -98,6 +98,30 @@ pub fn purge_mirror_sync_state(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
+pub fn get_sync_folder_by_id(conn: &Connection, id: i64) -> AppResult<Option<SyncFolderRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, local_path, remote_folder_id, label FROM sync_folders WHERE id = ?1",
+    )?;
+    let mut rows = stmt.query(params![id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(SyncFolderRow {
+            id: row.get(0)?,
+            local_path: row.get(1)?,
+            remote_folder_id: row.get(2)?,
+            label: row.get(3)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_sync_folder(conn: &Connection, id: i64) -> AppResult<bool> {
+    clear_folder_mappings(conn, id)?;
+    clear_sync_state_for_folder(conn, id)?;
+    let deleted = conn.execute("DELETE FROM sync_folders WHERE id = ?1", params![id])?;
+    Ok(deleted > 0)
+}
+
 pub fn get_sync_folder_by_path(
     conn: &Connection,
     local_path: &str,
@@ -901,5 +925,38 @@ mod tests {
             row.as_ref().and_then(|r| r.2.as_deref()),
             Some("folder-remote")
         );
+    }
+
+    #[test]
+    fn delete_sync_folder_clears_mappings_and_state() {
+        let conn = test_conn();
+        let id = insert_sync_folder(&conn, "C:\\Users\\me\\Desktop", "remote-1", "Desktop").unwrap();
+        set_folder_mapping(&conn, id, "docs", "remote-docs").unwrap();
+        upsert_sync_state(
+            &conn,
+            id,
+            "docs/file.txt",
+            "C:\\Users\\me\\Desktop\\docs\\file.txt",
+            Some("file-1"),
+            Some("hash"),
+            Some(1),
+            Some("2024-01-01"),
+            "synced",
+        )
+        .unwrap();
+
+        assert!(delete_sync_folder(&conn, id).unwrap());
+        assert!(get_sync_folder_by_id(&conn, id).unwrap().is_none());
+        assert!(list_sync_folders(&conn).unwrap().is_empty());
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM folder_mappings WHERE sync_folder_id = ?1")
+            .unwrap();
+        let count: i64 = stmt.query_row(params![id], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM sync_state WHERE sync_folder_id = ?1")
+            .unwrap();
+        let count: i64 = stmt.query_row(params![id], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
     }
 }

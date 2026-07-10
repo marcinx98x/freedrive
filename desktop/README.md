@@ -12,6 +12,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan; if initial sync was never completed, startup resumes full sync with a “Resuming sync…” status
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
 - **Google Drive-style sidebar** — SVG icons for Home, Sync activity, and Notifications with alert badge; top bar uses matching SVG icons (pause/play, settings, help, lock)
+- **Preferences window** — dedicated window opened from the gear icon: **My computer** (manage sync folders), **FreeDrive** (Windows Explorer / CfAPI status), **Settings** (encryption, launch on login, open sync log)
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
 - **Profile menu** — server avatar, storage bar, Manage storage, Sign out
 - **Non-blocking sign-in** — crypto unlock, sync restore, and Explorer (CfAPI) start in the background so login does not block the UI

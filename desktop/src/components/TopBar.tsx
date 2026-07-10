@@ -29,7 +29,7 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="search-bar">
-        <span>🔍</span>
+        <NavIcon name="search" />
         <input
           type="search"
           placeholder="Search in Drive"

@@ -1,24 +1,38 @@
 import { useEffect, useState } from "react";
 import { api, formatRelativeTime } from "../api/tauri";
 import { NotificationMiniCard } from "../components/NotificationMiniCard";
-import type { ActivityItem, AppNotification, SharedItem, SyncStatus } from "../types";
+import type {
+  ActivityItem,
+  AppNotification,
+  SharedItem,
+  SyncProgress,
+  SyncStatus,
+} from "../types";
 
 interface HomeProps {
   syncStatus: SyncStatus;
+  syncProgress: SyncProgress | null;
   activity: ActivityItem[];
   notifications: AppNotification[];
   onDismiss: (id: string) => void;
   onGoToNotifications: () => void;
+  onViewSyncActivity: () => void;
   onResumeSync: () => void;
   onFoldersChanged: () => void;
 }
 
+function formatFileCount(count: number): string {
+  return `${count} file${count === 1 ? "" : "s"}`;
+}
+
 export function Home({
   syncStatus,
+  syncProgress,
   activity,
   notifications,
   onDismiss,
   onGoToNotifications,
+  onViewSyncActivity,
   onResumeSync,
   onFoldersChanged,
 }: HomeProps) {
@@ -30,18 +44,27 @@ export function Home({
 
   const isError = syncStatus.status === "error";
   const isSyncing = syncStatus.status === "syncing";
-  const isUpToDate =
-    syncStatus.status === "up_to_date" || syncStatus.status === "paused";
+  const isPaused = syncStatus.paused;
+  const isUpToDate = syncStatus.status === "up_to_date";
 
-  const statusTitle = syncStatus.paused
+  const fileCount =
+    syncProgress && syncProgress.total > 0
+      ? syncProgress.total
+      : activity.length;
+
+  const statusTitle = isPaused
     ? "Sync paused"
     : isError
       ? syncStatus.message
       : isSyncing
-        ? syncStatus.message
+        ? "Syncing…"
         : isUpToDate
           ? "Up to date"
           : syncStatus.message;
+
+  const statusSubtitle = isSyncing
+    ? formatFileCount(fileCount)
+    : `Synced ${formatRelativeTime(syncStatus.last_synced_at)}`;
 
   useEffect(() => {
     api
@@ -86,44 +109,41 @@ export function Home({
   return (
     <div className="home-grid">
       <div className="home-left-column">
-        <div className="card">
+        <div className="card sync-status-card">
           <div className="status-card-header">
-            <div className="status-icon">
-              {isError ? "!" : isSyncing ? "↻" : isUpToDate ? "☁" : "↻"}
+            <div
+              className={`status-icon${isSyncing ? " status-icon-syncing" : ""}${isError ? " status-icon-error" : ""}`}
+            >
+              {isError ? "!" : isSyncing ? "↻" : isUpToDate || isPaused ? "☁" : "↻"}
             </div>
-            <div style={{ flex: 1 }}>
+            <div className="status-card-heading">
               <div className={`status-title${isError ? " status-error" : ""}`}>
                 {statusTitle}
               </div>
-              <div className="status-subtitle">
-                {isSyncing
-                  ? syncStatus.message || "Sync in progress…"
-                  : `Synced ${formatRelativeTime(syncStatus.last_synced_at)}`}
-              </div>
+              <div className="status-subtitle">{statusSubtitle}</div>
             </div>
           </div>
 
           {isError && (
             <button
               type="button"
-              className="btn-secondary"
-              style={{ marginBottom: 12 }}
+              className="btn-secondary sync-status-retry"
               onClick={() => api.resumeSync()}
             >
               Retry sync
             </button>
           )}
 
-          <div className="activity-mini-list">
+          <div className="activity-mini-list activity-mini-list-fixed">
             {recent.length === 0 ? (
-              <div className="empty-state" style={{ padding: 16 }}>
-                No recent activity yet
-              </div>
+              <div className="sync-activity-empty">No recent activity yet</div>
             ) : (
               recent.map((item) => (
                 <div key={item.id} className="activity-mini-item">
-                  <span>📄</span>
-                  <div style={{ flex: 1 }}>
+                  <span className="activity-mini-file-icon" aria-hidden>
+                    📄
+                  </span>
+                  <div className="activity-mini-body">
                     <div className="name">{item.name}</div>
                     <div
                       className={`detail${item.status === "error" ? " detail-error" : ""}`}
@@ -132,11 +152,20 @@ export function Home({
                     </div>
                   </div>
                   {item.status === "synced" && <span className="status-check">✓</span>}
+                  {item.status === "uploading" && (
+                    <span className="status-uploading" aria-hidden>
+                      ↑
+                    </span>
+                  )}
                   {item.status === "error" && <span className="status-error-mark">✕</span>}
                 </div>
               ))
             )}
           </div>
+
+          <button type="button" className="btn-primary sync-status-view-all" onClick={onViewSyncActivity}>
+            View all
+          </button>
         </div>
 
         <div className="card">

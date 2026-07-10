@@ -19,7 +19,7 @@ export function Sidebar({
     <aside className="sidebar">
       <Logo />
       <button type="button" className="open-folder-btn" onClick={onOpenFolder}>
-        <span>📁</span>
+        <NavIcon name="folder" />
         Open Drive folder
       </button>
       <nav>
