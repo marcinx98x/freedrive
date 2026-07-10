@@ -12,9 +12,18 @@ use crate::my_drive::{
     resolve_my_drive_root_id,
 };
 use crate::sync::log::sync_log;
+use crate::sync::DOWNLOAD_CONCURRENCY;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
-pub async fn poll_my_drive(api: &ApiClient, db: &DbHandle, mirror: bool) -> AppResult<()> {
+pub async fn poll_my_drive(
+    api: &ApiClient,
+    db: &DbHandle,
+    mirror: bool,
+    download_sem: Arc<Semaphore>,
+) -> AppResult<()> {
     let sync_root = sync_root_dir(false)?;
     sync_log(&format!("poll My Drive started (mirror={})", mirror));
     poll_my_drive_folder(
@@ -24,6 +33,7 @@ pub async fn poll_my_drive(api: &ApiClient, db: &DbHandle, mirror: bool) -> AppR
         MY_DRIVE_FOLDER_NAME,
         None,
         mirror,
+        download_sem,
     )
     .await?;
     notify_directory_updated(&local_dir_for_relative(&sync_root, MY_DRIVE_FOLDER_NAME));
@@ -38,6 +48,7 @@ async fn poll_my_drive_folder(
     parent_relative: &str,
     folder_id: Option<&str>,
     mirror: bool,
+    download_sem: Arc<Semaphore>,
 ) -> AppResult<()> {
     let contents =
         fetch_folder_contents(api, db, sync_root, parent_relative, folder_id).await?;
@@ -48,11 +59,7 @@ async fn poll_my_drive_folder(
     }
 
     if mirror {
-        for file in &contents.files {
-            if let Err(e) = mirror_file_if_needed(api, db, &local_dir, file).await {
-                sync_log(format!("mirror {} failed: {}", file.name, e));
-            }
-        }
+        mirror_files_parallel(api, db, &local_dir, &contents.files, download_sem.clone()).await;
     }
 
     for folder in &contents.folders {
@@ -64,11 +71,54 @@ async fn poll_my_drive_folder(
             &sub_rel,
             Some(&folder.id),
             mirror,
+            download_sem.clone(),
         ))
         .await?;
     }
 
     Ok(())
+}
+
+async fn mirror_files_parallel(
+    api: &ApiClient,
+    db: &DbHandle,
+    local_dir: &Path,
+    files: &[crate::api::types::FileRecord],
+    download_sem: Arc<Semaphore>,
+) {
+    let mut join_set = JoinSet::new();
+
+    for file in files {
+        while join_set.len() >= DOWNLOAD_CONCURRENCY {
+            if let Some(res) = join_set.join_next().await {
+                if let Err(e) = res {
+                    sync_log(format!("mirror task join error — {}", e));
+                }
+            }
+        }
+
+        let permit = match download_sem.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => break,
+        };
+        let api = api.clone();
+        let db = db.clone();
+        let local_dir = local_dir.to_path_buf();
+        let file = file.clone();
+
+        join_set.spawn(async move {
+            let _permit = permit;
+            if let Err(e) = mirror_file_if_needed(&api, &db, &local_dir, &file).await {
+                sync_log(format!("mirror {} failed: {}", file.name, e));
+            }
+        });
+    }
+
+    while let Some(res) = join_set.join_next().await {
+        if let Err(e) = res {
+            sync_log(format!("mirror task join error — {}", e));
+        }
+    }
 }
 
 async fn mirror_file_if_needed(

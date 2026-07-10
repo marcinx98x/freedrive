@@ -15,6 +15,7 @@ pub async fn poll_my_drive(
     _api: &crate::api::ApiClient,
     _db: &crate::db::DbHandle,
     _mirror: bool,
+    _download_sem: std::sync::Arc<tokio::sync::Semaphore>,
 ) -> crate::error::AppResult<()> {
     Ok(())
 }

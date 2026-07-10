@@ -11,6 +11,7 @@ use crate::db::{
 };
 use crate::error::{AppError, AppResult};
 use crate::sync::log::sync_log;
+use crate::sync::{DOWNLOAD_CONCURRENCY, UPLOAD_CONCURRENCY};
 use parking_lot::{Mutex, RwLock};
 use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
@@ -20,6 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinSet;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +84,16 @@ enum SyncAttemptResult {
     RetryClearFolderMapping(String),
 }
 
+struct FileSyncJobResult {
+    outcome: Result<FileSyncOutcome, AppError>,
+    name: String,
+    relative_str: String,
+    path: PathBuf,
+    mtime: i64,
+    size: i64,
+    processed: u64,
+}
+
 const FOLDER_TIMEOUT: Duration = Duration::from_secs(30);
 const LARGE_FILE_WARN_BYTES: i64 = 50 * 1024 * 1024;
 
@@ -100,7 +113,8 @@ pub struct SyncEngine {
     app: AppHandle,
     paused: AtomicBool,
     initial_sync_running: AtomicBool,
-    sync_lock: tokio::sync::Mutex<()>,
+    upload_semaphore: Arc<Semaphore>,
+    download_semaphore: Arc<Semaphore>,
     pending_paths: Mutex<VecDeque<PathBuf>>,
     status: RwLock<SyncStatus>,
     computer_id: RwLock<Option<String>>,
@@ -116,7 +130,8 @@ impl SyncEngine {
             app,
             paused: AtomicBool::new(false),
             initial_sync_running: AtomicBool::new(false),
-            sync_lock: tokio::sync::Mutex::new(()),
+            upload_semaphore: Arc::new(Semaphore::new(UPLOAD_CONCURRENCY)),
+            download_semaphore: Arc::new(Semaphore::new(DOWNLOAD_CONCURRENCY)),
             pending_paths: Mutex::new(VecDeque::new()),
             status: RwLock::new(SyncStatus {
                 status: SyncStatusKind::UpToDate,
@@ -128,6 +143,14 @@ impl SyncEngine {
             computer_root_id: RwLock::new(None),
             shutdown: AtomicBool::new(false),
         }
+    }
+
+    async fn acquire_upload_permit(&self) -> AppResult<OwnedSemaphorePermit> {
+        self.upload_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::msg("upload pool closed"))
     }
 
     pub fn shutdown(&self) {
@@ -219,19 +242,39 @@ impl SyncEngine {
         });
     }
 
-    pub async fn drain_pending_paths(&self) {
+    pub async fn drain_pending_paths(self: &Arc<Self>) {
         let paths: Vec<PathBuf> = {
             let mut queue = self.pending_paths.lock();
             queue.drain(..).collect()
         };
 
         let mut seen = HashSet::new();
+        let mut deduped = Vec::new();
         for path in paths {
             let key = path.canonicalize().unwrap_or(path.clone());
             if seen.insert(key) {
-                let _ = self.sync_file_path(&path).await;
+                deduped.push(path);
             }
         }
+
+        let mut join_set = JoinSet::new();
+        for path in deduped {
+            while join_set.len() >= UPLOAD_CONCURRENCY {
+                let _ = join_set.join_next().await;
+            }
+
+            let permit = match self.upload_semaphore.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => break,
+            };
+            let engine = Arc::clone(self);
+            join_set.spawn(async move {
+                let _permit = permit;
+                let _ = engine.sync_file_path_unlocked(&path).await;
+            });
+        }
+
+        while join_set.join_next().await.is_some() {}
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -877,6 +920,7 @@ impl SyncEngine {
         let mut errors = 0u64;
         let mut processed = 0u64;
         let remote_root = remote_root_id.to_string();
+        let mut join_set = JoinSet::new();
 
         for path in files {
             if self.is_paused() {
@@ -919,20 +963,19 @@ impl SyncEngine {
                 continue;
             }
 
-            if show_ui {
-                self.emit_progress(&SyncProgress {
-                    phase: "syncing".into(),
-                    processed,
-                    total,
-                    uploaded,
-                    skipped,
-                    unchanged,
-                    errors,
-                    current: processed,
-                    current_file: name.clone(),
-                    message: format_file_sync_message(&name),
-                    show_in_ui: true,
-                });
+            while join_set.len() >= UPLOAD_CONCURRENCY {
+                if let Some(res) = join_set.join_next().await {
+                    self.apply_scan_file_result(
+                        sync_folder_id,
+                        total,
+                        show_ui,
+                        res,
+                        &mut uploaded,
+                        &mut skipped,
+                        &mut unchanged,
+                        &mut errors,
+                    );
+                }
             }
 
             sync_log(format!(
@@ -943,87 +986,78 @@ impl SyncEngine {
                 size
             ));
 
+            let permit = match self.upload_semaphore.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => break,
+            };
             let engine = Arc::clone(self);
             let root_clone = root.clone();
             let remote_root_clone = remote_root.clone();
             let path_clone = path.clone();
+            let path_for_result = path_clone.clone();
             let file_timeout = file_sync_timeout(size.max(0) as u64);
+            let job_processed = processed;
+            let job_name = name.clone();
+            let job_relative = relative_str.clone();
+            let job_mtime = mtime;
+            let job_size = size;
 
-            let mut handle = tokio::spawn(async move {
-                engine
-                    .sync_one_file(
-                        sync_folder_id,
-                        &root_clone,
-                        &path_clone,
-                        &remote_root_clone,
-                        processed,
-                        total,
-                        false,
-                        show_ui,
-                    )
-                    .await
+            join_set.spawn(async move {
+                let _permit = permit;
+                let mut handle = tokio::spawn(async move {
+                    engine
+                        .sync_one_file(
+                            sync_folder_id,
+                            &root_clone,
+                            &path_clone,
+                            &remote_root_clone,
+                            job_processed,
+                            total,
+                            false,
+                            show_ui,
+                        )
+                        .await
+                });
+
+                let outcome = tokio::select! {
+                    res = &mut handle => {
+                        match res {
+                            Ok(Ok(outcome)) => Ok(outcome),
+                            Ok(Err(e)) => Err(e),
+                            Err(e) => Err(AppError::msg(e.to_string())),
+                        }
+                    }
+                    _ = tokio::time::sleep(file_timeout) => {
+                        handle.abort();
+                        let _ = handle.await;
+                        sync_log(format!("file timeout abort — {}", job_name));
+                        Err(AppError::msg(format!("Timed out syncing {}", job_name)))
+                    }
+                };
+
+                FileSyncJobResult {
+                    outcome,
+                    name: job_name,
+                    relative_str: job_relative,
+                    path: path_for_result,
+                    mtime: job_mtime,
+                    size: job_size,
+                    processed: job_processed,
+                }
             });
+        }
 
-            let sync_result = tokio::select! {
-                res = &mut handle => {
-                    match res {
-                        Ok(Ok(outcome)) => Ok(outcome),
-                        Ok(Err(e)) => Err(e),
-                        Err(e) => Err(AppError::msg(e.to_string())),
-                    }
-                }
-                _ = tokio::time::sleep(file_timeout) => {
-                    handle.abort();
-                    let _ = handle.await;
-                    sync_log(format!("file timeout abort — {}", name));
-                    Err(AppError::msg(format!("Timed out syncing {}", name)))
-                }
-            };
-
-            match sync_result {
-                Ok(FileSyncOutcome::Synced) => {
-                    uploaded += 1;
-                    sync_log(format!("file synced — {}", name));
-                }
-                Ok(FileSyncOutcome::Unchanged) => {
-                    unchanged += 1;
-                    sync_log(format!("file unchanged — {}", name));
-                }
-                Ok(FileSyncOutcome::Skipped) => {
-                    skipped += 1;
-                    sync_log(format!("file skipped — {}", name));
-                }
-                Ok(FileSyncOutcome::Failed) => {
-                    errors += 1;
-                    self.record_sync_failure(
-                        sync_folder_id,
-                        &relative_str,
-                        &path.to_string_lossy(),
-                        mtime,
-                        "Sync failed",
-                        false,
-                    );
-                    sync_log(format!("file failed — {}", name));
-                }
-                Err(e) => {
-                    errors += 1;
-                    let msg = e.to_string();
-                    if show_ui {
-                        self.emit_activity(&name, &msg, size, "error");
-                    }
-                    self.record_sync_failure(
-                        sync_folder_id,
-                        &relative_str,
-                        &path.to_string_lossy(),
-                        mtime,
-                        &msg,
-                        is_permanent_sync_error(&msg),
-                    );
-                    sync_log(format!("file error — {}: {}", name, e));
-                }
-            }
-
-            sync_log(format!("file done {}/{} — next", processed, total.max(1)));
+        while let Some(res) = join_set.join_next().await {
+            self.apply_scan_file_result(
+                sync_folder_id,
+                total,
+                show_ui,
+                res,
+                &mut uploaded,
+                &mut skipped,
+                &mut unchanged,
+                &mut errors,
+            );
         }
 
         sync_log(format!(
@@ -1035,6 +1069,11 @@ impl SyncEngine {
     }
 
     pub async fn sync_file_path(&self, path: &Path) -> AppResult<()> {
+        let _permit = self.acquire_upload_permit().await?;
+        self.sync_file_path_unlocked(path).await
+    }
+
+    async fn sync_file_path_unlocked(&self, path: &Path) -> AppResult<()> {
         if self.is_paused() || self.is_initial_sync_running() || !path.is_file() {
             return Ok(());
         }
@@ -1052,7 +1091,6 @@ impl SyncEngine {
             list_sync_folders(&conn)?
         };
 
-        let _guard = self.sync_lock.lock().await;
         for sf in sync_folders {
             let root = PathBuf::from(&sf.local_path);
             if path.starts_with(&root) {
@@ -1073,6 +1111,92 @@ impl SyncEngine {
             }
         }
         Ok(())
+    }
+
+    fn apply_scan_file_result(
+        &self,
+        sync_folder_id: i64,
+        total: u64,
+        show_ui: bool,
+        res: Result<FileSyncJobResult, tokio::task::JoinError>,
+        uploaded: &mut u64,
+        skipped: &mut u64,
+        unchanged: &mut u64,
+        errors: &mut u64,
+    ) {
+        let job = match res {
+            Ok(job) => job,
+            Err(e) => {
+                *errors += 1;
+                sync_log(format!("file task join error — {}", e));
+                return;
+            }
+        };
+
+        match job.outcome {
+            Ok(FileSyncOutcome::Synced) => {
+                *uploaded += 1;
+                sync_log(format!("file synced — {}", job.name));
+            }
+            Ok(FileSyncOutcome::Unchanged) => {
+                *unchanged += 1;
+                sync_log(format!("file unchanged — {}", job.name));
+            }
+            Ok(FileSyncOutcome::Skipped) => {
+                *skipped += 1;
+                sync_log(format!("file skipped — {}", job.name));
+            }
+            Ok(FileSyncOutcome::Failed) => {
+                *errors += 1;
+                self.record_sync_failure(
+                    sync_folder_id,
+                    &job.relative_str,
+                    &job.path.to_string_lossy(),
+                    job.mtime,
+                    "Sync failed",
+                    false,
+                );
+                sync_log(format!("file failed — {}", job.name));
+            }
+            Err(e) => {
+                *errors += 1;
+                let msg = e.to_string();
+                if show_ui {
+                    self.emit_activity(&job.name, &msg, job.size, "error");
+                }
+                self.record_sync_failure(
+                    sync_folder_id,
+                    &job.relative_str,
+                    &job.path.to_string_lossy(),
+                    job.mtime,
+                    &msg,
+                    is_permanent_sync_error(&msg),
+                );
+                sync_log(format!("file error — {}: {}", job.name, e));
+            }
+        }
+
+        if show_ui {
+            self.emit_progress(&SyncProgress {
+                phase: "syncing".into(),
+                processed: job.processed,
+                total,
+                uploaded: *uploaded,
+                skipped: *skipped,
+                unchanged: *unchanged,
+                errors: *errors,
+                current: job.processed,
+                current_file: job.name.clone(),
+                message: format_file_sync_message(&job.name),
+                show_in_ui: true,
+            });
+        }
+
+        sync_log(format!(
+            "file done {}/{} — next",
+            job.processed,
+            total.max(1)
+        ));
     }
 
     async fn sync_one_file(
@@ -1542,7 +1666,13 @@ impl SyncEngine {
             return Ok(());
         }
         let mirror = sync_mode_is_mirror(&self.db);
-        crate::my_drive::poll_my_drive(&self.api, &self.db, mirror).await
+        crate::my_drive::poll_my_drive(
+            &self.api,
+            &self.db,
+            mirror,
+            Arc::clone(&self.download_semaphore),
+        )
+        .await
     }
 
     /// Sync folders are upload-only; remote polling for computer folders is disabled.
@@ -1555,7 +1685,7 @@ impl SyncEngine {
         if self.is_paused() || self.is_initial_sync_running() {
             return Ok(());
         }
-        let _guard = self.sync_lock.lock().await;
+        let _permit = self.acquire_upload_permit().await?;
         crate::my_drive::upload_my_drive_path(&self.api, &self.db, path).await
     }
 
@@ -1565,7 +1695,6 @@ impl SyncEngine {
         }
 
         if is_my_drive_path(path) {
-            let _guard = self.sync_lock.lock().await;
             return crate::my_drive::delete_my_drive_path(&self.api, &self.db, path).await;
         }
 
@@ -1582,7 +1711,6 @@ impl SyncEngine {
             list_sync_folders(&conn)?
         };
 
-        let _guard = self.sync_lock.lock().await;
         for sf in sync_folders {
             let root = PathBuf::from(&sf.local_path);
             if !path.starts_with(&root) {
