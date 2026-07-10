@@ -626,6 +626,8 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 
 The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app (Tauri 2 + React + Rust). It talks to the server over the same REST API as the web UI.
 
+![FreeDrive Desktop](docs/screenshots/FreeDrive%20Desktop.png)
+
 - Sign in, onboarding, folder sync, system tray, pause/resume (skips `.git`, `node_modules`, `.svn` during folder scan)
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
 - **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing
