@@ -386,6 +386,27 @@ pub fn clear_sync_state_remote_file(
     Ok(())
 }
 
+pub fn delete_sync_state_row(
+    conn: &Connection,
+    sync_folder_id: i64,
+    relative_path: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM sync_state WHERE sync_folder_id = ?1 AND relative_path = ?2",
+        params![sync_folder_id, relative_path],
+    )?;
+    Ok(())
+}
+
+pub fn my_drive_delete_placeholder(conn: &Connection, relative_path: &str) -> AppResult<()> {
+    let relative_path = normalize_my_drive_relative_path(relative_path);
+    conn.execute(
+        "DELETE FROM my_drive_placeholders WHERE relative_path = ?1 COLLATE NOCASE",
+        params![relative_path],
+    )?;
+    Ok(())
+}
+
 pub fn get_sync_state(
     conn: &Connection,
     sync_folder_id: i64,

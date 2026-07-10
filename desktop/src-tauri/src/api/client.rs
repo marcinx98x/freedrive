@@ -596,6 +596,19 @@ impl ApiClient {
 
     }
 
+    pub async fn delete_file(&self, file_id: &str) -> AppResult<()> {
+        let _: serde_json::Value = self
+            .request_json(
+                reqwest::Method::DELETE,
+                &format!("/files/{}", file_id),
+                None,
+                false,
+                2,
+            )
+            .await?;
+        Ok(())
+    }
+
 
 
     fn encrypt_to_temp_file(

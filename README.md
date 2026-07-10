@@ -629,17 +629,18 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 ![FreeDrive Desktop](docs/screenshots/FreeDrive%20Desktop.png)
 
 - Sign in, onboarding, folder sync, system tray, pause/resume (skips `.git`, `node_modules`, `.svn` during folder scan)
+- **Computer sync folders** — folders you add (Documents, Downloads, etc.) upload copies to the cloud only; they are not shown inside FreeDrive; deleting a local file removes it from the server
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
 - **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
-- **Preferences window** — separate window (gear icon) with **My computer** (sync folders, add/remove), **FreeDrive** (Explorer integration), and **Settings** (encryption, launch on login, sync log)
+- **Preferences window** — separate window (gear icon) with **My computer** (sync folders, add/remove), **FreeDrive** (My Drive stream/mirror mode + Explorer integration), and **Settings** (encryption, launch on login, sync log)
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out
 - **Non-blocking sign-in** — encryption unlock, sync restore, and Explorer (CfAPI) integration run in the background so the UI returns immediately after login
 - **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`); if initial sync was interrupted, startup resumes the full sync instead of verify-only
 - **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider connects in the background and reconnects automatically before opening the folder
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
-- **My Drive in Explorer** — subfolder with server folders/files as cloud placeholders; files download when opened
+- **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **stream** keeps cloud placeholders (download on open), **mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files)
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
 

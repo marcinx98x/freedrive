@@ -127,10 +127,15 @@ fn restart_watcher(state: &AppState, engine: Arc<SyncEngine>) -> Result<(), Stri
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         list_sync_folders(&conn).map_err(|e: crate::error::AppError| e.to_string())?
     };
-    let paths: Vec<PathBuf> = folders
+    let mut paths: Vec<PathBuf> = folders
         .iter()
         .map(|f| PathBuf::from(&f.local_path))
         .collect();
+    if let Ok(my_drive) = crate::auth_store::my_drive_path(false) {
+        if my_drive.exists() {
+            paths.push(my_drive);
+        }
+    }
     let watcher = WatcherHandle::start(paths, engine)
         .map_err(|e: crate::error::AppError| e.to_string())?;
     state.set_watcher(watcher);
@@ -174,14 +179,14 @@ fn start_sync_services(
                 if eng.is_shutdown() {
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(20)).await;
                 if eng.is_shutdown() {
                     break;
                 }
                 if eng.is_initial_sync_running() {
                     continue;
                 }
-                let _ = eng.poll_remote().await;
+                let _ = eng.poll_my_drive().await;
             }
         });
 
@@ -739,7 +744,14 @@ pub fn get_sync_mode(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn set_sync_mode(state: State<'_, AppState>, mode: String) -> Result<(), String> {
-    crate::sync::engine::set_sync_mode(&state.db, &mode).map_err(|e: AppError| e.to_string())
+    crate::sync::engine::set_sync_mode(&state.db, &mode).map_err(|e: AppError| e.to_string())?;
+    if let Ok(engine) = state.sync_engine() {
+        let eng = engine.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = eng.poll_my_drive().await;
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -779,7 +791,7 @@ pub async fn resume_sync(state: State<'_, AppState>) -> Result<(), String> {
     engine.set_paused(false);
     let eng = engine.clone();
     tauri::async_runtime::spawn(async move {
-        eng.drain_pending_paths().await;
+        let _ = eng.clone().run_initial_sync().await;
     });
     Ok(())
 }

@@ -10,7 +10,8 @@ use windows::core::PCWSTR;
 use windows::Win32::Storage::CloudFilters::{
     CfConnectSyncRoot, CfDisconnectSyncRoot, CF_CALLBACK_REGISTRATION,
     CF_CALLBACK_TYPE_CANCEL_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_FETCH_DATA,
-    CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_NONE, CF_CONNECT_FLAGS,
+    CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_NOTIFY_DELETE,
+    CF_CALLBACK_TYPE_NOTIFY_FILE_CLOSE_COMPLETION, CF_CALLBACK_TYPE_NONE, CF_CONNECT_FLAGS,
     CF_CONNECTION_KEY,
 };
 
@@ -56,6 +57,14 @@ pub fn connect(db: &DbHandle, sync_root: &std::path::Path, api: ApiClient) -> Ap
         CF_CALLBACK_REGISTRATION {
             Type: CF_CALLBACK_TYPE_FETCH_DATA,
             Callback: Some(callbacks::fetch_data),
+        },
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_NOTIFY_FILE_CLOSE_COMPLETION,
+            Callback: Some(callbacks::notify_file_close),
+        },
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_NOTIFY_DELETE,
+            Callback: Some(callbacks::notify_delete),
         },
         CF_CALLBACK_REGISTRATION {
             Type: CF_CALLBACK_TYPE_NONE,

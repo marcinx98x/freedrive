@@ -7,11 +7,15 @@ mod connection;
 #[cfg(windows)]
 mod placeholders;
 #[cfg(windows)]
+pub use placeholders::{create_placeholders, MY_DRIVE_FOLDER_NAME};
+#[cfg(windows)]
 mod register;
 #[cfg(windows)]
 mod shell_register;
 #[cfg(windows)]
 mod util;
+#[cfg(windows)]
+pub use util::notify_directory_updated;
 
 #[cfg(windows)]
 use crate::api::ApiClient;

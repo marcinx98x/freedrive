@@ -1,14 +1,13 @@
 use crate::api::ApiClient;
-use crate::auth_store::mirror_dir;
 use crate::blocking::{self, file_sync_timeout, hash_timeout};
 use crate::crypto::key_to_b64url;
 use crate::db::{
-    self, clear_folder_mapping_prefix, clear_folder_mappings, clear_stale_activity,
+    clear_folder_mapping_prefix, clear_folder_mappings, clear_stale_activity,
     clear_sync_state_for_folder, clear_sync_state_remote_file, config_get, config_set,
-    delete_folder_mapping, get_file_key, get_folder_mapping, get_sync_folder_by_path,
-    get_sync_state, insert_sync_folder, is_pending_remote_folder, list_sync_folders,
-    set_folder_mapping, store_file_key, update_sync_folder_remote_id, upsert_activity,
-    upsert_sync_state, DbHandle, SyncFolderRow,
+    delete_folder_mapping, delete_sync_state_row, get_file_key, get_folder_mapping,
+    get_sync_folder_by_path, get_sync_state, insert_sync_folder, is_pending_remote_folder,
+    list_sync_folders, set_folder_mapping, store_file_key, update_sync_folder_remote_id,
+    upsert_activity, upsert_sync_state, DbHandle, SyncFolderRow,
 };
 use crate::error::{AppError, AppResult};
 use crate::sync::log::sync_log;
@@ -164,7 +163,22 @@ impl SyncEngine {
     }
 
     pub fn enqueue_file_path(self: &Arc<Self>, path: PathBuf) {
-        if self.is_paused() || !path.is_file() {
+        if self.is_paused() {
+            return;
+        }
+
+        if is_my_drive_path(&path) {
+            if !path.is_file() {
+                return;
+            }
+            let engine = Arc::clone(self);
+            tauri::async_runtime::spawn(async move {
+                let _ = engine.sync_my_drive_path(&path).await;
+            });
+            return;
+        }
+
+        if !path.is_file() {
             return;
         }
 
@@ -191,6 +205,17 @@ impl SyncEngine {
         let engine = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             let _ = engine.sync_file_path(&path).await;
+        });
+    }
+
+    pub fn enqueue_file_removed(self: &Arc<Self>, path: PathBuf) {
+        if self.is_paused() || self.is_initial_sync_running() {
+            return;
+        }
+
+        let engine = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            let _ = engine.delete_remote_file(&path).await;
         });
     }
 
@@ -1512,12 +1537,43 @@ impl SyncEngine {
         Ok(current_parent)
     }
 
+    pub async fn poll_my_drive(&self) -> AppResult<()> {
+        if self.is_paused() || self.is_initial_sync_running() {
+            return Ok(());
+        }
+        let mirror = sync_mode_is_mirror(&self.db);
+        crate::my_drive::poll_my_drive(&self.api, &self.db, mirror).await
+    }
+
+    /// Sync folders are upload-only; remote polling for computer folders is disabled.
     pub async fn poll_remote(&self) -> AppResult<()> {
+        let _ = self;
+        Ok(())
+    }
+
+    pub async fn sync_my_drive_path(&self, path: &Path) -> AppResult<()> {
+        if self.is_paused() || self.is_initial_sync_running() {
+            return Ok(());
+        }
+        let _guard = self.sync_lock.lock().await;
+        crate::my_drive::upload_my_drive_path(&self.api, &self.db, path).await
+    }
+
+    pub async fn delete_remote_file(&self, path: &Path) -> AppResult<()> {
         if self.is_paused() || self.is_initial_sync_running() {
             return Ok(());
         }
 
-        if !sync_mode_is_mirror(&self.db) {
+        if is_my_drive_path(path) {
+            let _guard = self.sync_lock.lock().await;
+            return crate::my_drive::delete_my_drive_path(&self.api, &self.db, path).await;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        if should_skip_file(file_name) {
             return Ok(());
         }
 
@@ -1526,84 +1582,30 @@ impl SyncEngine {
             list_sync_folders(&conn)?
         };
 
-        let mirror = mirror_dir()?;
-
+        let _guard = self.sync_lock.lock().await;
         for sf in sync_folders {
-            if let Err(e) = self.poll_folder_tree(&sf, &mirror).await {
-                self.emit_activity("poll", &e.to_string(), 0, "error");
+            let root = PathBuf::from(&sf.local_path);
+            if !path.starts_with(&root) {
+                continue;
             }
-        }
-
-        if !self.is_paused() && !self.is_initial_sync_running() {
-            self.set_status(SyncStatusKind::UpToDate, "Up to date");
-        }
-        Ok(())
-    }
-
-    async fn poll_folder_tree(
-        &self,
-        sf: &db::SyncFolderRow,
-        mirror: &Path,
-    ) -> AppResult<()> {
-        let label = if sf.label.is_empty() {
-            Path::new(&sf.local_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("folder")
-                .to_string()
-        } else {
-            sf.label.clone()
-        };
-
-        let mut queue: Vec<(String, String)> = vec![(sf.remote_folder_id.clone(), String::new())];
-
-        while let Some((folder_id, relative_dir)) = queue.pop() {
-            let contents = self.api.get_folder_contents(&folder_id).await?;
-            for sub in contents.folders {
-                let sub_rel = if relative_dir.is_empty() {
-                    sub.name.clone()
-                } else {
-                    format!("{}/{}", relative_dir, sub.name)
-                };
-                queue.push((sub.id, sub_rel));
+            let relative = path
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            let remote_id = {
+                let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                get_sync_state(&conn, sf.id, &relative)?
+                    .and_then(|(remote_id, _, _, _)| remote_id)
+            };
+            if let Some(remote_id) = remote_id {
+                if !remote_id.is_empty() {
+                    self.api.delete_file(&remote_id).await?;
+                }
+                let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                delete_sync_state_row(&conn, sf.id, &relative)?;
+                self.emit_activity(file_name, "Removed from cloud", 0, "synced");
             }
-
-            for file in contents.files {
-                let rel = if relative_dir.is_empty() {
-                    file.name.clone()
-                } else {
-                    format!("{}/{}", relative_dir, file.name)
-                };
-                let rel_path = rel.replace('/', std::path::MAIN_SEPARATOR_STR);
-                let local_path = mirror.join(&label).join(&rel_path);
-
-                if local_path.exists() {
-                    continue;
-                }
-
-                self.emit_activity(&file.name, "Downloading to mirror…", file.size, "uploading");
-                if let Some(parent) = local_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let key_b64url = {
-                    let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-                    get_file_key(&conn, &file.id)?
-                };
-                match self.api.download_file(&file.id, key_b64url.as_deref()).await {
-                    Ok(bytes) => {
-                        std::fs::write(&local_path, &bytes)?;
-                        self.emit_activity(&file.name, "Downloaded to mirror", file.size, "synced");
-                    }
-                    Err(e) => {
-                        self.emit_activity(
-                            &file.name,
-                            &e.to_string(),
-                            0,
-                            "skipped",
-                        );
-                    }
-                }
-            }
+            return Ok(());
         }
         Ok(())
     }
@@ -1626,6 +1628,12 @@ fn is_stale_remote_ref(err: &str) -> bool {
         || lower.contains("787")
         || lower.contains("not found")
         || lower.contains("folder not found")
+}
+
+fn is_my_drive_path(path: &Path) -> bool {
+    crate::auth_store::my_drive_path(false)
+        .ok()
+        .is_some_and(|root| path.starts_with(&root))
 }
 
 fn should_skip_file(name: &str) -> bool {

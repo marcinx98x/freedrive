@@ -38,7 +38,14 @@ export function FreeDriveTab() {
     <div className="freedrive-tab">
       <div className="preferences-section-header">
         <h2>FreeDrive</h2>
-        <p>Browse and open FreeDrive from your computer.</p>
+        <p>
+          Browse My Drive from File Explorer. Stream and mirror settings below apply only to{" "}
+          <strong>My Drive</strong> in your FreeDrive folder.
+        </p>
+        <p className="preferences-section-note">
+          Folders you add for sync (Documents, Downloads, etc.) upload copies to the cloud only.
+          They are not shown inside FreeDrive.
+        </p>
         <button
           type="button"
           className="btn-secondary preferences-open-explorer"
@@ -64,8 +71,8 @@ export function FreeDriveTab() {
             <span className="sync-mode-title">Stream files</span>
             <ul className="sync-mode-features">
               <li>Store all My Drive files in the cloud only.</li>
-              <li>Access files from a virtual drive or folder on your computer.</li>
-              <li>Choose specific files and folders to make available offline.</li>
+              <li>Access files from My Drive in File Explorer as cloud placeholders.</li>
+              <li>Files download when you open them.</li>
             </ul>
           </div>
         </label>
@@ -82,9 +89,9 @@ export function FreeDriveTab() {
           <div className="sync-mode-card-body">
             <span className="sync-mode-title">Mirror files</span>
             <ul className="sync-mode-features">
-              <li>Store synced files in the cloud and on your computer.</li>
-              <li>Access files from a folder on your computer.</li>
-              <li>Synced folders are automatically available offline in ~/FreeDrive.</li>
+              <li>Keep a full local copy of My Drive under FreeDrive.</li>
+              <li>Access files from the My Drive folder on your computer.</li>
+              <li>New and changed files on the server are downloaded automatically.</li>
             </ul>
           </div>
         </label>
@@ -95,8 +102,8 @@ export function FreeDriveTab() {
           i
         </span>
         <p>
-          Streaming uses less hard drive space. Mirror mode downloads synced files to your local
-          FreeDrive folder for offline access.
+          Streaming uses less disk space. Mirror mode keeps My Drive files offline in{" "}
+          ~/FreeDrive/My Drive.
         </p>
       </div>
     </div>

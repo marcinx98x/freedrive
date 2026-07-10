@@ -499,6 +499,73 @@ unsafe fn transfer_data(
         .map_err(|e| crate::error::AppError::msg(format!("CfExecute TRANSFER_DATA: {}", e)))
 }
 
+fn path_is_under_my_drive(sync_root: &std::path::Path, full: &std::path::Path) -> bool {
+    relative_path_from_sync_root(sync_root, full)
+        .as_deref()
+        .is_some_and(is_under_my_drive)
+}
+
+pub unsafe extern "system" fn notify_file_close(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let _ = std::panic::catch_unwind(|| handle_notify_file_close(info));
+}
+
+fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
+    let full = callback_full_path(info).map_err(|e| e.to_string())?;
+    if !full.is_file() {
+        return Ok(());
+    }
+    let (api, db, sync_root) = with_context(|ctx| {
+        (ctx.api.clone(), ctx.db.clone(), ctx.sync_root.clone())
+    })
+    .ok_or_else(|| "cfapi context missing".to_string())?;
+    if !path_is_under_my_drive(&sync_root, &full) {
+        return Ok(());
+    }
+    cfapi_callback_log(&format!("NOTIFY_FILE_CLOSE {}", full.display()));
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::my_drive::upload_my_drive_path(&api, &db, &full).await {
+            cfapi_callback_log(&format!("NOTIFY_FILE_CLOSE upload failed: {}", e));
+        }
+    });
+    Ok(())
+}
+
+pub unsafe extern "system" fn notify_delete(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let _ = std::panic::catch_unwind(|| handle_notify_delete(info));
+}
+
+fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
+    let full = callback_full_path(info).map_err(|e| e.to_string())?;
+    let (api, db, sync_root) = with_context(|ctx| {
+        (ctx.api.clone(), ctx.db.clone(), ctx.sync_root.clone())
+    })
+    .ok_or_else(|| "cfapi context missing".to_string())?;
+    if !path_is_under_my_drive(&sync_root, &full) {
+        return Ok(());
+    }
+    cfapi_callback_log(&format!("NOTIFY_DELETE {}", full.display()));
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::my_drive::delete_my_drive_path(&api, &db, &full).await {
+            cfapi_callback_log(&format!("NOTIFY_DELETE failed: {}", e));
+        }
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
