@@ -77,12 +77,7 @@ pub fn run() {
                 }
 
                 #[cfg(windows)]
-                {
-                    crate::cfapi::init_app_handle(app.handle().clone());
-                    if let Err(e) = crate::cfapi::start(&state) {
-                        eprintln!("CfAPI explorer integration failed: {}", e);
-                    }
-                }
+                commands::spawn_cfapi_integration(app.handle());
 
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

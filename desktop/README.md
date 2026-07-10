@@ -11,9 +11,10 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Background sync** — uploads local changes, polls for remote changes
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
-- **Google Drive-style sidebar** — SVG icons for Home, Sync activity, and Notifications with alert badge
+- **Google Drive-style sidebar** — SVG icons for Home, Sync activity, and Notifications with alert badge; top bar uses matching SVG icons (pause/play, settings, help, lock)
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
-- **Profile menu** — server avatar, storage bar, Manage storage, Sign out / Sign in with another account
+- **Profile menu** — server avatar, storage bar, Manage storage, Sign out
+- **Non-blocking sign-in** — crypto unlock, sync restore, and Explorer (CfAPI) start in the background so login does not block the UI
 - **System tray** — minimize to tray, pause/resume sync from the menu
 - **Windows Explorer integration** (Windows 10 1809+) — open `%USERPROFILE%\FreeDrive` in File Explorer (address bar or **Open Drive folder** in the app) while the desktop client is running; **My Drive** shows server folders/files as cloud placeholders (download on open)
 

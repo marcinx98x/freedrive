@@ -53,13 +53,13 @@ export function TopBar({
           title={syncStatus.paused ? "Resume sync" : "Pause sync"}
           onClick={onPauseResume}
         >
-          {syncStatus.paused ? "▶" : "⏸"}
+          <NavIcon name={syncStatus.paused ? "play" : "pause"} />
         </button>
         <button type="button" className="icon-btn" title="Settings" onClick={onOpenSettings}>
-          ⚙
+          <NavIcon name="settings" />
         </button>
         <button type="button" className="icon-btn" title="Help">
-          ✦
+          <NavIcon name="help" />
         </button>
         <button
           ref={avatarRef}

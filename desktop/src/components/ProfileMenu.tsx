@@ -9,7 +9,6 @@ interface ProfileMenuProps {
   anchorRect: DOMRect | null;
   onClose: () => void;
   onSignOut: () => void;
-  onSignInAnother: () => void;
 }
 
 export function ProfileMenu({
@@ -18,7 +17,6 @@ export function ProfileMenu({
   anchorRect,
   onClose,
   onSignOut,
-  onSignInAnother,
 }: ProfileMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
@@ -78,9 +76,6 @@ export function ProfileMenu({
       <div className="profile-actions">
         <button type="button" className="profile-action-btn" onClick={onSignOut}>
           Sign out
-        </button>
-        <button type="button" className="profile-action-btn" onClick={onSignInAnother}>
-          Sign in with another account
         </button>
       </div>
 

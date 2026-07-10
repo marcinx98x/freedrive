@@ -585,6 +585,7 @@ input {
   color: var(--fd-text-secondary);
 }
 
+.topbar-actions .icon-btn .nav-icon,
 .crypto-lock-indicator .nav-icon {
   width: 22px;
   height: 22px;
@@ -1020,6 +1021,13 @@ input {
 
 .settings-modal .form-group {
   margin-bottom: 12px;
+}
+
+.settings-info-value {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--fd-text);
+  word-break: break-all;
 }
 
 .settings-actions {

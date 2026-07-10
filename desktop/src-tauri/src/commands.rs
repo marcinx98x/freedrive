@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -77,6 +78,49 @@ pub struct SelectedFolder {
 fn onboarding_complete(state: &AppState) -> bool {
     state.is_onboarding_complete()
 }
+
+/// Start CfAPI in a background thread so login/UI never blocks on WinRT/CfConnect.
+#[cfg(windows)]
+pub fn spawn_cfapi_integration(app: &AppHandle) {
+    crate::cfapi::init_app_handle(app.clone());
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        use std::sync::mpsc;
+
+        let (tx, rx) = mpsc::sync_channel(1);
+        let app_bg = app_handle.clone();
+        std::thread::spawn(move || {
+            let result = if let Some(state) = app_bg.try_state::<AppState>() {
+                crate::cfapi::start(&state)
+            } else {
+                Err("AppState unavailable for explorer integration".to_string())
+            };
+            let _ = tx.send(result);
+        });
+
+        match rx.recv_timeout(Duration::from_secs(60)) {
+            Ok(Ok(())) => {
+                crate::sync::log::sync_log("cfapi: explorer integration started (background)");
+            }
+            Ok(Err(e)) => {
+                eprintln!("CfAPI explorer integration failed: {}", e);
+                crate::sync::log::sync_log(format!("cfapi: explorer integration failed: {}", e));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!("CfAPI explorer integration timed out after 60s");
+                crate::sync::log::sync_log(
+                    "cfapi: explorer integration timed out after 60s (continuing in background)",
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                eprintln!("CfAPI explorer integration thread disconnected");
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn spawn_cfapi_integration(_app: &AppHandle) {}
 
 fn restart_watcher(state: &AppState, engine: Arc<SyncEngine>) -> Result<(), String> {
     let folders = {
@@ -361,70 +405,82 @@ async fn finish_login(
     let client = ApiClient::from_auth(&auth);
     state.set_api(client.clone());
 
-    if let Some(pwd) = password {
-        match crate::account_crypto::unlock_after_login(
+    let engine = Arc::new(SyncEngine::new(client, state.db.clone(), app.clone()));
+    engine.load_computer_from_db();
+    state.set_sync_engine(engine);
+
+    let user_id = success.user.id.clone();
+    let password_owned = password.map(|s| s.to_string());
+    let onboarding_done = onboarding_complete(state);
+    let app_handle = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let Some(app_state) = app_handle.try_state::<AppState>() else {
+            return;
+        };
+
+        let client = match app_state.api() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        if let Some(pwd) = password_owned.as_deref() {
+            match crate::account_crypto::unlock_after_login(
+                &client,
+                &app_state.db,
+                &user_id,
+                pwd,
+            )
+            .await
+            {
+                Ok(unlock) => {
+                    if unlock.setup {
+                        if let Some(code) = unlock.recovery_code {
+                            let _ = app_handle.emit("crypto-recovery-setup", code);
+                        }
+                    }
+                    emit_crypto_unlocked(&app_handle);
+                    emit_crypto_sync_stats(&app_handle, &unlock.sync_stats);
+                }
+                Err(e) => {
+                    eprintln!("encryption unlock failed: {}", e);
+                    let message = if e.to_string().to_lowercase().contains("decrypt") {
+                        "Could not unlock encryption — check your password.".to_string()
+                    } else {
+                        format!("Could not unlock encryption: {}", e)
+                    };
+                    emit_crypto_unlock_failed(&app_handle, &message);
+                }
+            }
+        } else if let Ok(Some(stats)) = crate::account_crypto::ensure_unlocked_from_keyring(
             &client,
-            &state.db,
-            &success.user.id,
-            pwd,
+            &app_state.db,
+            &user_id,
         )
         .await
         {
-            Ok(unlock) => {
-                if unlock.setup {
-                    if let Some(code) = unlock.recovery_code {
-                        let _ = app.emit("crypto-recovery-setup", code);
-                    }
-                }
-                emit_crypto_unlocked(app);
-                emit_crypto_sync_stats(app, &unlock.sync_stats);
-            }
-            Err(e) => {
-                eprintln!("encryption unlock failed: {}", e);
-                let message = if e.to_string().to_lowercase().contains("decrypt") {
-                    "Could not unlock encryption — check your password.".to_string()
-                } else {
-                    format!("Could not unlock encryption: {}", e)
-                };
-                emit_crypto_unlock_failed(app, &message);
+            emit_crypto_unlocked(&app_handle);
+            emit_crypto_sync_stats(&app_handle, &stats);
+        }
+
+        if let Ok(eng) = app_state.sync_engine() {
+            if let Err(e) = eng.setup_computer().await {
+                eprintln!("setup_computer on login failed: {}", e);
             }
         }
-    } else if let Some(stats) = crate::account_crypto::ensure_unlocked_from_keyring(
-        &client,
-        &state.db,
-        &success.user.id,
-    )
-    .await
-    .map_err(|e: crate::error::AppError| e.to_string())?
-    {
-        emit_crypto_unlocked(app);
-        emit_crypto_sync_stats(app, &stats);
-    }
 
-    let engine = Arc::new(SyncEngine::new(client, state.db.clone(), app.clone()));
-    engine.load_computer_from_db();
-    state.set_sync_engine(engine.clone());
+        spawn_cfapi_integration(&app_handle);
 
-    if let Err(e) = engine.setup_computer().await {
-        eprintln!("setup_computer on login failed: {}", e);
-    }
-
-    #[cfg(windows)]
-    if let Err(e) = crate::cfapi::start(state) {
-        eprintln!("CfAPI explorer integration failed: {}", e);
-    }
-
-    if !folders_to_remap.is_empty() {
-        let eng = engine.clone();
-        let st = state.db.clone();
-        let app_handle = app.clone();
-        tauri::async_runtime::spawn(async move {
+        if !folders_to_remap.is_empty() {
+            let Ok(eng) = app_state.sync_engine() else {
+                return;
+            };
             if let Err(e) = eng.configure_folders(folders_to_remap.clone()).await {
                 eprintln!("remap folders after server change failed: {}", e);
                 return;
             }
             {
-                let conn = match st.lock() {
+                let conn = match app_state.db.lock() {
                     Ok(c) => c,
                     Err(_) => return,
                 };
@@ -434,15 +490,14 @@ async fn finish_login(
                 .into_iter()
                 .map(|(p, _)| PathBuf::from(p))
                 .collect();
-            if let Some(app_state) = app_handle.try_state::<AppState>() {
-                let _ = start_sync_services(&app_state, &app_handle, eng, paths, true, false);
+            let _ = start_sync_services(&app_state, &app_handle, eng, paths, true, false);
+        } else if onboarding_done {
+            if let Err(e) = restore_sync_on_startup(&app_state, &app_handle).await {
+                eprintln!("restore sync on login failed: {}", e);
+                crate::sync::log::sync_log(format!("restore sync on login failed: {}", e));
             }
-        });
-    } else if onboarding_complete(state) {
-        restore_sync_on_startup(state, app)
-            .await
-            .map_err(|e: crate::error::AppError| e.to_string())?;
-    }
+        }
+    });
 
     Ok(())
 }

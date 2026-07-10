@@ -631,9 +631,10 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
-- **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out / Sign in with another account
+- **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out
+- **Non-blocking sign-in** — encryption unlock, sync restore, and Explorer (CfAPI) integration run in the background so the UI returns immediately after login
 - **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`)
-- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider reconnects automatically before opening the folder
+- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider connects in the background and reconnects automatically before opening the folder
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — subfolder with server folders/files as cloud placeholders; files download when opened
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)

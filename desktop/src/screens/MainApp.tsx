@@ -320,11 +320,6 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     }
   };
 
-  const handleSignInAnother = async () => {
-    setProfileOpen(false);
-    await handleSignOut();
-  };
-
   const handleOpenDriveFolder = async () => {
     setFolderError("");
     setExplorerWarning("");
@@ -407,7 +402,6 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           anchorRect={profileAnchor}
           onClose={() => setProfileOpen(false)}
           onSignOut={handleSignOut}
-          onSignInAnother={handleSignInAnother}
         />
       )}
 
@@ -418,11 +412,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
             {settingsError && <div className="error-banner">{settingsError}</div>}
             <div className="form-group">
               <label>Server URL</label>
-              <input type="text" value={serverUrl || ""} readOnly />
-            </div>
-            <div className="form-group">
-              <label>Account</label>
-              <input type="text" value={user?.email || ""} readOnly />
+              <p className="settings-info-value">{serverUrl || "—"}</p>
             </div>
             <div className="form-group">
               <label>Encryption</label>
