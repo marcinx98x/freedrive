@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, onCryptoRecoverySetup, onMyDriveHydrateFailed, onSyncActivity, onSyncProgress, onSyncStatusChanged } from "../api/tauri";
+import { api, onCryptoKeyQueued, onCryptoKeysSynced, onCryptoRecoverySetup, onMyDriveHydrateFailed, onSyncActivity, onSyncProgress, onSyncStatusChanged } from "../api/tauri";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { Sidebar } from "../components/Sidebar";
 import { TopBar } from "../components/TopBar";
@@ -40,6 +40,20 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
   const [folderError, setFolderError] = useState("");
   const [explorerWarning, setExplorerWarning] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const [cryptoUnlocked, setCryptoUnlocked] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryUnlocking, setRecoveryUnlocking] = useState(false);
+  const [rotatePassword, setRotatePassword] = useState("");
+  const [rotatingKey, setRotatingKey] = useState(false);
+
+  const refreshCryptoStatus = useCallback(async () => {
+    try {
+      const status = await api.getCryptoStatus();
+      setCryptoUnlocked(status.unlocked);
+    } catch {
+      setCryptoUnlocked(false);
+    }
+  }, []);
 
   const refreshProfile = useCallback(async () => {
     try {
@@ -87,6 +101,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
   useEffect(() => {
     refreshProfile();
     refresh();
+    refreshCryptoStatus();
     api
       .getExplorerIntegrationStatus()
       .then((status) => {
@@ -148,13 +163,24 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         `Save this recovery code in a safe place: ${code}`,
       );
       setShowSettings(true);
+      setCryptoUnlocked(true);
+    }).then((u) => unsubs.push(u));
+    onCryptoKeysSynced((stats) => {
+      const total = stats.pulled + stats.pushed + stats.pending_flushed;
+      if (total > 0) {
+        setKeysImportMessage(`Synced ${total} encryption key${total === 1 ? "" : "s"}.`);
+        setCryptoUnlocked(true);
+      }
+    }).then((u) => unsubs.push(u));
+    onCryptoKeyQueued((message) => {
+      setHydrateWarning(message);
     }).then((u) => unsubs.push(u));
     const interval = setInterval(refresh, 10000);
     return () => {
       unsubs.forEach((u) => u());
       clearInterval(interval);
     };
-  }, [refresh, refreshProfile]);
+  }, [refresh, refreshProfile, refreshCryptoStatus]);
 
   useEffect(() => {
     if (view === "notifications") {
@@ -212,6 +238,51 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     }
   };
 
+  const handleUnlockRecovery = async () => {
+    setSettingsError("");
+    if (!recoveryCode.trim()) {
+      setSettingsError("Enter recovery code");
+      return;
+    }
+    setRecoveryUnlocking(true);
+    try {
+      const stats = await api.unlockCryptoRecovery(recoveryCode.trim());
+      const total = stats.pulled + stats.pushed + stats.pending_flushed;
+      setKeysImportMessage(
+        total > 0
+          ? `Unlocked encryption and synced ${total} key${total === 1 ? "" : "s"}.`
+          : "Encryption unlocked.",
+      );
+      setCryptoUnlocked(true);
+      setRecoveryCode("");
+    } catch (err) {
+      setSettingsError(String(err));
+    } finally {
+      setRecoveryUnlocking(false);
+    }
+  };
+
+  const handleRotateCryptoKey = async () => {
+    setSettingsError("");
+    if (!rotatePassword) {
+      setSettingsError("Enter your password to rotate the encryption key");
+      return;
+    }
+    setRotatingKey(true);
+    try {
+      const result = await api.rotateCryptoKey(rotatePassword);
+      setKeysImportMessage(
+        `Encryption key rotated. Save the new recovery code: ${result.recovery_code}`,
+      );
+      setRotatePassword("");
+      setCryptoUnlocked(true);
+    } catch (err) {
+      setSettingsError(String(err));
+    } finally {
+      setRotatingKey(false);
+    }
+  };
+
   const handleSignOut = async () => {
     setSettingsError("");
     setSigningOut(true);
@@ -261,6 +332,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         <TopBar
           user={user}
           syncStatus={syncStatus}
+          cryptoUnlocked={cryptoUnlocked}
           search={search}
           onSearchChange={setSearch}
           onPauseResume={handlePauseResume}
@@ -330,10 +402,57 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
               <input type="text" value={user?.email || ""} readOnly />
             </div>
             <div className="form-group">
-              <label>Encryption keys (E2E)</label>
+              <label>Encryption</label>
               <p className="settings-hint">
-                Encryption keys sync automatically when you sign in. Use export/import below only
-                as a backup if you need to move keys manually.
+                Status: <strong>{cryptoUnlocked ? "Active" : "Locked"}</strong>
+                {" "}— sign in with your password to unlock. Keys sync automatically across devices.
+              </p>
+              <details className="settings-advanced" style={{ marginBottom: 12 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, color: "#5f6368" }}>
+                  Emergency: unlock with recovery code
+                </summary>
+                <input
+                  type="text"
+                  placeholder="xxxx-xxxx-..."
+                  value={recoveryCode}
+                  onChange={(e) => setRecoveryCode(e.target.value)}
+                  style={{ width: "100%", marginTop: 8 }}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ marginTop: 8 }}
+                  onClick={handleUnlockRecovery}
+                  disabled={recoveryUnlocking}
+                >
+                  {recoveryUnlocking ? "Unlocking…" : "Unlock with recovery code"}
+                </button>
+              </details>
+              <div className="form-group" style={{ marginBottom: 12 }}>
+                <label>Rotate encryption key</label>
+                <p className="settings-hint">
+                  Use if you suspect your encryption key was compromised. Requires your password.
+                </p>
+                <input
+                  type="password"
+                  placeholder="Account password"
+                  value={rotatePassword}
+                  onChange={(e) => setRotatePassword(e.target.value)}
+                  style={{ width: "100%" }}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ marginTop: 8 }}
+                  onClick={handleRotateCryptoKey}
+                  disabled={rotatingKey}
+                >
+                  {rotatingKey ? "Rotating…" : "Rotate encryption key"}
+                </button>
+              </div>
+              <label>Manual backup (optional)</label>
+              <p className="settings-hint">
+                Export/import below only if you need to move keys manually between devices.
               </p>
               {keysImportMessage && (
                 <div className="success-banner">{keysImportMessage}</div>

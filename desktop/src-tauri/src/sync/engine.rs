@@ -1399,6 +1399,15 @@ impl SyncEngine {
                         "synced",
                     );
                 }
+                if crate::db::has_pending_key_upload(&conn, &rec.id).unwrap_or(false) {
+                    let _ = self.app.emit(
+                        "crypto-key-queued",
+                        format!(
+                            "Encryption not unlocked — {} may be unavailable in the browser until you sign in with your password",
+                            file_name
+                        ),
+                    );
+                }
                 Ok(SyncAttemptResult::Done(FileSyncOutcome::Synced))
             }
             Err(e) => {

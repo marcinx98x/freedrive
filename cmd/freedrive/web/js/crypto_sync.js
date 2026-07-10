@@ -4,6 +4,8 @@
 
 var CryptoSync = window.CryptoSync = (() => {
     const SYNC_CURSOR_KEY = 'fd_crypto_sync_since';
+    const ERR_UNLOCK_REQUIRED = 'FD_CRYPTO_UNLOCK_REQUIRED';
+    const ERR_KEY_NOT_ON_SERVER = 'FD_CRYPTO_KEY_NOT_ON_SERVER';
     let uekRaw = null;
     let recoveryKeyRaw = null;
 
@@ -18,6 +20,17 @@ var CryptoSync = window.CryptoSync = (() => {
     function lock() {
         uekRaw = null;
         recoveryKeyRaw = null;
+    }
+
+    function describeFileKeyError(err) {
+        const code = err?.code || err?.message || '';
+        if (code === ERR_UNLOCK_REQUIRED) {
+            return 'Unlock encryption with your password (refresh the page if needed).';
+        }
+        if (code === ERR_KEY_NOT_ON_SERVER) {
+            return 'This file\'s encryption key is not on the server yet. Open FreeDrive on the device where you uploaded it (signed in with your password), or upload the file again.';
+        }
+        return err?.message || 'Encryption key not available';
     }
 
     function saltFromAccount(account) {
@@ -72,16 +85,33 @@ var CryptoSync = window.CryptoSync = (() => {
         return CryptoModule.formatRecoveryCode(recoveryKey);
     }
 
+    async function syncAllKeysWithStats() {
+        if (!isUnlocked()) return { pulled: 0, pushed: 0 };
+        const pulled1 = await pullKeysFromServer();
+        const pushed = await pushLocalKeysToServer();
+        const pulled2 = await pullKeysFromServer();
+        return { pulled: pulled1 + pulled2, pushed };
+    }
+
+    function toastSyncStats(stats) {
+        const total = (stats?.pulled || 0) + (stats?.pushed || 0);
+        if (total > 0) {
+            Components.toast(`Synced ${total} encryption key${total === 1 ? '' : 's'}`, 'success');
+        }
+    }
+
     async function unlockWithPassword(password) {
         const account = await API.crypto.getAccount();
         if (!account?.has_crypto) {
             const recoveryCode = await setupNewAccount(password);
-            await syncAllKeys();
-            return { setup: true, recoveryCode };
+            const stats = await syncAllKeysWithStats();
+            toastSyncStats(stats);
+            return { setup: true, recoveryCode, stats };
         }
         uekRaw = await unwrapUekWithPassword(account, password);
-        await syncAllKeys();
-        return { setup: false };
+        const stats = await syncAllKeysWithStats();
+        toastSyncStats(stats);
+        return { setup: false, stats };
     }
 
     async function unlockWithRecovery(recoveryCode) {
@@ -90,8 +120,51 @@ var CryptoSync = window.CryptoSync = (() => {
             throw new Error('Encryption is not set up for this account');
         }
         uekRaw = await unwrapUekWithRecovery(account, recoveryCode);
-        await syncAllKeys();
-        return { setup: false };
+        const stats = await syncAllKeysWithStats();
+        toastSyncStats(stats);
+        return { setup: false, stats };
+    }
+
+    async function rotateAccountKey(password) {
+        const account = await API.crypto.getAccount();
+        if (!account?.has_crypto) {
+            throw new Error('Encryption is not set up for this account');
+        }
+        const oldUek = await unwrapUekWithPassword(account, password);
+        const newUek = CryptoModule.generateRawBytes(32);
+        const newRecoveryKey = CryptoModule.generateRawBytes(32);
+        const salt = CryptoModule.generateRawBytes(16);
+        const kek = await CryptoModule.deriveKek(password, salt);
+        const wrappedUek = await CryptoModule.wrapRawKey(newUek, kek);
+        const wrappedRecovery = await CryptoModule.wrapRawKey(newUek, newRecoveryKey);
+
+        const exportData = await CryptoModule.exportAllKeys();
+        const rewrapped = {};
+        for (const [fileId, keyB64] of Object.entries(exportData.keys || {})) {
+            if (!keyB64) continue;
+            try {
+                const raw = CryptoModule.base64UrlToArrayBuffer(keyB64);
+                rewrapped[fileId] = await CryptoModule.wrapRawKey(new Uint8Array(raw), newUek);
+            } catch {
+                /* skip */
+            }
+        }
+        if (Object.keys(rewrapped).length) {
+            await API.crypto.bulkPutKeys({ keys: rewrapped });
+        }
+        await API.crypto.updateAccount({
+            key_salt: Array.from(salt),
+            wrapped_uek: wrappedUek,
+            wrapped_uek_recovery: wrappedRecovery,
+        });
+        uekRaw = newUek;
+        recoveryKeyRaw = newRecoveryKey;
+        const stats = await syncAllKeysWithStats();
+        toastSyncStats(stats);
+        return {
+            recoveryCode: CryptoModule.formatRecoveryCode(newRecoveryKey),
+            stats,
+        };
     }
 
     async function rewrapWithNewPassword(oldPassword, newPassword) {
@@ -187,10 +260,8 @@ var CryptoSync = window.CryptoSync = (() => {
     }
 
     async function syncAllKeys() {
-        if (!isUnlocked()) return;
-        await pullKeysFromServer();
-        await pushLocalKeysToServer();
-        await pullKeysFromServer();
+        const stats = await syncAllKeysWithStats();
+        return stats;
     }
 
     async function wrapFileKeyForUpload(key) {
@@ -210,17 +281,32 @@ var CryptoSync = window.CryptoSync = (() => {
     async function ensureFileKey(fileId) {
         let key = await CryptoModule.getKey(fileId);
         if (key) return key;
-        if (!isUnlocked()) return null;
-        try {
-            const data = await API.crypto.getFileKey(fileId);
-            if (!data?.wrapped_file_key) return null;
-            const raw = await CryptoModule.unwrapRawKey(data.wrapped_file_key, uekRaw);
-            key = await CryptoModule.rawKeyToCryptoKey(raw);
-            await CryptoModule.storeKey(fileId, key);
-            return key;
-        } catch {
-            return null;
+        if (!isUnlocked()) {
+            const err = new Error(ERR_UNLOCK_REQUIRED);
+            err.code = ERR_UNLOCK_REQUIRED;
+            throw err;
         }
+        let data;
+        try {
+            data = await API.crypto.getFileKey(fileId);
+        } catch (err) {
+            const msg = String(err?.message || '').toLowerCase();
+            if (msg.includes('404') || msg.includes('not found')) {
+                const e = new Error(ERR_KEY_NOT_ON_SERVER);
+                e.code = ERR_KEY_NOT_ON_SERVER;
+                throw e;
+            }
+            throw err;
+        }
+        if (!data?.wrapped_file_key) {
+            const e = new Error(ERR_KEY_NOT_ON_SERVER);
+            e.code = ERR_KEY_NOT_ON_SERVER;
+            throw e;
+        }
+        const raw = await CryptoModule.unwrapRawKey(data.wrapped_file_key, uekRaw);
+        key = await CryptoModule.rawKeyToCryptoKey(raw);
+        await CryptoModule.storeKey(fileId, key);
+        return key;
     }
 
     async function showRecoverySetupModal(recoveryCode) {
@@ -228,8 +314,8 @@ var CryptoSync = window.CryptoSync = (() => {
             Components.showModal(
                 'Save your recovery code',
                 `<p style="margin:0 0 12px;font-size:14px;color:#5f6368;line-height:1.45;">
-                    Store this code in a safe place. You will need it to recover encrypted files
-                    if you reset your password without knowing the old one.
+                    Store this code in a safe place. You will need it only if you reset your password
+                    without knowing the old one.
                 </p>
                 <div style="font-family:monospace;font-size:15px;padding:12px;border-radius:8px;background:#f1f3f4;word-break:break-all;">${Components.escapeHtml(recoveryCode)}</div>
                 <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:#3c4043;">
@@ -268,12 +354,7 @@ var CryptoSync = window.CryptoSync = (() => {
                     <span style="font-size:13px;font-weight:500;color:#5f6368;">Password</span>
                     <input id="crypto-unlock-password" type="password" autocomplete="current-password"
                         style="width:100%;height:40px;margin-top:6px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
-                </label>
-                <details style="font-size:13px;color:#5f6368;">
-                    <summary>Use recovery code instead</summary>
-                    <input id="crypto-unlock-recovery" type="text" placeholder="xxxx-xxxx-..."
-                        style="width:100%;height:40px;margin-top:8px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
-                </details>`,
+                </label>`,
                 [
                     { text: 'Cancel', action: () => { resolve(false); } },
                     {
@@ -282,16 +363,52 @@ var CryptoSync = window.CryptoSync = (() => {
                         close: false,
                         action: async () => {
                             const password = String(document.getElementById('crypto-unlock-password')?.value || '');
-                            const recovery = String(document.getElementById('crypto-unlock-recovery')?.value || '').trim();
+                            if (!password) {
+                                Components.toast('Enter your password', 'error');
+                                return false;
+                            }
                             try {
-                                if (recovery) {
-                                    await unlockWithRecovery(recovery);
-                                } else if (password) {
-                                    await unlockWithPassword(password);
-                                } else {
-                                    Components.toast('Enter password or recovery code', 'error');
-                                    return false;
-                                }
+                                await unlockWithPassword(password);
+                                Components.hideModal();
+                                resolve(true);
+                                return true;
+                            } catch (err) {
+                                Components.toast(err?.message || 'Unlock failed', 'error');
+                                return false;
+                            }
+                        },
+                    },
+                ],
+            );
+        });
+    }
+
+    async function showRecoveryUnlockModal() {
+        return new Promise((resolve) => {
+            Components.showModal(
+                'Unlock with recovery code',
+                `<p style="margin:0 0 12px;font-size:14px;color:#5f6368;line-height:1.45;">
+                    Use this only if you cannot unlock with your password (for example after a password reset).
+                </p>
+                <label style="display:block;">
+                    <span style="font-size:13px;font-weight:500;color:#5f6368;">Recovery code</span>
+                    <input id="crypto-settings-recovery" type="text" placeholder="xxxx-xxxx-..."
+                        style="width:100%;height:40px;margin-top:6px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
+                </label>`,
+                [
+                    { text: 'Cancel', action: () => { resolve(false); } },
+                    {
+                        text: 'Unlock',
+                        class: 'btn-primary',
+                        close: false,
+                        action: async () => {
+                            const recovery = String(document.getElementById('crypto-settings-recovery')?.value || '').trim();
+                            if (!recovery) {
+                                Components.toast('Enter recovery code', 'error');
+                                return false;
+                            }
+                            try {
+                                await unlockWithRecovery(recovery);
                                 Components.hideModal();
                                 resolve(true);
                                 return true;
@@ -323,7 +440,10 @@ var CryptoSync = window.CryptoSync = (() => {
     async function ensureUnlockedOnAppLoad() {
         if (!canUse() || !API.isLoggedIn()) return true;
         if (isUnlocked()) {
-            try { await syncAllKeys(); } catch { /* ignore background sync errors */ }
+            try {
+                const stats = await syncAllKeysWithStats();
+                toastSyncStats(stats);
+            } catch { /* ignore background sync errors */ }
             return true;
         }
         return showUnlockModal();
@@ -352,14 +472,19 @@ var CryptoSync = window.CryptoSync = (() => {
         lock,
         unlockWithPassword,
         unlockWithRecovery,
+        rotateAccountKey,
         rewrapWithNewPassword,
         rewrapAfterPasswordReset,
         syncAllKeys,
         pushFileKey,
         ensureFileKey,
+        describeFileKeyError,
+        ERR_UNLOCK_REQUIRED,
+        ERR_KEY_NOT_ON_SERVER,
         ensureUnlockedAfterLogin,
         ensureUnlockedOnAppLoad,
         showUnlockModal,
+        showRecoveryUnlockModal,
         showRecoverySetupModal,
         buildCryptoUpdateForReset,
     };

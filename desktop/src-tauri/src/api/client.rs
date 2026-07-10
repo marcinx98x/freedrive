@@ -907,14 +907,22 @@ impl ApiClient {
                             serde_json::from_str::<serde_json::Value>(&auth.user_json)
                         {
                             if let Some(uid) = user.get("id").and_then(|v| v.as_str()) {
-                                if let Some(uek) = crate::account_crypto::get_uek(uid) {
-                                    let _ = crate::account_crypto::push_file_key(
+                                if let Some(db_ref) = db.as_ref() {
+                                    let pushed = crate::account_crypto::push_file_key_or_queue(
                                         self,
-                                        &uek,
+                                        db_ref,
+                                        uid,
                                         &rec.id,
                                         &key_b64,
                                     )
-                                    .await;
+                                    .await
+                                    .unwrap_or(false);
+                                    if !pushed {
+                                        eprintln!(
+                                            "encryption key queued for {} — unlock encryption so web can open this file",
+                                            prepared.name
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1274,6 +1282,25 @@ impl ApiClient {
         }
         let _: serde_json::Value = self
             .request_json(reqwest::Method::POST, "/crypto/account", Some(body), false, 2)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_crypto_account(
+        &self,
+        key_salt: &[u8],
+        wrapped_uek: &str,
+        wrapped_uek_recovery: Option<&str>,
+    ) -> AppResult<()> {
+        let mut body = serde_json::json!({
+            "key_salt": key_salt,
+            "wrapped_uek": wrapped_uek,
+        });
+        if let Some(recovery) = wrapped_uek_recovery {
+            body["wrapped_uek_recovery"] = serde_json::Value::String(recovery.to_string());
+        }
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::PUT, "/crypto/account", Some(body), false, 2)
             .await?;
         Ok(())
     }

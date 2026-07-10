@@ -63,6 +63,10 @@ fn init_schema(conn: &Connection) -> AppResult<()> {
             key_b64url TEXT NOT NULL,
             PRIMARY KEY (folder_id, file_name)
         );
+        CREATE TABLE IF NOT EXISTS pending_key_uploads (
+            remote_file_id TEXT PRIMARY KEY,
+            key_b64url TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS my_drive_placeholders (
             relative_path TEXT PRIMARY KEY,
             remote_id TEXT NOT NULL,
@@ -612,6 +616,46 @@ pub fn has_any_pending_file_key(conn: &Connection, file_name: &str) -> AppResult
         "SELECT 1 FROM pending_file_keys WHERE file_name = ?1 LIMIT 1",
     )?;
     let mut rows = stmt.query(params![file_name])?;
+    Ok(rows.next()?.is_some())
+}
+
+pub fn store_pending_key_upload(
+    conn: &Connection,
+    remote_file_id: &str,
+    key_b64url: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO pending_key_uploads (remote_file_id, key_b64url) VALUES (?1, ?2)
+         ON CONFLICT(remote_file_id) DO UPDATE SET key_b64url = excluded.key_b64url",
+        params![remote_file_id, key_b64url],
+    )?;
+    Ok(())
+}
+
+pub fn list_pending_key_uploads(conn: &Connection) -> AppResult<Vec<(String, String)>> {
+    let mut stmt =
+        conn.prepare("SELECT remote_file_id, key_b64url FROM pending_key_uploads")?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push((row.get(0)?, row.get(1)?));
+    }
+    Ok(out)
+}
+
+pub fn delete_pending_key_upload(conn: &Connection, remote_file_id: &str) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM pending_key_uploads WHERE remote_file_id = ?1",
+        params![remote_file_id],
+    )?;
+    Ok(())
+}
+
+pub fn has_pending_key_upload(conn: &Connection, remote_file_id: &str) -> AppResult<bool> {
+    let mut stmt = conn.prepare(
+        "SELECT 1 FROM pending_key_uploads WHERE remote_file_id = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![remote_file_id])?;
     Ok(rows.next()?.is_some())
 }
 

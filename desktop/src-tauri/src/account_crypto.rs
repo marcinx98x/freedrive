@@ -1,6 +1,9 @@
 use crate::api::ApiClient;
 use crate::crypto::{self, format_recovery_code, generate_file_key, key_from_b64url, key_to_b64url};
-use crate::db::{config_get, config_set, list_all_file_keys, store_file_key, DbHandle};
+use crate::db::{
+    config_get, config_set, delete_pending_key_upload, list_all_file_keys,
+    list_pending_key_uploads, store_file_key, DbHandle,
+};
 use crate::error::{AppError, AppResult};
 use parking_lot::Mutex;
 use rand::RngCore;
@@ -41,6 +44,13 @@ struct BulkImportResponse {
     imported: usize,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CryptoSyncStats {
+    pub pulled: usize,
+    pub pushed: usize,
+    pub pending_flushed: usize,
+}
+
 fn keyring_service() -> &'static str {
     "freedrive-desktop"
 }
@@ -66,9 +76,14 @@ pub fn get_uek(user_id: &str) -> Option<[u8; 32]> {
     None
 }
 
+pub fn is_unlocked() -> bool {
+    UEK.lock().is_some()
+}
+
 pub fn clear_uek(user_id: &str) {
     *UEK.lock() = None;
-    let _ = keyring::Entry::new(keyring_service(), &keyring_user(user_id)).and_then(|e| e.delete_credential());
+    let _ = keyring::Entry::new(keyring_service(), &keyring_user(user_id))
+        .and_then(|e| e.delete_credential());
 }
 
 fn save_uek_keyring(user_id: &str, uek: &[u8; 32]) -> AppResult<()> {
@@ -100,6 +115,7 @@ fn load_uek_keyring(user_id: &str) -> AppResult<Option<[u8; 32]>> {
 pub struct UnlockResult {
     pub setup: bool,
     pub recovery_code: Option<String>,
+    pub sync_stats: CryptoSyncStats,
 }
 
 pub async fn unlock_after_login(
@@ -122,10 +138,11 @@ pub async fn unlock_after_login(
             .setup_crypto_account(&salt, &wrapped_uek, Some(&wrapped_recovery))
             .await?;
         set_uek(user_id, uek)?;
-        sync_all_keys(client, db, user_id, &uek).await?;
+        let sync_stats = sync_all_keys(client, db, user_id, &uek).await?;
         return Ok(UnlockResult {
             setup: true,
             recovery_code: Some(format_recovery_code(&recovery_key)),
+            sync_stats,
         });
     }
 
@@ -143,23 +160,91 @@ pub async fn unlock_after_login(
     let mut uek = [0u8; 32];
     uek.copy_from_slice(&uek_bytes);
     set_uek(user_id, uek)?;
-    sync_all_keys(client, db, user_id, &uek).await?;
+    let sync_stats = sync_all_keys(client, db, user_id, &uek).await?;
     Ok(UnlockResult {
         setup: false,
         recovery_code: None,
+        sync_stats,
     })
 }
 
-pub async fn try_unlock_from_keyring(
+pub async fn unlock_with_recovery(
     client: &ApiClient,
     db: &DbHandle,
     user_id: &str,
-) -> AppResult<bool> {
+    recovery_code: &str,
+) -> AppResult<CryptoSyncStats> {
+    let account: CryptoAccountResponse =
+        serde_json::from_value(client.get_crypto_account().await?)?;
+    if !account.has_crypto || account.wrapped_uek_recovery.is_none() {
+        return Err(AppError::msg("No recovery backup on server"));
+    }
+    let recovery_key = crypto::parse_recovery_code(recovery_code)?;
+    let uek_bytes = crypto::unwrap_bytes(
+        account.wrapped_uek_recovery.as_ref().unwrap(),
+        &recovery_key,
+    )?;
+    if uek_bytes.len() != 32 {
+        return Err(AppError::msg("invalid UEK length"));
+    }
+    let mut uek = [0u8; 32];
+    uek.copy_from_slice(&uek_bytes);
+    set_uek(user_id, uek)?;
+    sync_all_keys(client, db, user_id, &uek).await
+}
+
+pub async fn ensure_unlocked_from_keyring(
+    client: &ApiClient,
+    db: &DbHandle,
+    user_id: &str,
+) -> AppResult<Option<CryptoSyncStats>> {
     let Some(uek) = get_uek(user_id) else {
-        return Ok(false);
+        return Ok(None);
     };
-    sync_all_keys(client, db, user_id, &uek).await?;
-    Ok(true)
+    let stats = sync_all_keys(client, db, user_id, &uek).await?;
+    Ok(Some(stats))
+}
+
+pub fn queue_key_upload(db: &DbHandle, file_id: &str, key_b64: &str) -> AppResult<()> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    crate::db::store_pending_key_upload(&conn, file_id, key_b64)
+}
+
+pub async fn push_file_key_or_queue(
+    client: &ApiClient,
+    db: &DbHandle,
+    user_id: &str,
+    file_id: &str,
+    key_b64: &str,
+) -> AppResult<bool> {
+    if let Some(uek) = get_uek(user_id) {
+        push_file_key(client, &uek, file_id, key_b64).await?;
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        let _ = delete_pending_key_upload(&conn, file_id);
+        return Ok(true);
+    }
+    queue_key_upload(db, file_id, key_b64)?;
+    Ok(false)
+}
+
+async fn flush_pending_key_uploads(
+    client: &ApiClient,
+    db: &DbHandle,
+    uek: &[u8; 32],
+) -> AppResult<usize> {
+    let pending = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        list_pending_key_uploads(&conn)?
+    };
+    let mut flushed = 0usize;
+    for (file_id, key_b64) in pending {
+        if push_file_key(client, uek, &file_id, &key_b64).await.is_ok() {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            let _ = delete_pending_key_upload(&conn, &file_id);
+            flushed += 1;
+        }
+    }
+    Ok(flushed)
 }
 
 async fn sync_all_keys(
@@ -167,24 +252,30 @@ async fn sync_all_keys(
     db: &DbHandle,
     user_id: &str,
     uek: &[u8; 32],
-) -> AppResult<()> {
-    pull_keys_from_server(client, db, uek).await?;
-    push_local_keys_to_server(client, db, uek).await?;
-    pull_keys_from_server(client, db, uek).await?;
+) -> AppResult<CryptoSyncStats> {
+    let pulled = pull_keys_from_server(client, db, uek).await?;
+    let pushed = push_local_keys_to_server(client, db, uek).await?;
+    let pulled2 = pull_keys_from_server(client, db, uek).await?;
+    let pending_flushed = flush_pending_key_uploads(client, db, uek).await?;
     let _ = user_id;
-    Ok(())
+    Ok(CryptoSyncStats {
+        pulled: pulled + pulled2,
+        pushed,
+        pending_flushed,
+    })
 }
 
 async fn pull_keys_from_server(
     client: &ApiClient,
     db: &DbHandle,
     uek: &[u8; 32],
-) -> AppResult<()> {
+) -> AppResult<usize> {
     let since = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         config_get(&conn, "crypto_sync_since").ok().flatten()
     };
     let mut cursor = since.unwrap_or_default();
+    let mut imported = 0usize;
     loop {
         let resp: EncryptionKeysListResponse =
             serde_json::from_value(client.list_encryption_keys(&cursor).await?)?;
@@ -200,6 +291,7 @@ async fn pull_keys_from_server(
                         let mut key = [0u8; 32];
                         key.copy_from_slice(&raw);
                         let _ = store_file_key(&conn, &entry.file_id, &key_to_b64url(&key));
+                        imported += 1;
                     }
                 }
                 if let Some(ref ts) = entry.updated_at {
@@ -214,20 +306,20 @@ async fn pull_keys_from_server(
             break;
         }
     }
-    Ok(())
+    Ok(imported)
 }
 
 async fn push_local_keys_to_server(
     client: &ApiClient,
     db: &DbHandle,
     uek: &[u8; 32],
-) -> AppResult<()> {
+) -> AppResult<usize> {
     let local_keys = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         list_all_file_keys(&conn)?
     };
     if local_keys.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let mut wrapped = HashMap::new();
     for (file_id, key_b64) in local_keys {
@@ -238,11 +330,11 @@ async fn push_local_keys_to_server(
         }
     }
     if wrapped.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
-    let _: BulkImportResponse =
+    let resp: BulkImportResponse =
         serde_json::from_value(client.bulk_put_encryption_keys(wrapped).await?)?;
-    Ok(())
+    Ok(resp.imported)
 }
 
 pub async fn push_file_key(
@@ -277,6 +369,64 @@ pub async fn fetch_and_store_file_key(
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     store_file_key(&conn, file_id, &key_b64)?;
     Ok(Some(key_b64))
+}
+
+pub async fn rotate_account_key(
+    client: &ApiClient,
+    db: &DbHandle,
+    user_id: &str,
+    password: &str,
+) -> AppResult<String> {
+    let account: CryptoAccountResponse =
+        serde_json::from_value(client.get_crypto_account().await?)?;
+    if !account.has_crypto {
+        return Err(AppError::msg("Encryption is not set up"));
+    }
+    let salt_old = account
+        .key_salt
+        .ok_or_else(|| AppError::msg("missing key salt"))?;
+    let wrapped_old = account
+        .wrapped_uek
+        .ok_or_else(|| AppError::msg("missing wrapped UEK"))?;
+    let kek_old = crypto::derive_kek(password, &salt_old)?;
+    let old_uek_bytes = crypto::unwrap_bytes(&wrapped_old, &kek_old)?;
+    if old_uek_bytes.len() != 32 {
+        return Err(AppError::msg("invalid UEK length"));
+    }
+
+    let new_uek = generate_file_key();
+    let new_recovery = generate_file_key();
+    let mut salt_new = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut salt_new);
+    let kek_new = crypto::derive_kek(password, &salt_new)?;
+    let wrapped_uek = crypto::wrap_bytes(&new_uek, &kek_new)?;
+    let wrapped_recovery = crypto::wrap_bytes(&new_uek, &new_recovery)?;
+
+    let local_keys = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        list_all_file_keys(&conn)?
+    };
+
+    let mut rewrapped = HashMap::new();
+    for (file_id, key_b64) in &local_keys {
+        if let Ok(file_key) = key_from_b64url(key_b64) {
+            if let Ok(w) = crypto::wrap_bytes(&file_key, &new_uek) {
+                rewrapped.insert(file_id.clone(), w);
+            }
+        }
+    }
+    if !rewrapped.is_empty() {
+        let _: BulkImportResponse =
+            serde_json::from_value(client.bulk_put_encryption_keys(rewrapped).await?)?;
+    }
+
+    client
+        .update_crypto_account(&salt_new, &wrapped_uek, Some(&wrapped_recovery))
+        .await?;
+
+    set_uek(user_id, new_uek)?;
+    let _ = sync_all_keys(client, db, user_id, &new_uek).await?;
+    Ok(format_recovery_code(&new_recovery))
 }
 
 pub async fn resolve_file_key(

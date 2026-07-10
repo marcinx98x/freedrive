@@ -5,6 +5,7 @@ import { UserAvatar } from "./UserAvatar";
 interface TopBarProps {
   user: User | null;
   syncStatus: SyncStatus;
+  cryptoUnlocked?: boolean;
   search: string;
   onSearchChange: (v: string) => void;
   onPauseResume: () => void;
@@ -15,6 +16,7 @@ interface TopBarProps {
 export function TopBar({
   user,
   syncStatus,
+  cryptoUnlocked,
   search,
   onSearchChange,
   onPauseResume,
@@ -35,6 +37,21 @@ export function TopBar({
         />
       </div>
       <div className="topbar-actions">
+        {cryptoUnlocked !== undefined && (
+          <span
+            className="crypto-status-pill"
+            title={cryptoUnlocked ? "Encryption active" : "Encryption locked — sign in with password"}
+            style={{
+              fontSize: 12,
+              padding: "4px 10px",
+              borderRadius: 12,
+              background: cryptoUnlocked ? "#e6f4ea" : "#fce8e6",
+              color: cryptoUnlocked ? "#137333" : "#c5221f",
+            }}
+          >
+            {cryptoUnlocked ? "🔒 Active" : "🔒 Locked"}
+          </span>
+        )}
         <button
           type="button"
           className="icon-btn"

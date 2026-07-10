@@ -119,6 +119,8 @@ FreeDrive is ideal for:
 - Profile settings modal (name, avatar photo)
 - Forgot-password flow with SQLite-persisted reset tokens (survives server restart; single-use)
 - **Cross-device encryption** — account key (UEK) and per-file keys sync via server; unlock with password on web or desktop to decrypt files on any device
+- **Recovery code** — emergency unlock when password is forgotten (set up on first encryption or after key rotation)
+- **Key rotation** — re-wrap account and file keys with a new password-derived key from Settings (web and desktop)
 - Password reset can re-wrap the account key when crypto metadata is supplied
 - Secure email change with confirmation link sent to the new address
 - Security center for per-user email 2FA toggle
@@ -281,7 +283,8 @@ Global limiter enabled in router:
 File payloads are encrypted client-side (AES-GCM) before upload. The server stores ciphertext blobs and **wrapped** encryption keys only — it never receives the user's raw account key (UEK) or per-file keys.
 
 - **Web UI** — WebCrypto encrypts/decrypts in the browser; keys are wrapped with a password-derived key and synced via `/api/v1/crypto/*`
-- **Desktop client** — same UEK + file-key model; keys sync on sign-in and are cached locally for offline decrypt during Explorer hydration
+- **Desktop client** — same UEK + file-key model; keys sync on sign-in, UEK cached in OS keyring, pending file keys flushed when back online
+- **Unlock flows** — password unlock at sign-in; recovery code in Settings when locked; key rotation re-wraps all file keys
 - **Password reset** — optional crypto metadata lets users re-wrap the account key without losing access to existing files (when recovery was configured)
 - On plain HTTP (non-localhost), the web UI warns and may upload without browser-side encryption
 
@@ -623,11 +626,13 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 
 - Sign in, onboarding, folder sync, system tray, pause/resume
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
+- **Encryption status** — top bar shows Active/Locked; Settings supports recovery-code unlock and key rotation
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out / Sign in with another account
 - **Silent background sync** — on restart, background verification without a full UI rescan (`Processing N/M`)
-- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive` in File Explorer as the cloud sync root (Windows 10 1809+); uses synchronous provider connect (pre-shell baseline, no sidebar shell registration)
+- **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider reconnects automatically before opening the folder
+- **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — subfolder with server folders/files as cloud placeholders; files download when opened
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client

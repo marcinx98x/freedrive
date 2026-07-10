@@ -57,6 +57,9 @@ pub fn run() {
             commands::import_encryption_keys,
             commands::export_encryption_keys,
             commands::unregister_explorer_integration,
+            commands::get_crypto_status,
+            commands::unlock_crypto_recovery,
+            commands::rotate_crypto_key,
         ])
         .setup(|app| {
             let state = app.state::<AppState>();

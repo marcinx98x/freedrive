@@ -160,7 +160,43 @@ fn start_sync_services(
     Ok(())
 }
 
+fn emit_crypto_sync_stats(app: &AppHandle, stats: &crate::account_crypto::CryptoSyncStats) {
+    let total = stats.pulled + stats.pushed + stats.pending_flushed;
+    if total > 0 {
+        let _ = app.emit("crypto-keys-synced", stats.clone());
+    }
+}
+
+async fn ensure_crypto_unlocked(state: &AppState, app: &AppHandle) -> Result<(), String> {
+    let auth = load_auth()
+        .map_err(|e: crate::error::AppError| e.to_string())?
+        .ok_or_else(|| "not logged in".to_string())?;
+    let user: serde_json::Value =
+        serde_json::from_str(&auth.user_json).map_err(|e| e.to_string())?;
+    let user_id = user
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing user id".to_string())?
+        .to_string();
+    let client = state.api().map_err(|e| e.to_string())?;
+    if let Some(stats) = crate::account_crypto::ensure_unlocked_from_keyring(
+        &client,
+        &state.db,
+        &user_id,
+    )
+    .await
+    .map_err(|e: crate::error::AppError| e.to_string())?
+    {
+        emit_crypto_sync_stats(app, &stats);
+    }
+    Ok(())
+}
+
 pub async fn restore_sync_on_startup(state: &AppState, app: &AppHandle) -> AppResult<()> {
+    if let Err(e) = ensure_crypto_unlocked(state, app).await {
+        eprintln!("crypto unlock on startup failed: {}", e);
+    }
+
     let complete = {
         let conn = state.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         config_get(&conn, "onboarding_complete")?
@@ -204,20 +240,7 @@ pub async fn restore_sync_on_startup(state: &AppState, app: &AppHandle) -> AppRe
 pub fn init_api_from_storage(state: &AppState) -> AppResult<()> {
     if let Some(auth) = load_auth()? {
         let client = ApiClient::from_auth(&auth);
-        state.set_api(client.clone());
-        if let Ok(user) = serde_json::from_str::<serde_json::Value>(&auth.user_json) {
-            if let Some(uid) = user.get("id").and_then(|v| v.as_str()) {
-                if crate::account_crypto::get_uek(uid).is_some() {
-                    let db = state.db.clone();
-                    let uid = uid.to_string();
-                    tauri::async_runtime::spawn(async move {
-                        let _ =
-                            crate::account_crypto::try_unlock_from_keyring(&client, &db, &uid)
-                                .await;
-                    });
-                }
-            }
-        }
+        state.set_api(client);
     }
     Ok(())
 }
@@ -344,15 +367,19 @@ async fn finish_login(
                         let _ = app.emit("crypto-recovery-setup", code);
                     }
                 }
+                emit_crypto_sync_stats(app, &unlock.sync_stats);
             }
             Err(e) => eprintln!("encryption unlock failed: {}", e),
         }
-    } else if crate::account_crypto::get_uek(&success.user.id).is_some() {
-        let db = state.db.clone();
-        let uid = success.user.id.clone();
-        if let Err(e) = crate::account_crypto::try_unlock_from_keyring(&client, &db, &uid).await {
-            eprintln!("encryption sync from keyring failed: {}", e);
-        }
+    } else if let Some(stats) = crate::account_crypto::ensure_unlocked_from_keyring(
+        &client,
+        &state.db,
+        &success.user.id,
+    )
+    .await
+    .map_err(|e: crate::error::AppError| e.to_string())?
+    {
+        emit_crypto_sync_stats(app, &stats);
     }
 
     let engine = Arc::new(SyncEngine::new(client, state.db.clone(), app.clone()));
@@ -799,4 +826,89 @@ pub async fn unregister_explorer_integration(state: State<'_, AppState>) -> Resu
     return crate::cfapi::unregister(&state);
     #[cfg(not(windows))]
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct CryptoStatus {
+    pub unlocked: bool,
+}
+
+#[tauri::command]
+pub fn get_crypto_status() -> Result<CryptoStatus, String> {
+    Ok(CryptoStatus {
+        unlocked: crate::account_crypto::is_unlocked(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnlockCryptoRecoveryRequest {
+    pub recovery_code: String,
+}
+
+#[tauri::command]
+pub async fn unlock_crypto_recovery(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    req: UnlockCryptoRecoveryRequest,
+) -> Result<crate::account_crypto::CryptoSyncStats, String> {
+    let auth = load_auth()
+        .map_err(|e: crate::error::AppError| e.to_string())?
+        .ok_or_else(|| "Not logged in".to_string())?;
+    let user: serde_json::Value =
+        serde_json::from_str(&auth.user_json).map_err(|e| e.to_string())?;
+    let user_id = user
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing user id".to_string())?
+        .to_string();
+    let client = state.api().map_err(|e| e.to_string())?;
+    let stats = crate::account_crypto::unlock_with_recovery(
+        &client,
+        &state.db,
+        &user_id,
+        &req.recovery_code,
+    )
+    .await
+    .map_err(|e: crate::error::AppError| e.to_string())?;
+    emit_crypto_sync_stats(&app, &stats);
+    Ok(stats)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RotateCryptoKeyRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RotateCryptoKeyResult {
+    pub recovery_code: String,
+}
+
+#[tauri::command]
+pub async fn rotate_crypto_key(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    req: RotateCryptoKeyRequest,
+) -> Result<RotateCryptoKeyResult, String> {
+    let auth = load_auth()
+        .map_err(|e: crate::error::AppError| e.to_string())?
+        .ok_or_else(|| "Not logged in".to_string())?;
+    let user: serde_json::Value =
+        serde_json::from_str(&auth.user_json).map_err(|e| e.to_string())?;
+    let user_id = user
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing user id".to_string())?
+        .to_string();
+    let client = state.api().map_err(|e| e.to_string())?;
+    let recovery_code = crate::account_crypto::rotate_account_key(
+        &client,
+        &state.db,
+        &user_id,
+        &req.password,
+    )
+    .await
+    .map_err(|e: crate::error::AppError| e.to_string())?;
+    let _ = app.emit("crypto-recovery-setup", recovery_code.clone());
+    Ok(RotateCryptoKeyResult { recovery_code })
 }

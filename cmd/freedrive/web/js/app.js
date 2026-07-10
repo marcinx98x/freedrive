@@ -206,10 +206,19 @@ const App = (() => {
                     <button type="button" class="btn btn-secondary drive-settings-confirm-btn" id="settings-send-email-confirm">Confirm</button>
                     ${pendingBanner}
                     <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8eaed;">
-                        <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Encryption keys across devices</div>
+                        <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Encryption</div>
+                        <p style="margin:0 0 8px;font-size:12px;color:#5f6368;line-height:1.45;">
+                            Status: <strong id="settings-crypto-status">${window.CryptoSync?.isUnlocked?.() ? 'Active' : 'Locked'}</strong>
+                            — sign in with your password to unlock. Keys sync automatically across devices.
+                        </p>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                            <button type="button" class="btn btn-secondary" id="settings-crypto-unlock-btn">Unlock with password</button>
+                            <button type="button" class="btn btn-secondary" id="settings-crypto-recovery-btn">Emergency: recovery code</button>
+                            <button type="button" class="btn btn-secondary" id="settings-crypto-rotate-btn">Rotate encryption key</button>
+                        </div>
+                        <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Manual backup (optional)</div>
                         <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
-                            Encryption keys sync automatically across your devices when you sign in.
-                            Use export/import below only as a backup.
+                            Export/import below only if you need to move keys manually between browsers.
                         </p>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;">
                             <button type="button" class="btn btn-secondary" id="settings-export-keys-btn">Export encryption keys</button>
@@ -332,6 +341,37 @@ const App = (() => {
                 Components.toast(`Imported ${count} encryption key${count === 1 ? '' : 's'}`, 'success');
             } catch (err) {
                 Components.toast(err?.message || 'Failed to import encryption keys', 'error');
+            }
+        });
+
+        document.getElementById('settings-crypto-unlock-btn')?.addEventListener('click', async () => {
+            if (!window.CryptoSync?.showUnlockModal) return;
+            const ok = await CryptoSync.showUnlockModal();
+            const statusEl = document.getElementById('settings-crypto-status');
+            if (ok && statusEl) statusEl.textContent = 'Active';
+        });
+
+        document.getElementById('settings-crypto-recovery-btn')?.addEventListener('click', async () => {
+            if (!window.CryptoSync?.showRecoveryUnlockModal) return;
+            const ok = await CryptoSync.showRecoveryUnlockModal();
+            const statusEl = document.getElementById('settings-crypto-status');
+            if (ok && statusEl) statusEl.textContent = 'Active';
+        });
+
+        document.getElementById('settings-crypto-rotate-btn')?.addEventListener('click', async () => {
+            if (!window.CryptoSync?.rotateAccountKey) return;
+            const password = window.prompt('Enter your password to rotate your encryption key:');
+            if (!password) return;
+            try {
+                const result = await CryptoSync.rotateAccountKey(password);
+                if (result?.recoveryCode && CryptoSync.showRecoverySetupModal) {
+                    await CryptoSync.showRecoverySetupModal(result.recoveryCode);
+                }
+                const statusEl = document.getElementById('settings-crypto-status');
+                if (statusEl) statusEl.textContent = 'Active';
+                Components.toast('Encryption key rotated', 'success');
+            } catch (err) {
+                Components.toast(err?.message || 'Key rotation failed', 'error');
             }
         });
 

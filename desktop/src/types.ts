@@ -12,6 +12,20 @@ export interface ExportEncryptionKeysResult {
   path: string;
 }
 
+export interface CryptoStatus {
+  unlocked: boolean;
+}
+
+export interface CryptoSyncStats {
+  pulled: number;
+  pushed: number;
+  pending_flushed: number;
+}
+
+export interface RotateCryptoKeyResult {
+  recovery_code: string;
+}
+
 export interface ExplorerIntegrationStatus {
   connected: boolean;
   registered: boolean;

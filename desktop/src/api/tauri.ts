@@ -15,6 +15,9 @@ import type {
   User,
   ImportEncryptionKeysResult,
   ExportEncryptionKeysResult,
+  CryptoStatus,
+  CryptoSyncStats,
+  RotateCryptoKeyResult,
   HydrateFailedEvent,
 } from "../types";
 
@@ -53,6 +56,15 @@ export const api = {
     invoke<ImportEncryptionKeysResult>("import_encryption_keys"),
   exportEncryptionKeys: () =>
     invoke<ExportEncryptionKeysResult>("export_encryption_keys"),
+  getCryptoStatus: () => invoke<CryptoStatus>("get_crypto_status"),
+  unlockCryptoRecovery: (recovery_code: string) =>
+    invoke<CryptoSyncStats>("unlock_crypto_recovery", {
+      req: { recovery_code },
+    }),
+  rotateCryptoKey: (password: string) =>
+    invoke<RotateCryptoKeyResult>("rotate_crypto_key", {
+      req: { password },
+    }),
 };
 
 export function onSyncStatusChanged(cb: (status: SyncStatus) => void) {
@@ -85,6 +97,14 @@ export function formatBytes(bytes: number): string {
 
 export function onCryptoRecoverySetup(cb: (code: string) => void) {
   return listen<string>("crypto-recovery-setup", (e) => cb(e.payload));
+}
+
+export function onCryptoKeysSynced(cb: (stats: CryptoSyncStats) => void) {
+  return listen<CryptoSyncStats>("crypto-keys-synced", (e) => cb(e.payload));
+}
+
+export function onCryptoKeyQueued(cb: (message: string) => void) {
+  return listen<string>("crypto-key-queued", (e) => cb(e.payload));
 }
 
 export function formatRelativeTime(iso: string | null): string {

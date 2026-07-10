@@ -4232,23 +4232,32 @@ const FileManager = (() => {
     }
 
     async function decryptFileBlob(file) {
-        const { blob, iv, mime } = await API.downloadBlob(file.id);
-        const cryptoModule = window.CryptoModule;
-        if (!cryptoModule?.getKey || !cryptoModule?.decryptFile || !iv) return blob;
+        try {
+            const { blob, iv, mime } = await API.downloadBlob(file.id);
+            const cryptoModule = window.CryptoModule;
+            if (!cryptoModule?.getKey || !cryptoModule?.decryptFile || !iv) return blob;
 
-        const key = await (window.CryptoSync?.ensureFileKey
-            ? CryptoSync.ensureFileKey(file.id)
-            : cryptoModule.getKey(file.id));
-        if (!key) {
-            throw new Error(
-                'Encryption key not available. Sign in on a device that uploaded the file, or unlock encryption with your password.',
-            );
+            const key = await (window.CryptoSync?.ensureFileKey
+                ? CryptoSync.ensureFileKey(file.id)
+                : cryptoModule.getKey(file.id));
+            if (!key) {
+                throw new Error(
+                    window.CryptoSync?.describeFileKeyError
+                        ? CryptoSync.describeFileKeyError({ code: CryptoSync.ERR_UNLOCK_REQUIRED })
+                        : 'Encryption key not available. Unlock encryption with your password.',
+                );
+            }
+            if (!iv) return blob;
+
+            const encrypted = await blob.arrayBuffer();
+            const plain = await cryptoModule.decryptFile(encrypted, key, cryptoModule.base64ToUint8(iv));
+            return new Blob([plain], { type: mime || file.mime_type || blob.type });
+        } catch (err) {
+            const message = window.CryptoSync?.describeFileKeyError
+                ? CryptoSync.describeFileKeyError(err)
+                : (err?.message || 'Decryption failed');
+            throw new Error(message);
         }
-        if (!iv) return blob;
-
-        const encrypted = await blob.arrayBuffer();
-        const plain = await cryptoModule.decryptFile(encrypted, key, cryptoModule.base64ToUint8(iv));
-        return new Blob([plain], { type: mime || file.mime_type || blob.type });
     }
 
     async function downloadFile(file) {
