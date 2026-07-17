@@ -6,6 +6,7 @@ import (
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
+	"github.com/abdullaabdullazade/freedrive/internal/repository"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
 	"github.com/go-chi/chi/v5"
 )
@@ -13,11 +14,12 @@ import (
 // FolderHandler handles folder endpoints.
 type FolderHandler struct {
 	folderService *service.FolderService
+	mutationRepo  repository.ClientMutationRepository
 }
 
 // NewFolderHandler creates a new folder handler.
-func NewFolderHandler(folderService *service.FolderService) *FolderHandler {
-	return &FolderHandler{folderService: folderService}
+func NewFolderHandler(folderService *service.FolderService, mutationRepo repository.ClientMutationRepository) *FolderHandler {
+	return &FolderHandler{folderService: folderService, mutationRepo: mutationRepo}
 }
 
 // Create handles POST /api/v1/folders
@@ -148,6 +150,11 @@ func (h *FolderHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *FolderHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	folderID := chi.URLParam(r, "id")
 	userID := middleware.GetUserID(r.Context())
+
+	if !acceptClientMutation(r.Context(), h.mutationRepo, r) {
+		writeJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
+		return
+	}
 
 	if err := h.folderService.Delete(r.Context(), folderID, userID); err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)

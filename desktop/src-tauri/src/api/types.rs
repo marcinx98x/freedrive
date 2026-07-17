@@ -73,6 +73,8 @@ pub struct FileRecord {
     #[serde(default)]
     pub folder_id: Option<String>,
     pub updated_at: String,
+    #[serde(default)]
+    pub version: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,4 +120,53 @@ pub struct SharedItem {
 pub struct SharedWithMeResponse {
     #[serde(default)]
     pub items: Vec<SharedItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncChangePayload {
+    #[serde(default)]
+    pub mime_type: String,
+    #[serde(default)]
+    pub size: i64,
+    #[serde(default)]
+    pub encrypted_size: i64,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub old_name: String,
+    #[serde(default)]
+    pub old_parent_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncChange {
+    pub seq: i64,
+    pub entity_type: String,
+    pub entity_id: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    pub operation: String,
+    pub name: String,
+    #[serde(default)]
+    pub version: i32,
+    pub occurred_at: String,
+    #[serde(default)]
+    pub payload: Option<SyncChangePayload>,
+    #[serde(default)]
+    pub is_tombstone: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncChangesResponse {
+    pub changes: Vec<SyncChange>,
+    pub next_cursor: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComputerSnapshot {
+    pub cursor: i64,
+    #[serde(default)]
+    pub folders: Vec<Folder>,
+    #[serde(default)]
+    pub files: Vec<FileRecord>,
 }

@@ -76,7 +76,257 @@ fn init_schema(conn: &Connection) -> AppResult<()> {
         "#,
     )?;
     purge_mirror_sync_state_once(conn)?;
+    migrate_bidir_schema(conn)?;
     Ok(())
+}
+
+fn migrate_bidir_schema(conn: &Connection) -> AppResult<()> {
+    if config_get(conn, "bidir_schema_v1")?.as_deref() == Some("true") {
+        return Ok(());
+    }
+    let _ = conn.execute_batch(
+        r#"
+        ALTER TABLE sync_state ADD COLUMN remote_version INTEGER NOT NULL DEFAULT 0;
+        "#,
+    );
+    let _ = conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sync_folder_id INTEGER NOT NULL,
+            operation TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            old_relative_path TEXT,
+            remote_entity_id TEXT,
+            remote_entity_type TEXT,
+            client_mutation_id TEXT NOT NULL UNIQUE,
+            payload TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_retry_at TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_journal_status ON sync_journal(status, next_retry_at);
+        "#,
+    );
+    config_set(conn, "bidir_schema_v1", "true")?;
+    conn.execute(
+        "UPDATE sync_activity SET status = 'deleted' WHERE detail = 'Removed from cloud' AND status = 'synced'",
+        [],
+    )?;
+    Ok(())
+}
+
+pub fn sync_cursor_key(computer_id: &str) -> String {
+    format!("sync_cursor_{}", computer_id)
+}
+
+pub fn get_sync_cursor(conn: &Connection, computer_id: &str) -> AppResult<i64> {
+    Ok(config_get(conn, &sync_cursor_key(computer_id))?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0))
+}
+
+pub fn set_sync_cursor(conn: &Connection, computer_id: &str, cursor: i64) -> AppResult<()> {
+    config_set(conn, &sync_cursor_key(computer_id), &cursor.to_string())
+}
+
+#[derive(Debug, Clone)]
+pub struct JournalEntry {
+    pub id: i64,
+    pub sync_folder_id: i64,
+    pub operation: String,
+    pub relative_path: String,
+    pub old_relative_path: Option<String>,
+    pub remote_entity_id: Option<String>,
+    pub remote_entity_type: Option<String>,
+    pub client_mutation_id: String,
+    pub payload: String,
+    pub status: String,
+    pub attempts: i32,
+}
+
+pub fn insert_journal_entry(
+    conn: &Connection,
+    sync_folder_id: i64,
+    operation: &str,
+    relative_path: &str,
+    old_relative_path: Option<&str>,
+    remote_entity_id: Option<&str>,
+    remote_entity_type: Option<&str>,
+    client_mutation_id: &str,
+    payload: &str,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO sync_journal (
+            sync_folder_id, operation, relative_path, old_relative_path,
+            remote_entity_id, remote_entity_type, client_mutation_id, payload, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            sync_folder_id,
+            operation,
+            relative_path,
+            old_relative_path,
+            remote_entity_id,
+            remote_entity_type,
+            client_mutation_id,
+            payload,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn list_pending_journal(conn: &Connection, limit: usize) -> AppResult<Vec<JournalEntry>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT id, sync_folder_id, operation, relative_path, old_relative_path,
+                remote_entity_id, remote_entity_type, client_mutation_id, payload, status, attempts
+         FROM sync_journal
+         WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= ?1)
+         ORDER BY id ASC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![now, limit as i64], |row| {
+        Ok(JournalEntry {
+            id: row.get(0)?,
+            sync_folder_id: row.get(1)?,
+            operation: row.get(2)?,
+            relative_path: row.get(3)?,
+            old_relative_path: row.get(4)?,
+            remote_entity_id: row.get(5)?,
+            remote_entity_type: row.get(6)?,
+            client_mutation_id: row.get(7)?,
+            payload: row.get(8)?,
+            status: row.get(9)?,
+            attempts: row.get(10)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub fn mark_journal_done(conn: &Connection, id: i64) -> AppResult<()> {
+    conn.execute(
+        "UPDATE sync_journal SET status = 'done' WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
+pub fn mark_journal_retry(conn: &Connection, id: i64, attempts: i32) -> AppResult<()> {
+    let delay_secs = (2_i64.pow(attempts.min(6) as u32)).min(300);
+    let next = chrono::Utc::now() + chrono::Duration::seconds(delay_secs);
+    conn.execute(
+        "UPDATE sync_journal SET attempts = ?1, next_retry_at = ?2 WHERE id = ?3",
+        params![attempts + 1, next.to_rfc3339(), id],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_sync_state_with_version(
+    conn: &Connection,
+    sync_folder_id: i64,
+    relative_path: &str,
+    local_path: &str,
+    remote_file_id: Option<&str>,
+    content_hash: Option<&str>,
+    local_mtime: Option<i64>,
+    remote_updated_at: Option<&str>,
+    remote_version: i32,
+    status: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO sync_state (
+            sync_folder_id, relative_path, local_path, remote_file_id, content_hash,
+            local_mtime, remote_updated_at, remote_version, status
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ON CONFLICT(sync_folder_id, relative_path) DO UPDATE SET
+          local_path = excluded.local_path,
+          remote_file_id = COALESCE(excluded.remote_file_id, sync_state.remote_file_id),
+          content_hash = excluded.content_hash,
+          local_mtime = excluded.local_mtime,
+          remote_updated_at = excluded.remote_updated_at,
+          remote_version = excluded.remote_version,
+          status = excluded.status",
+        params![
+            sync_folder_id,
+            relative_path,
+            local_path,
+            remote_file_id,
+            content_hash,
+            local_mtime,
+            remote_updated_at,
+            remote_version,
+            status
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn find_sync_folder_for_remote_prefix(
+    conn: &Connection,
+    remote_folder_id: &str,
+) -> AppResult<Option<(i64, String)>> {
+    let folders = list_sync_folders(conn)?;
+    let mut best: Option<(i64, String, usize)> = None;
+    for sf in folders {
+        if is_pending_remote_folder(&sf.remote_folder_id) {
+            continue;
+        }
+        if remote_folder_id == sf.remote_folder_id {
+            let len = 0;
+            if best.as_ref().map(|(_, _, l)| len >= *l).unwrap_or(true) {
+                best = Some((sf.id, sf.local_path.clone(), len));
+            }
+            continue;
+        }
+        if let Some(mapping) = get_folder_mapping(conn, sf.id, "")? {
+            let _ = mapping;
+        }
+        for mapping in list_folder_mappings(conn, sf.id)? {
+            if mapping.remote_folder_id == remote_folder_id {
+                let len = mapping.relative_path.len();
+                if best.as_ref().map(|(_, _, l)| len > *l).unwrap_or(true) {
+                    best = Some((sf.id, sf.local_path.clone(), len));
+                }
+            }
+        }
+    }
+    Ok(best.map(|(id, path, _)| (id, path)))
+}
+
+#[derive(Debug, Clone)]
+pub struct FolderMappingRow {
+    pub relative_path: String,
+    pub remote_folder_id: String,
+}
+
+pub fn list_folder_mappings(conn: &Connection, sync_folder_id: i64) -> AppResult<Vec<FolderMappingRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT relative_path, remote_folder_id FROM folder_mappings WHERE sync_folder_id = ?1",
+    )?;
+    let rows = stmt.query_map(params![sync_folder_id], |row| {
+        Ok(FolderMappingRow {
+            relative_path: row.get(0)?,
+            remote_folder_id: row.get(1)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub fn get_sync_state_by_remote_file_id(
+    conn: &Connection,
+    remote_file_id: &str,
+) -> AppResult<Option<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT sync_folder_id, relative_path FROM sync_state WHERE remote_file_id = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![remote_file_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some((row.get(0)?, row.get(1)?)))
+    } else {
+        Ok(None)
+    }
 }
 
 /// One-time migration: remove sync_state rows that pointed at ~/FreeDrive mirror paths.
@@ -232,7 +482,8 @@ fn clear_sync_data(conn: &Connection) -> AppResult<()> {
         DELETE FROM sync_activity;
         DELETE FROM file_keys;
         DELETE FROM pending_file_keys;
-        DELETE FROM app_config WHERE key IN ('computer_id', 'computer_root_id', 'initial_sync_complete');
+        DELETE FROM sync_journal;
+        DELETE FROM app_config WHERE key LIKE 'sync_cursor_%' OR key IN ('computer_id', 'computer_root_id', 'initial_sync_complete');
         "#,
     )?;
     Ok(())
@@ -979,5 +1230,28 @@ mod tests {
             .unwrap();
         let count: i64 = stmt.query_row(params![id], |row| row.get(0)).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn journal_insert_and_list_pending() {
+        let conn = test_conn();
+        let id = insert_sync_folder(&conn, "/tmp/docs", "remote-1", "Documents").unwrap();
+        insert_journal_entry(
+            &conn,
+            id,
+            "file_delete",
+            "docs/a.txt",
+            None,
+            Some("file-1"),
+            Some("file"),
+            "mut-1",
+            "{}",
+        )
+        .unwrap();
+        let pending = list_pending_journal(&conn, 10).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].operation, "file_delete");
+        mark_journal_done(&conn, pending[0].id).unwrap();
+        assert!(list_pending_journal(&conn, 10).unwrap().is_empty());
     }
 }

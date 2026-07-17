@@ -18,6 +18,7 @@ type FolderService struct {
 	activityRepo repository.ActivityRepository
 	computerRepo repository.ComputerRepository
 	access       *AccessService
+	syncChange   *SyncChangeService
 }
 
 // NewFolderService creates a new folder service.
@@ -29,6 +30,7 @@ func NewFolderService(
 	activityRepo repository.ActivityRepository,
 	computerRepo repository.ComputerRepository,
 	access *AccessService,
+	syncChange *SyncChangeService,
 ) *FolderService {
 	return &FolderService{
 		folderRepo:   folderRepo,
@@ -38,6 +40,7 @@ func NewFolderService(
 		activityRepo: activityRepo,
 		computerRepo: computerRepo,
 		access:       access,
+		syncChange:   syncChange,
 	}
 }
 
@@ -59,6 +62,9 @@ func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error
 		TargetID:   folder.ID,
 		TargetName: folder.Name,
 	})
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFolderCreate(ctx, folder)
+	}
 	return nil
 }
 
@@ -123,8 +129,15 @@ func (s *FolderService) Rename(ctx context.Context, folderID, ownerID, newName s
 		return fmt.Errorf("folder not found")
 	}
 
+	oldName := folder.Name
 	folder.Name = newName
-	return s.folderRepo.Update(ctx, folder)
+	if err := s.folderRepo.Update(ctx, folder); err != nil {
+		return err
+	}
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFolderRename(ctx, folder, oldName)
+	}
+	return nil
 }
 
 // Move moves a folder to a new parent.
@@ -182,8 +195,18 @@ func (s *FolderService) Move(ctx context.Context, folderID, ownerID string, newP
 		}
 	}
 
+	oldParent := ""
+	if folder.ParentID != nil {
+		oldParent = *folder.ParentID
+	}
 	folder.ParentID = newParentID
-	return s.folderRepo.Update(ctx, folder)
+	if err := s.folderRepo.Update(ctx, folder); err != nil {
+		return err
+	}
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFolderMove(ctx, folder, oldParent)
+	}
+	return nil
 }
 
 // Delete moves a folder and all its contents to trash.
@@ -220,6 +243,9 @@ func (s *FolderService) Delete(ctx context.Context, folderID, ownerID string) er
 		TargetID:   folderID,
 		TargetName: folder.Name,
 	})
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFolderTrash(ctx, folder)
+	}
 	return nil
 }
 
@@ -249,6 +275,9 @@ func (s *FolderService) Restore(ctx context.Context, folderID, ownerID string) e
 		TargetID:   folderID,
 		TargetName: folder.Name,
 	})
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFolderRestore(ctx, folder)
+	}
 	return nil
 }
 
@@ -302,6 +331,9 @@ func (s *FolderService) PermanentDelete(ctx context.Context, folderID, ownerID s
 		TargetID:   folderID,
 		TargetName: folder.Name,
 	})
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFolderPermanentDelete(ctx, folder)
+	}
 	return nil
 }
 

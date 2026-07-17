@@ -32,6 +32,7 @@ func runMigrations(db *sql.DB) error {
 		{9, migrationV9},
 		{10, migrationV10},
 		{11, migrationV11},
+		{12, migrationV12},
 	}
 
 	for _, m := range migrations {
@@ -322,4 +323,29 @@ CREATE TABLE IF NOT EXISTS file_encryption_keys (
     updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_file_enc_keys_owner_updated ON file_encryption_keys(owner_id, updated_at);
+`
+
+const migrationV12 = `
+CREATE TABLE IF NOT EXISTS sync_changes (
+    seq               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    computer_root_id  TEXT NOT NULL,
+    entity_type       TEXT NOT NULL CHECK(entity_type IN ('file','folder')),
+    entity_id         TEXT NOT NULL,
+    parent_id         TEXT,
+    operation         TEXT NOT NULL,
+    name              TEXT NOT NULL DEFAULT '',
+    version           INTEGER NOT NULL DEFAULT 0,
+    occurred_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payload           TEXT NOT NULL DEFAULT '{}',
+    is_tombstone      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sync_changes_feed ON sync_changes(user_id, computer_root_id, seq);
+
+CREATE TABLE IF NOT EXISTS client_mutations (
+    client_mutation_id TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_client_mutations_user ON client_mutations(user_id);
 `

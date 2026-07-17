@@ -59,16 +59,20 @@ func main() {
 	commentRepo := sqlite.NewCommentRepo(db)
 	passwordResetRepo := sqlite.NewPasswordResetRepo(db)
 	cryptoRepo := sqlite.NewCryptoRepo(db)
+	syncChangeRepo := sqlite.NewSyncChangeRepo(db)
+	clientMutationRepo := sqlite.NewClientMutationRepo(db)
 
 	accessService := service.NewAccessService(shareRepo, fileRepo, folderRepo)
 	shareService := service.NewShareService(shareRepo, fileRepo, folderRepo, userRepo, accessService)
 	passwordResetService := service.NewPasswordResetService(userRepo, passwordResetRepo)
 	cryptoService := service.NewCryptoService(cryptoRepo, fileRepo, accessService)
+	syncChangeService := service.NewSyncChangeService(syncChangeRepo, computerRepo)
+	syncFeedService := service.NewSyncFeedService(syncChangeRepo, computerRepo, folderRepo, fileRepo)
 
 	authService := service.NewAuthService(userRepo, email2faRepo, cfg.JWTSecret)
-	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo, accessService, folderRepo)
+	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo, accessService, folderRepo, syncChangeService)
 	computerService := service.NewComputerService(computerRepo, folderRepo)
-	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo, accessService)
+	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo, accessService, syncChangeService)
 
 	if err := authService.EnsureAdmin(context.Background(), cfg.AdminEmail, cfg.AdminPassword); err != nil {
 		log.Printf("Warning: Could not create admin user: %v", err)
@@ -90,6 +94,7 @@ func main() {
 		fileService,
 		folderService,
 		computerService,
+		syncFeedService,
 		shareService,
 		passwordResetService,
 		accessService,
@@ -105,6 +110,7 @@ func main() {
 		diskStorage,
 		cfg.MaxUploadBytes,
 		cfg.DataDir,
+		clientMutationRepo,
 	)
 
 	server := &http.Server{

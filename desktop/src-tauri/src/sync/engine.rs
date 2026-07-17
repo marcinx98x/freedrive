@@ -4,13 +4,18 @@ use crate::crypto::key_to_b64url;
 use crate::db::{
     clear_folder_mapping_prefix, clear_folder_mappings, clear_stale_activity,
     clear_sync_state_for_folder, clear_sync_state_remote_file, config_get, config_set,
-    delete_folder_mapping, delete_sync_state_row, get_file_key, get_folder_mapping,
+    delete_folder_mapping, get_file_key, get_folder_mapping,
     get_sync_folder_by_path, get_sync_state, insert_sync_folder, is_pending_remote_folder,
     list_sync_folders, set_folder_mapping, store_file_key, update_sync_folder_remote_id,
     upsert_activity, upsert_sync_state, DbHandle, SyncFolderRow,
 };
 use crate::error::{AppError, AppResult};
+use crate::sync::journal::{
+    enqueue_file_delete, enqueue_folder_create, enqueue_folder_delete, enqueue_rename,
+};
 use crate::sync::log::sync_log;
+use crate::sync::reconcile::run_sync_cycle;
+use crate::sync::suppress::WatcherSuppress;
 use crate::sync::{DOWNLOAD_CONCURRENCY, UPLOAD_CONCURRENCY};
 use parking_lot::{Mutex, RwLock};
 use sha2::{Digest, Sha256};
@@ -120,6 +125,7 @@ pub struct SyncEngine {
     status: RwLock<SyncStatus>,
     computer_id: RwLock<Option<String>>,
     computer_root_id: RwLock<Option<String>>,
+    watcher_suppress: WatcherSuppress,
     shutdown: AtomicBool,
 }
 
@@ -143,6 +149,7 @@ impl SyncEngine {
             }),
             computer_id: RwLock::new(None),
             computer_root_id: RwLock::new(None),
+            watcher_suppress: WatcherSuppress::new(),
             shutdown: AtomicBool::new(false),
         }
     }
@@ -191,6 +198,9 @@ impl SyncEngine {
         if self.is_paused() {
             return;
         }
+        if self.watcher_suppress.is_suppressed(&path) {
+            return;
+        }
 
         if is_my_drive_path(&path) {
             if !path.is_file() {
@@ -218,6 +228,86 @@ impl SyncEngine {
         let engine = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             let _ = engine.sync_file_path(&path).await;
+        });
+    }
+
+    pub fn enqueue_path_removed(self: &Arc<Self>, path: PathBuf) {
+        self.enqueue_file_removed(path);
+    }
+
+    pub fn enqueue_folder_created(self: &Arc<Self>, path: PathBuf) {
+        if self.is_paused() || self.watcher_suppress.is_suppressed(&path) {
+            return;
+        }
+        if is_my_drive_path(&path) {
+            return;
+        }
+        let engine = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            let sync_folders = {
+                let conn = engine.db.lock().map_err(|e| AppError::msg(e.to_string())).ok();
+                conn.and_then(|c| list_sync_folders(&c).ok()).unwrap_or_default()
+            };
+            if let Some((sf, relative)) = SyncEngine::find_best_sync_folder(&sync_folders, &path) {
+                let _ = enqueue_folder_create(&engine.db, sf.id, &relative);
+                let _ = crate::sync::journal::drain_journal(&engine, &engine.api, &engine.db).await;
+            }
+        });
+    }
+
+    pub fn enqueue_path_renamed(self: &Arc<Self>, from: PathBuf, to: PathBuf) {
+        if self.is_paused()
+            || self.watcher_suppress.is_suppressed(&from)
+            || self.watcher_suppress.is_suppressed(&to)
+        {
+            return;
+        }
+        if is_my_drive_path(&from) || is_my_drive_path(&to) {
+            return;
+        }
+        let engine = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            let sync_folders = {
+                let conn = engine.db.lock().map_err(|e| AppError::msg(e.to_string())).ok();
+                conn.and_then(|c| list_sync_folders(&c).ok()).unwrap_or_default()
+            };
+            let old_ctx = SyncEngine::find_best_sync_folder(&sync_folders, &from);
+            let new_ctx = SyncEngine::find_best_sync_folder(&sync_folders, &to);
+            if let (Some((sf, old_rel)), Some((sf2, new_rel))) = (old_ctx, new_ctx) {
+                if sf.id != sf2.id {
+                    return;
+                }
+                let entity_type = if to.is_dir() { "folder" } else { "file" };
+                let remote_id = {
+                    let conn = engine.db.lock().map_err(|e| AppError::msg(e.to_string())).ok();
+                    if let Some(conn) = conn {
+                        if entity_type == "folder" {
+                            get_folder_mapping(&conn, sf.id, &old_rel).ok().flatten()
+                        } else {
+                            get_sync_state(&conn, sf.id, &old_rel)
+                                .ok()
+                                .flatten()
+                                .and_then(|(id, _, _, _)| id)
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(remote_id) = remote_id {
+                    let _ = enqueue_rename(
+                        &engine.db,
+                        sf.id,
+                        &new_rel,
+                        &old_rel,
+                        &remote_id,
+                        entity_type,
+                    );
+                    let _ = crate::sync::journal::drain_journal(&engine, &engine.api, &engine.db).await;
+                }
+            }
+            if to.is_file() {
+                let _ = engine.sync_file_path(&to).await;
+            }
         });
     }
 
@@ -382,6 +472,10 @@ impl SyncEngine {
     }
 
     fn emit_activity(&self, name: &str, detail: &str, size: i64, status: &str) {
+        self.emit_activity_public(name, detail, size, status);
+    }
+
+    pub fn emit_activity_public(&self, name: &str, detail: &str, size: i64, status: &str) {
         if let Ok(conn) = self.db.lock() {
             self.emit_activity_with_conn(&conn, name, detail, size, status);
         } else {
@@ -1704,6 +1798,50 @@ impl SyncEngine {
         Ok(current_parent)
     }
 
+    pub fn watcher_suppress(&self) -> &WatcherSuppress {
+        &self.watcher_suppress
+    }
+
+    pub async fn ensure_folder_remote_path(
+        &self,
+        sync_folder_id: i64,
+        relative_path: &str,
+    ) -> AppResult<()> {
+        let sf = {
+            let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            list_sync_folders(&conn)?
+                .into_iter()
+                .find(|f| f.id == sync_folder_id)
+                .ok_or_else(|| AppError::msg("sync folder not found"))?
+        };
+        let remote_root = self.ensure_sync_folder_remote(&sf).await?;
+        let _ = self
+            .ensure_remote_folder(sync_folder_id, &remote_root, relative_path)
+            .await?;
+        Ok(())
+    }
+
+    fn find_best_sync_folder<'a>(
+        sync_folders: &'a [SyncFolderRow],
+        path: &Path,
+    ) -> Option<(&'a SyncFolderRow, String)> {
+        let mut best: Option<(&SyncFolderRow, String, usize)> = None;
+        for sf in sync_folders {
+            let root = PathBuf::from(&sf.local_path);
+            if path.starts_with(&root) {
+                let relative = path
+                    .strip_prefix(&root)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                let len = sf.local_path.len();
+                if best.as_ref().map(|(_, _, l)| len > *l).unwrap_or(true) {
+                    best = Some((sf, relative, len));
+                }
+            }
+        }
+        best.map(|(sf, rel, _)| (sf, rel))
+    }
+
     pub async fn poll_my_drive(&self) -> AppResult<()> {
         if self.is_paused() || self.is_initial_sync_running() {
             return Ok(());
@@ -1718,9 +1856,45 @@ impl SyncEngine {
         .await
     }
 
-    /// Sync folders are upload-only; remote polling for computer folders is disabled.
+    /// Bidirectional sync: drain journal, poll server change feed, apply locally.
     pub async fn poll_remote(&self) -> AppResult<()> {
-        let _ = self;
+        if self.is_paused() || self.is_initial_sync_running() {
+            return Ok(());
+        }
+
+        let computer_id = {
+            let guard = self.computer_id.read();
+            guard.clone()
+        };
+        let computer_root_id = {
+            let guard = self.computer_root_id.read();
+            guard.clone()
+        };
+        let (computer_id, computer_root_id) = match (computer_id, computer_root_id) {
+            (Some(id), Some(root)) => (id, root),
+            _ => return Ok(()),
+        };
+
+        let sync_folders = {
+            let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            list_sync_folders(&conn)?
+        };
+        if sync_folders.is_empty() {
+            return Ok(());
+        }
+
+        if let Err(e) = run_sync_cycle(
+            self,
+            &self.api,
+            &self.db,
+            &self.watcher_suppress,
+            &computer_id,
+            &computer_root_id,
+        )
+        .await
+        {
+            sync_log(format!("poll_remote failed: {}", e));
+        }
         Ok(())
     }
 
@@ -1741,12 +1915,14 @@ impl SyncEngine {
             return crate::my_drive::delete_my_drive_path(&self.api, &self.db, path).await;
         }
 
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file");
-        if should_skip_file(file_name) {
-            return Ok(());
+        if path.is_file() {
+            let file_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file");
+            if should_skip_file(file_name) {
+                return Ok(());
+            }
         }
 
         let sync_folders = {
@@ -1754,15 +1930,25 @@ impl SyncEngine {
             list_sync_folders(&conn)?
         };
 
-        for sf in sync_folders {
-            let root = PathBuf::from(&sf.local_path);
-            if !path.starts_with(&root) {
-                continue;
+        if let Some((sf, relative)) = Self::find_best_sync_folder(&sync_folders, path) {
+            if path.is_dir() {
+                let remote_id = {
+                    let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                    if relative.is_empty() {
+                        Some(sf.remote_folder_id.clone())
+                    } else {
+                        get_folder_mapping(&conn, sf.id, &relative)?
+                    }
+                };
+                if let Some(remote_id) = remote_id {
+                    if !remote_id.is_empty() && !is_pending_remote_folder(&remote_id) {
+                        enqueue_folder_delete(&self.db, sf.id, &relative, &remote_id)?;
+                        let _ = crate::sync::journal::drain_journal(self, &self.api, &self.db).await;
+                    }
+                }
+                return Ok(());
             }
-            let relative = path
-                .strip_prefix(&root)
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_default();
+
             let remote_id = {
                 let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
                 get_sync_state(&conn, sf.id, &relative)?
@@ -1770,11 +1956,9 @@ impl SyncEngine {
             };
             if let Some(remote_id) = remote_id {
                 if !remote_id.is_empty() {
-                    self.api.delete_file(&remote_id).await?;
+                    enqueue_file_delete(&self.db, sf.id, &relative, &remote_id)?;
+                    let _ = crate::sync::journal::drain_journal(self, &self.api, &self.db).await;
                 }
-                let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-                delete_sync_state_row(&conn, sf.id, &relative)?;
-                self.emit_activity(file_name, "Removed from cloud", 0, "synced");
             }
             return Ok(());
         }

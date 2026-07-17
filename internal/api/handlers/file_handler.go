@@ -19,19 +19,27 @@ import (
 
 // FileHandler handles file endpoints.
 type FileHandler struct {
-	fileService *service.FileService
-	fileRepo    repository.FileRepository
-	storage     *storage.DiskStorage
-	maxUpload   int64
+	fileService  *service.FileService
+	fileRepo     repository.FileRepository
+	storage      *storage.DiskStorage
+	maxUpload    int64
+	mutationRepo repository.ClientMutationRepository
 }
 
 // NewFileHandler creates a new file handler.
-func NewFileHandler(fileService *service.FileService, fileRepo repository.FileRepository, store *storage.DiskStorage, maxUpload int64) *FileHandler {
+func NewFileHandler(
+	fileService *service.FileService,
+	fileRepo repository.FileRepository,
+	store *storage.DiskStorage,
+	maxUpload int64,
+	mutationRepo repository.ClientMutationRepository,
+) *FileHandler {
 	return &FileHandler{
-		fileService: fileService,
-		fileRepo:    fileRepo,
-		storage:     store,
-		maxUpload:   maxUpload,
+		fileService:  fileService,
+		fileRepo:     fileRepo,
+		storage:      store,
+		maxUpload:    maxUpload,
+		mutationRepo: mutationRepo,
 	}
 }
 
@@ -236,6 +244,11 @@ func (h *FileHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *FileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	fileID := chi.URLParam(r, "id")
 	userID := middleware.GetUserID(r.Context())
+
+	if !acceptClientMutation(r.Context(), h.mutationRepo, r) {
+		writeJSON(w, http.StatusOK, map[string]string{"message": "moved to trash"})
+		return
+	}
 
 	if err := h.fileService.Delete(r.Context(), fileID, userID); err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)

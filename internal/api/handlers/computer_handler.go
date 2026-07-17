@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
@@ -14,13 +15,19 @@ import (
 type ComputerHandler struct {
 	computerService *service.ComputerService
 	folderService   *service.FolderService
+	syncFeedService *service.SyncFeedService
 }
 
 // NewComputerHandler creates a new computer handler.
-func NewComputerHandler(computerService *service.ComputerService, folderService *service.FolderService) *ComputerHandler {
+func NewComputerHandler(
+	computerService *service.ComputerService,
+	folderService *service.FolderService,
+	syncFeedService *service.SyncFeedService,
+) *ComputerHandler {
 	return &ComputerHandler{
 		computerService: computerService,
 		folderService:   folderService,
+		syncFeedService: syncFeedService,
 	}
 }
 
@@ -107,4 +114,36 @@ func (h *ComputerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// Snapshot handles GET /api/v1/computers/{id}/snapshot
+func (h *ComputerHandler) Snapshot(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	computerID := chi.URLParam(r, "id")
+
+	snapshot, err := h.syncFeedService.Snapshot(r.Context(), userID, computerID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+// Changes handles GET /api/v1/computers/{id}/changes?cursor=&limit=
+func (h *ComputerHandler) Changes(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	computerID := chi.URLParam(r, "id")
+
+	cursor, _ := strconv.ParseInt(r.URL.Query().Get("cursor"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+
+	page, err := h.syncFeedService.ListChanges(r.Context(), userID, computerID, cursor, limit)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }

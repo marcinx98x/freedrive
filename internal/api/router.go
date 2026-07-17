@@ -26,6 +26,7 @@ func NewRouter(
 	fileService *service.FileService,
 	folderService *service.FolderService,
 	computerService *service.ComputerService,
+	syncFeedService *service.SyncFeedService,
 	shareService *service.ShareService,
 	passwordResetService *service.PasswordResetService,
 	accessService *service.AccessService,
@@ -41,6 +42,7 @@ func NewRouter(
 	diskStorage *storage.DiskStorage,
 	maxUpload int64,
 	dataDir string,
+	clientMutationRepo repository.ClientMutationRepository,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -55,9 +57,9 @@ func NewRouter(
 	r.Use(limiter.Limit)
 
 	authHandler := handlers.NewAuthHandler(authService, cryptoService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
-	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload)
-	folderHandler := handlers.NewFolderHandler(folderService)
-	computerHandler := handlers.NewComputerHandler(computerService, folderService)
+	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload, clientMutationRepo)
+	folderHandler := handlers.NewFolderHandler(folderService, clientMutationRepo)
+	computerHandler := handlers.NewComputerHandler(computerService, folderService, syncFeedService)
 	shareHandler := handlers.NewShareHandler(shareService, fileRepo, userRepo, diskStorage)
 	commentHandler := handlers.NewCommentHandler(commentRepo, accessService, userRepo)
 	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, folderRepo, activityRepo, authService, passwordResetService, diskStorage, dataDir)
@@ -144,6 +146,8 @@ func NewRouter(
 				r.Get("/", computerHandler.List)
 				r.Post("/register", computerHandler.Register)
 				r.Get("/{id}", computerHandler.Get)
+				r.Get("/{id}/snapshot", computerHandler.Snapshot)
+				r.Get("/{id}/changes", computerHandler.Changes)
 				r.Delete("/{id}", computerHandler.Delete)
 				r.Post("/{id}/heartbeat", computerHandler.Heartbeat)
 			})

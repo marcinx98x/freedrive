@@ -120,6 +120,34 @@ func (r *ComputerRepo) IsComputerRoot(ctx context.Context, folderID string) (boo
 	return count > 0, err
 }
 
+func (r *ComputerRepo) GetComputerForFolder(ctx context.Context, folderID string) (*domain.Computer, error) {
+	c := &domain.Computer{}
+	var lastSeen sql.NullTime
+	err := r.reader.QueryRowContext(ctx, `
+		WITH RECURSIVE ancestors AS (
+			SELECT id, parent_id FROM folders WHERE id = ?
+			UNION ALL
+			SELECT f.id, f.parent_id FROM folders f
+			INNER JOIN ancestors a ON f.id = a.parent_id
+		)
+		SELECT c.id, c.owner_id, c.name, c.hostname, c.root_folder_id, c.last_seen_at, c.created_at, c.updated_at
+		FROM computers c
+		INNER JOIN ancestors a ON c.root_folder_id = a.id
+		LIMIT 1`, folderID,
+	).Scan(&c.ID, &c.OwnerID, &c.Name, &c.Hostname, &c.RootFolderID,
+		&lastSeen, &c.CreatedAt, &c.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastSeen.Valid {
+		c.LastSeenAt = &lastSeen.Time
+	}
+	return c, nil
+}
+
 func (r *ComputerRepo) IsInComputerTree(ctx context.Context, folderID string) (bool, error) {
 	var count int
 	err := r.reader.QueryRowContext(ctx, `

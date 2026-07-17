@@ -152,6 +152,11 @@ export function Home({
                     </div>
                   </div>
                   {item.status === "synced" && <span className="status-check">✓</span>}
+                  {item.status === "deleted" && (
+                    <span className="status-deleted" aria-label="Removed" title="Removed">
+                      🗑
+                    </span>
+                  )}
                   {item.status === "uploading" && (
                     <span className="status-uploading" aria-hidden>
                       ↑

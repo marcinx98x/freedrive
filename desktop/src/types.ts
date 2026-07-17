@@ -104,12 +104,14 @@ export interface SyncFolder {
   label: string;
 }
 
+export type ActivityStatus = "synced" | "uploading" | "error" | "skipped" | "deleted";
+
 export interface ActivityItem {
   id: number;
   name: string;
   detail: string;
   file_size: number;
-  status: string;
+  status: ActivityStatus | string;
   created_at: string;
 }
 

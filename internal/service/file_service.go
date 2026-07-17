@@ -21,6 +21,7 @@ type FileService struct {
 	activityRepo repository.ActivityRepository
 	access       *AccessService
 	folderRepo   repository.FolderRepository
+	syncChange   *SyncChangeService
 }
 
 // NewFileService creates a new file service.
@@ -31,6 +32,7 @@ func NewFileService(
 	activityRepo repository.ActivityRepository,
 	access *AccessService,
 	folderRepo repository.FolderRepository,
+	syncChange *SyncChangeService,
 ) *FileService {
 	return &FileService{
 		fileRepo:     fileRepo,
@@ -39,6 +41,7 @@ func NewFileService(
 		activityRepo: activityRepo,
 		access:       access,
 		folderRepo:   folderRepo,
+		syncChange:   syncChange,
 	}
 }
 
@@ -72,6 +75,10 @@ func (s *FileService) Upload(ctx context.Context, file *domain.File, blobPath st
 
 	// Log activity
 	s.logActivity(ctx, file.OwnerID, domain.ActionUpload, "file", file.ID, file.Name, "")
+
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileCreate(ctx, file)
+	}
 
 	return nil
 }
@@ -135,6 +142,9 @@ func (s *FileService) Delete(ctx context.Context, fileID, userID string) error {
 	}
 
 	s.logActivity(ctx, userID, domain.ActionDelete, "file", fileID, file.Name, "")
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileTrash(ctx, file)
+	}
 	return nil
 }
 
@@ -171,6 +181,10 @@ func (s *FileService) PermanentDelete(ctx context.Context, fileID, userID string
 		return err
 	}
 
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFilePermanentDelete(ctx, file)
+	}
+
 	return nil
 }
 
@@ -189,6 +203,9 @@ func (s *FileService) Restore(ctx context.Context, fileID, userID string) error 
 	}
 
 	s.logActivity(ctx, userID, domain.ActionRestore, "file", fileID, file.Name, "")
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileRestore(ctx, file)
+	}
 	return nil
 }
 
@@ -212,6 +229,9 @@ func (s *FileService) Rename(ctx context.Context, fileID, userID, newName string
 	}
 
 	s.logActivity(ctx, userID, domain.ActionRename, "file", fileID, newName, fmt.Sprintf(`{"old_name":"%s"}`, oldName))
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileRename(ctx, file, oldName)
+	}
 	return nil
 }
 
@@ -239,6 +259,11 @@ func (s *FileService) Move(ctx context.Context, fileID, userID string, folderID 
 	}
 
 	s.logActivity(ctx, userID, domain.ActionMove, "file", fileID, file.Name, "")
+	if s.syncChange != nil {
+		oldParent := ""
+		// old parent not tracked here; move payload optional
+		_ = s.syncChange.RecordFileMove(ctx, file, oldParent)
+	}
 	return nil
 }
 
@@ -400,6 +425,10 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 		}
 	}
 	s.logActivity(ctx, userID, domain.ActionUpload, "file", file.ID, file.Name, `{"updated":true}`)
+
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileUpdate(ctx, file)
+	}
 
 	return file, nil
 }

@@ -17,6 +17,8 @@ function statusLabel(status: string) {
       return { text: "Error", className: "error" };
     case "skipped":
       return { text: "Skipped", className: "skipped" };
+    case "deleted":
+      return { text: "Removed", className: "deleted" };
     default:
       return { text: status, className: "" };
   }

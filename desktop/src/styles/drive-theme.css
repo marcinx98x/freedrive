@@ -1036,6 +1036,16 @@ input {
   color: var(--fd-text-secondary);
 }
 
+.status-badge.deleted {
+  color: var(--fd-text-secondary);
+}
+
+.status-deleted {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
 .status-title.status-error {
   color: #f28b82;
 }

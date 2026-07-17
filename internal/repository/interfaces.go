@@ -91,6 +91,7 @@ type ComputerRepository interface {
 	UpdateLastSeen(ctx context.Context, id string, at time.Time) error
 	IsComputerRoot(ctx context.Context, folderID string) (bool, error)
 	IsInComputerTree(ctx context.Context, folderID string) (bool, error)
+	GetComputerForFolder(ctx context.Context, folderID string) (*domain.Computer, error)
 }
 
 // FolderRepository defines data access for folders.
@@ -150,6 +151,20 @@ type ActivityRepository interface {
 	List(ctx context.Context, userID string, page, pageSize int) ([]domain.ActivityLog, int, error)
 	ListAll(ctx context.Context, page, pageSize int) ([]domain.ActivityLog, int, error)
 	DeleteAll(ctx context.Context) error
+}
+
+// SyncChangeRepository defines data access for the computer sync change feed.
+type SyncChangeRepository interface {
+	Append(ctx context.Context, change *domain.SyncChange) error
+	ListSince(ctx context.Context, userID, computerRootID string, cursor int64, limit int) ([]domain.SyncChange, error)
+	MaxSeq(ctx context.Context, userID, computerRootID string) (int64, error)
+	SnapshotBoundary(ctx context.Context, userID, computerRootID string) (int64, time.Time, error)
+}
+
+// ClientMutationRepository tracks idempotent desktop mutation IDs.
+type ClientMutationRepository interface {
+	TryRecord(ctx context.Context, userID, mutationID string) (bool, error)
+	Exists(ctx context.Context, userID, mutationID string) (bool, error)
 }
 
 // CryptoRepository defines data access for E2E encryption key sync.

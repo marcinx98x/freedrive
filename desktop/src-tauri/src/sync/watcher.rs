@@ -23,13 +23,48 @@ impl WatcherHandle {
                 if let Ok(events) = result {
                     for debounced in events {
                         let kind = debounced.event.kind;
-                        for path in &debounced.event.paths {
-                            if matches!(kind, EventKind::Remove(_)) {
-                                engine_clone.enqueue_file_removed(path.clone());
-                                continue;
+                        match kind {
+                            EventKind::Remove(_) => {
+                                for path in &debounced.event.paths {
+                                    if engine_clone.watcher_suppress().is_suppressed(path) {
+                                        continue;
+                                    }
+                                    engine_clone.enqueue_path_removed(path.clone());
+                                }
                             }
-                            if path.is_file() {
-                                engine_clone.enqueue_file_path(path.clone());
+                            EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                                if debounced.event.paths.len() >= 2 {
+                                    let from = debounced.event.paths[0].clone();
+                                    let to = debounced.event.paths[1].clone();
+                                    if engine_clone.watcher_suppress().is_suppressed(&to)
+                                        || engine_clone.watcher_suppress().is_suppressed(&from)
+                                    {
+                                        continue;
+                                    }
+                                    engine_clone.enqueue_path_renamed(from, to);
+                                }
+                            }
+                            EventKind::Create(_) => {
+                                for path in &debounced.event.paths {
+                                    if engine_clone.watcher_suppress().is_suppressed(path) {
+                                        continue;
+                                    }
+                                    if path.is_dir() {
+                                        engine_clone.enqueue_folder_created(path.clone());
+                                    } else if path.is_file() {
+                                        engine_clone.enqueue_file_path(path.clone());
+                                    }
+                                }
+                            }
+                            _ => {
+                                for path in &debounced.event.paths {
+                                    if engine_clone.watcher_suppress().is_suppressed(path) {
+                                        continue;
+                                    }
+                                    if path.is_file() {
+                                        engine_clone.enqueue_file_path(path.clone());
+                                    }
+                                }
                             }
                         }
                     }

@@ -49,22 +49,22 @@ struct ClientInner {
 
 
 struct PreparedUpload {
-
-    temp_path: PathBuf,
-
+    body: UploadBody,
     key: [u8; 32],
-
     name: String,
-
     mime: String,
-
     iv_b64: String,
-
     original_size: usize,
-
     folder_id: Option<String>,
-
 }
+
+enum UploadBody {
+    TempFile(PathBuf),
+    Memory(Vec<u8>),
+}
+
+/// Files at or below this size are encrypted in RAM (no temp file on disk).
+const SMALL_UPLOAD_BYTES: u64 = 1_048_576;
 
 
 
@@ -597,88 +597,256 @@ impl ApiClient {
     }
 
     pub async fn delete_file(&self, file_id: &str) -> AppResult<()> {
-        let _: serde_json::Value = self
-            .request_json(
+        self.delete_file_with_mutation(file_id, None).await
+    }
+
+    pub async fn delete_file_with_mutation(
+        &self,
+        file_id: &str,
+        client_mutation_id: Option<&str>,
+    ) -> AppResult<()> {
+        match self
+            .request_json_mutation::<serde_json::Value>(
                 reqwest::Method::DELETE,
                 &format!("/files/{}", file_id),
                 None,
+                client_mutation_id,
                 false,
                 2,
             )
-            .await?;
-        Ok(())
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("404") || msg.contains("not found") {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    pub async fn delete_folder_with_mutation(
+        &self,
+        folder_id: &str,
+        client_mutation_id: Option<&str>,
+    ) -> AppResult<()> {
+        match self
+            .request_json_mutation::<serde_json::Value>(
+                reqwest::Method::DELETE,
+                &format!("/folders/{}", folder_id),
+                None,
+                client_mutation_id,
+                false,
+                2,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("404") || msg.contains("not found") {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    pub async fn patch_file(
+        &self,
+        file_id: &str,
+        name: Option<&str>,
+        folder_id: Option<&str>,
+        client_mutation_id: Option<&str>,
+    ) -> AppResult<FileRecord> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), serde_json::Value::String(n.to_string()));
+        }
+        if let Some(fid) = folder_id {
+            body.insert("folder_id".into(), serde_json::Value::String(fid.to_string()));
+        }
+        self.request_json_mutation(
+            reqwest::Method::PATCH,
+            &format!("/files/{}", file_id),
+            Some(serde_json::Value::Object(body)),
+            client_mutation_id,
+            false,
+            2,
+        )
+        .await
+    }
+
+    pub async fn patch_folder(
+        &self,
+        folder_id: &str,
+        name: Option<&str>,
+        parent_id: Option<&str>,
+        client_mutation_id: Option<&str>,
+    ) -> AppResult<Folder> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), serde_json::Value::String(n.to_string()));
+        }
+        if let Some(pid) = parent_id {
+            body.insert("parent_id".into(), serde_json::Value::String(pid.to_string()));
+        }
+        self.request_json_mutation(
+            reqwest::Method::PATCH,
+            &format!("/folders/{}", folder_id),
+            Some(serde_json::Value::Object(body)),
+            client_mutation_id,
+            false,
+            2,
+        )
+        .await
+    }
+
+    pub async fn get_computer_snapshot(&self, computer_id: &str) -> AppResult<ComputerSnapshot> {
+        self.request_json(
+            reqwest::Method::GET,
+            &format!("/computers/{}/snapshot", computer_id),
+            None,
+            false,
+            2,
+        )
+        .await
+    }
+
+    pub async fn get_computer_changes(
+        &self,
+        computer_id: &str,
+        cursor: i64,
+        limit: u32,
+    ) -> AppResult<SyncChangesResponse> {
+        self.request_json(
+            reqwest::Method::GET,
+            &format!("/computers/{}/changes?cursor={}&limit={}", computer_id, cursor, limit),
+            None,
+            false,
+            2,
+        )
+        .await
+    }
+
+    async fn request_json_mutation<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+        client_mutation_id: Option<&str>,
+        retry: bool,
+        rl_retries: u32,
+    ) -> AppResult<T> {
+        let url = self.api_url(path);
+        let (access_token, http) = {
+            let inner = self.inner.read();
+            (inner.access_token.clone(), inner.http.clone())
+        };
+
+        let mut req = http.request(method.clone(), &url);
+        req = req.header("Authorization", format!("Bearer {}", access_token));
+        if let Some(id) = client_mutation_id {
+            req = req.header("X-Client-Mutation-Id", id);
+        }
+        if let Some(ref b) = body {
+            req = req.json(b);
+        }
+
+        let res = req.send().await?;
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED
+            && !retry
+            && path != "/auth/login"
+            && path != "/auth/refresh"
+        {
+            if self.try_refresh().await? {
+                return Box::pin(self.request_json_mutation(
+                    method,
+                    path,
+                    body,
+                    client_mutation_id,
+                    true,
+                    rl_retries,
+                ))
+                .await;
+            }
+            return Err(AppError::msg("session expired"));
+        }
+
+        if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && rl_retries > 0 {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            return Box::pin(self.request_json_mutation(
+                method,
+                path,
+                body,
+                client_mutation_id,
+                retry,
+                rl_retries - 1,
+            ))
+            .await;
+        }
+
+        let status = res.status();
+        let text = res.text().await?;
+        if status.is_success() {
+            if text.is_empty() {
+                return Ok(serde_json::from_str("null")?);
+            }
+            return Ok(serde_json::from_str(&text)?);
+        }
+        if let Ok(err) = serde_json::from_str::<ApiError>(&text) {
+            return Err(AppError::msg(format!("{} ({})", err.error, status)));
+        }
+        Err(AppError::msg(format!("HTTP {}: {}", status, text)))
     }
 
 
 
-    fn encrypt_to_temp_file(
-
+    fn prepare_upload(
         local_path: &Path,
-
         name: &str,
-
         folder_id: Option<&str>,
-
         existing_key: Option<[u8; 32]>,
-
     ) -> AppResult<PreparedUpload> {
-
         let plaintext = std::fs::read(local_path)?;
-
         let original_size = plaintext.len();
-
         let mime = mime_guess::from_path(local_path)
-
             .first_or_octet_stream()
-
             .to_string();
 
-
-
         let key = existing_key.unwrap_or_else(generate_file_key);
-
         let (ciphertext, iv) = crypto::encrypt_file(&plaintext, &key)?;
 
-
-
-        let mut temp_path = std::env::temp_dir();
-
-        let mut suffix = [0u8; 8];
-
-        rand::thread_rng().fill_bytes(&mut suffix);
-
-        temp_path.push(format!("freedrive-upload-{}.enc", hex::encode(suffix)));
-
-        std::fs::write(&temp_path, &ciphertext)?;
-
-
+        let body = if (original_size as u64) <= SMALL_UPLOAD_BYTES {
+            UploadBody::Memory(ciphertext)
+        } else {
+            let mut temp_path = std::env::temp_dir();
+            let mut suffix = [0u8; 8];
+            rand::thread_rng().fill_bytes(&mut suffix);
+            temp_path.push(format!("freedrive-upload-{}.enc", hex::encode(suffix)));
+            std::fs::write(&temp_path, &ciphertext)?;
+            UploadBody::TempFile(temp_path)
+        };
 
         Ok(PreparedUpload {
-
-            temp_path,
-
+            body,
             key,
-
             name: name.to_string(),
-
             mime,
-
             iv_b64: crypto::iv_to_base64(&iv),
-
             original_size,
-
             folder_id: folder_id.map(|s| s.to_string()),
-
         })
-
     }
 
-
-
-    fn remove_temp_upload(path: &Path) {
-
-        let _ = std::fs::remove_file(path);
-
+    fn cleanup_prepared(prepared: &PreparedUpload) {
+        if let UploadBody::TempFile(path) = &prepared.body {
+            let _ = std::fs::remove_file(path);
+        }
     }
 
 
@@ -805,7 +973,7 @@ impl ApiClient {
 
                 crate::blocking::run_blocking_with_timeout_async(prep_timeout, move || {
 
-                    Self::encrypt_to_temp_file(
+                    Self::prepare_upload(
 
                         &local_path,
 
@@ -883,7 +1051,7 @@ impl ApiClient {
 
 
 
-            Self::remove_temp_upload(&prepared.temp_path);
+            Self::cleanup_prepared(&prepared);
 
 
 
@@ -1179,17 +1347,19 @@ impl ApiClient {
 
 
 
-        let file = tokio::fs::File::open(&prepared.temp_path).await?;
-
-
-
-        let part = Part::stream(file)
-
-            .file_name(prepared.name.clone())
-
-            .mime_str(&prepared.mime)
-
-            .map_err(|e| AppError::msg(e.to_string()))?;
+        let part = match &prepared.body {
+            UploadBody::TempFile(temp_path) => {
+                let file = tokio::fs::File::open(temp_path).await?;
+                Part::stream(file)
+                    .file_name(prepared.name.clone())
+                    .mime_str(&prepared.mime)
+                    .map_err(|e| AppError::msg(e.to_string()))?
+            }
+            UploadBody::Memory(bytes) => Part::bytes(bytes.clone())
+                .file_name(prepared.name.clone())
+                .mime_str(&prepared.mime)
+                .map_err(|e| AppError::msg(e.to_string()))?,
+        };
 
 
 

@@ -187,6 +187,7 @@ fn start_sync_services(
                     continue;
                 }
                 let _ = eng.poll_my_drive().await;
+                let _ = eng.poll_remote().await;
             }
         });
 
