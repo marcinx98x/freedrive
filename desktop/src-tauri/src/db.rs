@@ -205,6 +205,37 @@ pub fn list_pending_journal(conn: &Connection, limit: usize) -> AppResult<Vec<Jo
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
+pub fn has_pending_journal_for_path(
+    conn: &Connection,
+    sync_folder_id: i64,
+    relative_path: &str,
+) -> AppResult<bool> {
+    let mut stmt = conn.prepare(
+        "SELECT 1 FROM sync_journal
+         WHERE sync_folder_id = ?1 AND relative_path = ?2 AND status = 'pending'
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![sync_folder_id, relative_path])?;
+    Ok(rows.next()?.is_some())
+}
+
+/// Returns (sync_folder_id, relative_path, local_path, remote_version) for a remote file id.
+pub fn get_sync_state_detail_by_remote_file_id(
+    conn: &Connection,
+    remote_file_id: &str,
+) -> AppResult<Option<(i64, String, String, i32)>> {
+    let mut stmt = conn.prepare(
+        "SELECT sync_folder_id, relative_path, local_path, remote_version
+         FROM sync_state WHERE remote_file_id = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![remote_file_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn mark_journal_done(conn: &Connection, id: i64) -> AppResult<()> {
     conn.execute(
         "UPDATE sync_journal SET status = 'done' WHERE id = ?1",
@@ -799,6 +830,20 @@ pub fn list_activity(conn: &Connection, limit: i64) -> AppResult<Vec<ActivityRow
             status: row.get(4)?,
             created_at: row.get(5)?,
         })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Returns (relative_path, local_path, remote_file_id) rows for one sync folder.
+pub fn list_sync_states_for_folder(
+    conn: &Connection,
+    sync_folder_id: i64,
+) -> AppResult<Vec<(String, String, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT relative_path, local_path, remote_file_id FROM sync_state WHERE sync_folder_id = ?1",
+    )?;
+    let rows = stmt.query_map(params![sync_folder_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }

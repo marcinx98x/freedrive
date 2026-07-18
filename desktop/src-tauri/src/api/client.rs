@@ -20,7 +20,13 @@ use std::time::Duration;
 
 use parking_lot::RwLock;
 
-
+fn desktop_device_name() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Desktop".to_string())
+}
 
 #[derive(Clone)]
 
@@ -252,6 +258,10 @@ impl ApiClient {
 
             .post(&url)
 
+            .header("X-Device-Type", "desktop")
+
+            .header("X-Device-Name", desktop_device_name())
+
             .json(&serde_json::json!({ "refresh_token": refresh_token }))
 
             .send()
@@ -318,6 +328,10 @@ impl ApiClient {
 
             .post(format!("{}/api/v1/auth/login", base))
 
+            .header("X-Device-Type", "desktop")
+
+            .header("X-Device-Name", desktop_device_name())
+
             .json(&serde_json::json!({ "email": email, "password": password }))
 
             .send()
@@ -357,6 +371,10 @@ impl ApiClient {
         let res = http
 
             .post(format!("{}/api/v1/auth/verify-2fa", base))
+
+            .header("X-Device-Type", "desktop")
+
+            .header("X-Device-Name", desktop_device_name())
 
             .json(&serde_json::json!({ "challenge_id": challenge_id, "code": code }))
 

@@ -1037,13 +1037,19 @@ input {
 }
 
 .status-badge.deleted {
-  color: var(--fd-text-secondary);
+  color: #f28b82;
 }
 
 .status-deleted {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f28b82;
   line-height: 1;
-  opacity: 0.85;
+}
+
+.status-deleted-icon {
+  display: block;
 }
 
 .status-title.status-error {

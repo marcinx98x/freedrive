@@ -170,7 +170,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, err := h.authService.IssueTokens(r.Context(), user)
+	tokens, err := h.authService.IssueTokens(r.Context(), user, deviceInfoFromRequest(r))
 	if err != nil {
 		writeError(w, "login failed", http.StatusInternalServerError)
 		return
@@ -199,7 +199,7 @@ func (h *AuthHandler) Verify2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, user, err := h.authService.VerifyEmail2FA(r.Context(), req.ChallengeID, req.Code)
+	tokens, user, err := h.authService.VerifyEmail2FA(r.Context(), req.ChallengeID, req.Code, deviceInfoFromRequest(r))
 	if err != nil {
 		switch err {
 		case service.ErrInvalid2FACode:
@@ -234,7 +234,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, err := h.authService.Refresh(r.Context(), req.RefreshToken)
+	tokens, err := h.authService.Refresh(r.Context(), req.RefreshToken, deviceInfoFromRequest(r))
 	if err != nil {
 		if err == service.ErrAccountSuspended {
 			writeError(w, "account suspended", http.StatusForbidden)

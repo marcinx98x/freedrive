@@ -199,7 +199,7 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Suspended != nil {
 		user.Suspended = *req.Suspended
 		if user.Suspended {
-			_ = h.userRepo.DeleteUserRefreshTokens(r.Context(), user.ID)
+			_ = h.authService.RevokeAllUserSessions(r.Context(), user.ID)
 		}
 	}
 	if req.Email2FAEnabled != nil {
@@ -273,7 +273,7 @@ func (h *AdminHandler) RevokeUserSessions(w http.ResponseWriter, r *http.Request
 		writeError(w, "user id required", http.StatusBadRequest)
 		return
 	}
-	if err := h.userRepo.DeleteUserRefreshTokens(r.Context(), userID); err != nil {
+	if err := h.authService.RevokeAllUserSessions(r.Context(), userID); err != nil {
 		writeError(w, "failed to revoke sessions", http.StatusInternalServerError)
 		return
 	}
@@ -282,7 +282,7 @@ func (h *AdminHandler) RevokeUserSessions(w http.ResponseWriter, r *http.Request
 
 // RevokeAllSessions handles POST /api/v1/admin/sessions/revoke-all
 func (h *AdminHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
-	if err := h.userRepo.DeleteAllRefreshTokens(r.Context()); err != nil {
+	if err := h.authService.RevokeAllSessions(r.Context()); err != nil {
 		writeError(w, "failed to revoke sessions", http.StatusInternalServerError)
 		return
 	}

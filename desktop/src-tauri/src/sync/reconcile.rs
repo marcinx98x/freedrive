@@ -40,7 +40,7 @@ pub async fn run_sync_cycle(
     }
 
     for change in &page.changes {
-        apply_remote_change(
+        if let Err(e) = apply_remote_change(
             engine,
             api,
             db,
@@ -48,7 +48,14 @@ pub async fn run_sync_cycle(
             computer_root_id,
             change,
         )
-        .await?;
+        .await
+        {
+            sync_log(format!(
+                "apply change seq={} {} {} failed: {}",
+                change.seq, change.operation, change.entity_id, e
+            ));
+            // Continue — a single failure must not stall the cursor forever.
+        }
     }
 
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;

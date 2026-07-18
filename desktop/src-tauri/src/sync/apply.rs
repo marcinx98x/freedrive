@@ -11,6 +11,19 @@ use crate::sync::suppress::WatcherSuppress;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+fn current_user_id() -> AppResult<String> {
+    crate::auth_store::load_auth()
+        .ok()
+        .flatten()
+        .and_then(|a| serde_json::from_str::<serde_json::Value>(&a.user_json).ok())
+        .and_then(|v| {
+            v.get("id")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| AppError::msg("not authenticated"))
+}
+
 pub async fn apply_remote_change(
     engine: &SyncEngine,
     api: &ApiClient,
@@ -94,6 +107,23 @@ async fn apply_remote_file(
     computer_root_id: &str,
     change: &SyncChange,
 ) -> AppResult<()> {
+    // Skip download when local copy is already at this remote version.
+    // Legacy rows (remote_version=0) with a matching remote_file_id are treated as
+    // up-to-date only when the server version is still the initial create (≤1).
+    {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        if let Some((_sf_id, _rel, local_path, remote_version)) =
+            crate::db::get_sync_state_detail_by_remote_file_id(&conn, &change.entity_id)?
+        {
+            if Path::new(&local_path).is_file()
+                && (remote_version >= change.version
+                    || (remote_version == 0 && change.version <= 1))
+            {
+                return Ok(());
+            }
+        }
+    }
+
     let (sync_folder_id, local_root, relative) = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         match resolve_sync_context(
@@ -108,22 +138,112 @@ async fn apply_remote_file(
     };
 
     let local_path = PathBuf::from(&local_root).join(relative.replace('/', "\\"));
-    if let Some(parent) = local_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
 
     let pending_local = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-        crate::db::list_pending_journal(&conn, 1000)?
-            .into_iter()
-            .any(|e| e.relative_path == relative && e.sync_folder_id == sync_folder_id)
+        crate::db::has_pending_journal_for_path(&conn, sync_folder_id, &relative)?
     };
     if pending_local {
         return Ok(());
     }
 
+    // Path-based safeguards: never clobber newer local content and never
+    // resurrect files the user deleted locally.
+    let state_row = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        crate::db::get_sync_state(&conn, sync_folder_id, &relative)?
+    };
+    let file_exists = local_path.is_file();
+    match &state_row {
+        Some((stored_remote_id, _hash, stored_mtime, _status)) => {
+            if file_exists {
+                if let Some(rid) = stored_remote_id {
+                    if rid != &change.entity_id {
+                        sync_log(format!(
+                            "skip remote file {} -> {} (duplicate on server, local tracks {})",
+                            change.entity_id, relative, rid
+                        ));
+                        return Ok(());
+                    }
+                }
+                let current_mtime = local_path
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64);
+                if stored_mtime.is_some() && current_mtime != *stored_mtime {
+                    sync_log(format!(
+                        "skip remote file {} -> {} (local copy modified, upload wins)",
+                        change.entity_id, relative
+                    ));
+                    return Ok(());
+                }
+            } else if Path::new(&local_root).exists() {
+                // File was synced before and is now gone locally: the user deleted
+                // it while the app was not watching. Propagate the delete instead
+                // of re-downloading.
+                if let Some(rid) = stored_remote_id.clone() {
+                    crate::sync::journal::enqueue_file_delete(
+                        db,
+                        sync_folder_id,
+                        &relative,
+                        &rid,
+                    )?;
+                    sync_log(format!(
+                        "remote file {} -> {} deleted locally, queued server delete",
+                        change.entity_id, relative
+                    ));
+                } else {
+                    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                    delete_sync_state_row(&conn, sync_folder_id, &relative)?;
+                }
+                return Ok(());
+            }
+        }
+        None => {
+            if file_exists {
+                // Local file exists but was never synced — the upload scan will
+                // reconcile it. Downloading now could overwrite newer content.
+                sync_log(format!(
+                    "skip remote file {} -> {} (untracked local copy exists)",
+                    change.entity_id, relative
+                ));
+                return Ok(());
+            }
+        }
+    }
+
+    if let Some(parent) = local_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let user_id = match current_user_id() {
+        Ok(id) => id,
+        Err(e) => {
+            sync_log(format!(
+                "skip remote file {}: {}",
+                change.entity_id, e
+            ));
+            return Ok(());
+        }
+    };
+    let key_b64url =
+        match crate::account_crypto::resolve_file_key(api, db, &user_id, &change.entity_id).await {
+            Ok(key) => key,
+            Err(e) => {
+                sync_log(format!(
+                    "skip remote file {} (no encryption key): {}",
+                    change.entity_id, e
+                ));
+                return Ok(());
+            }
+        };
+
     suppress.run_suppressed(&local_path, || {});
-    let plaintext = api.download_file(&change.entity_id, None).await?;
+    let plaintext = api
+        .download_file(&change.entity_id, Some(&key_b64url))
+        .await?;
     let tmp = local_path.with_extension("freedrive.tmp");
     std::fs::write(&tmp, &plaintext)?;
     std::fs::rename(&tmp, &local_path)?;
@@ -369,7 +489,12 @@ pub async fn apply_snapshot(
             payload: None,
             is_tombstone: false,
         };
-        apply_remote_folder_create(db, suppress, computer_root_id, &change)?;
+        if let Err(e) = apply_remote_folder_create(db, suppress, computer_root_id, &change) {
+            sync_log(format!(
+                "snapshot folder {} failed: {}",
+                folder.id, e
+            ));
+        }
     }
     for file in &snapshot.files {
         let change = SyncChange {
@@ -384,7 +509,11 @@ pub async fn apply_snapshot(
             payload: None,
             is_tombstone: false,
         };
-        apply_remote_file(engine, api, db, suppress, computer_root_id, &change).await?;
+        if let Err(e) =
+            apply_remote_file(engine, api, db, suppress, computer_root_id, &change).await
+        {
+            sync_log(format!("snapshot file {} failed: {}", file.id, e));
+        }
     }
     Ok(())
 }

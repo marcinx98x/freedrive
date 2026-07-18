@@ -167,6 +167,20 @@ type ClientMutationRepository interface {
 	Exists(ctx context.Context, userID, mutationID string) (bool, error)
 }
 
+// SessionRepository defines data access for login sessions.
+type SessionRepository interface {
+	Create(ctx context.Context, session *domain.Session) error
+	GetByID(ctx context.Context, id string) (*domain.Session, error)
+	GetByRefreshHash(ctx context.Context, tokenHash string) (*domain.Session, error)
+	ListActiveByUser(ctx context.Context, userID string) ([]domain.Session, error)
+	RotateRefreshHash(ctx context.Context, id, newHash string, expiresAt time.Time) error
+	TouchLastSeen(ctx context.Context, id string, minAgeSeconds int) error
+	RevokeByID(ctx context.Context, id, userID string) error
+	RevokeAllForUser(ctx context.Context, userID string, exceptID string) error
+	RevokeAll(ctx context.Context) error
+	DeleteExpired(ctx context.Context) error
+}
+
 // CryptoRepository defines data access for E2E encryption key sync.
 type CryptoRepository interface {
 	GetUserCrypto(ctx context.Context, userID string) (*domain.UserCrypto, error)

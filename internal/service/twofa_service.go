@@ -66,16 +66,6 @@ func (s *AuthService) VerifyCredentials(ctx context.Context, email, password str
 	return user, nil
 }
 
-// IssueTokens updates last login and returns JWT tokens.
-func (s *AuthService) IssueTokens(ctx context.Context, user *domain.User) (*TokenPair, error) {
-	now := time.Now()
-	user.LastLoginAt = &now
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return nil, err
-	}
-	return s.generateTokenPair(ctx, user)
-}
-
 // StartEmail2FA creates a challenge and emails a verification code.
 func (s *AuthService) StartEmail2FA(ctx context.Context, user *domain.User) (*TwoFAChallenge, error) {
 	if user == nil {
@@ -119,7 +109,7 @@ func (s *AuthService) StartEmail2FA(ctx context.Context, user *domain.User) (*Tw
 }
 
 // VerifyEmail2FA validates a challenge code and issues tokens.
-func (s *AuthService) VerifyEmail2FA(ctx context.Context, challengeID, code string) (*TokenPair, *domain.User, error) {
+func (s *AuthService) VerifyEmail2FA(ctx context.Context, challengeID, code string, device DeviceInfo) (*TokenPair, *domain.User, error) {
 	challengeID = strings.TrimSpace(challengeID)
 	code = strings.TrimSpace(code)
 	if challengeID == "" || code == "" {
@@ -147,7 +137,7 @@ func (s *AuthService) VerifyEmail2FA(ctx context.Context, challengeID, code stri
 	}
 
 	_ = s.email2faRepo.DeleteByID(ctx, entry.ID)
-	tokens, err := s.IssueTokens(ctx, user)
+	tokens, err := s.IssueTokens(ctx, user, device)
 	if err != nil {
 		return nil, nil, err
 	}

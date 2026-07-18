@@ -250,6 +250,20 @@ const App = (() => {
                         </div>
                         <input type="file" id="settings-import-keys-input" accept="application/json,.json" hidden>
                     </div>
+                    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8eaed;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+                            <div style="font-size:13px;font-weight:500;color:#5f6368;">Devices</div>
+                            <button type="button" class="btn btn-secondary" id="settings-revoke-others-btn" style="font-size:12px;height:32px;">
+                                Sign out other devices
+                            </button>
+                        </div>
+                        <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
+                            Devices currently signed in to your account. Signing out a device forces it to log in again.
+                        </p>
+                        <div id="settings-sessions-list" style="display:flex;flex-direction:column;gap:8px;">
+                            <div style="font-size:13px;color:#5f6368;">Loading devices…</div>
+                        </div>
+                    </div>
                 </div>
                 <input id="settings-avatar-input" type="file" accept="image/*" hidden>
             </div>
@@ -402,6 +416,91 @@ const App = (() => {
                 Components.toast(err?.message || 'Key rotation failed', 'error');
             }
         });
+
+        const sessionsListEl = document.getElementById('settings-sessions-list');
+        const formatSessionTime = (iso) => {
+            if (!iso) return 'Unknown';
+            const ts = new Date(iso).getTime();
+            if (Number.isNaN(ts)) return 'Unknown';
+            const mins = Math.floor((Date.now() - ts) / 60000);
+            if (mins < 1) return 'Just now';
+            if (mins < 60) return `${mins} min ago`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `${hours}h ago`;
+            const days = Math.floor(hours / 24);
+            if (days < 14) return `${days}d ago`;
+            return new Date(iso).toLocaleDateString();
+        };
+
+        const renderSessions = async () => {
+            if (!sessionsListEl) return;
+            sessionsListEl.innerHTML = '<div style="font-size:13px;color:#5f6368;">Loading devices…</div>';
+            try {
+                const data = await API.auth.getSessions();
+                const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+                if (!sessions.length) {
+                    sessionsListEl.innerHTML = '<div style="font-size:13px;color:#5f6368;">No active devices.</div>';
+                    return;
+                }
+                sessionsListEl.innerHTML = sessions.map((s) => {
+                    const icon = s.device_type === 'desktop'
+                        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10H3V6a1 1 0 0 1 1-1zm-1 13h18v2H3v-2z"/></svg>'
+                        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5v2h2v2H7v-2h2v-2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v7h16V6H4z"/></svg>';
+                    const badge = s.current
+                        ? '<span style="display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#e6f4ea;color:#137333;font-size:11px;font-weight:600;">This device</span>'
+                        : '';
+                    const revokeBtn = s.current
+                        ? ''
+                        : `<button type="button" class="btn btn-secondary settings-revoke-session-btn" data-session-id="${esc(s.id)}" style="font-size:12px;height:30px;">Sign out</button>`;
+                    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #e8eaed;border-radius:10px;background:#fff;">
+                        <div style="display:flex;align-items:flex-start;gap:12px;min-width:0;">
+                            <div style="color:#5f6368;margin-top:2px;">${icon}</div>
+                            <div style="min-width:0;">
+                                <div style="font-size:14px;font-weight:500;color:#202124;">${esc(s.device_name || 'Unknown device')}${badge}</div>
+                                <div style="font-size:12px;color:#5f6368;margin-top:2px;">${esc(s.ip_address || '—')} · Last active ${esc(formatSessionTime(s.last_seen_at))}</div>
+                            </div>
+                        </div>
+                        ${revokeBtn}
+                    </div>`;
+                }).join('');
+
+                sessionsListEl.querySelectorAll('.settings-revoke-session-btn').forEach((btn) => {
+                    btn.addEventListener('click', async () => {
+                        const id = btn.getAttribute('data-session-id');
+                        if (!id) return;
+                        if (!window.confirm('Sign out this device? It will need to log in again.')) return;
+                        btn.disabled = true;
+                        try {
+                            await API.auth.revokeSession(id);
+                            Components.toast('Device signed out', 'success');
+                            await renderSessions();
+                        } catch (err) {
+                            btn.disabled = false;
+                            Components.toast(err?.message || 'Failed to sign out device', 'error');
+                        }
+                    });
+                });
+            } catch (err) {
+                sessionsListEl.innerHTML = `<div style="font-size:13px;color:#c5221f;">${esc(err?.message || 'Failed to load devices')}</div>`;
+            }
+        };
+
+        document.getElementById('settings-revoke-others-btn')?.addEventListener('click', async () => {
+            if (!window.confirm('Sign out all other devices? They will need to log in again.')) return;
+            const btn = document.getElementById('settings-revoke-others-btn');
+            if (btn) btn.disabled = true;
+            try {
+                await API.auth.revokeOtherSessions();
+                Components.toast('Other devices signed out', 'success');
+                await renderSessions();
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to sign out other devices', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        });
+
+        renderSessions();
 
         const emailInput = document.getElementById('settings-email');
         const passwordWrap = document.getElementById('settings-email-password-wrap');

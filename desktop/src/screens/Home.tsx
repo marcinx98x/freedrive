@@ -154,7 +154,18 @@ export function Home({
                   {item.status === "synced" && <span className="status-check">✓</span>}
                   {item.status === "deleted" && (
                     <span className="status-deleted" aria-label="Removed" title="Removed">
-                      🗑
+                      <svg
+                        className="status-deleted-icon"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        aria-hidden
+                      >
+                        <path
+                          fill="currentColor"
+                          d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM6 7h12l-1 14H7L6 7z"
+                        />
+                      </svg>
                     </span>
                   )}
                   {item.status === "uploading" && (

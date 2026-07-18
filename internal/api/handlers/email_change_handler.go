@@ -217,7 +217,7 @@ func (h *AuthHandler) ConfirmEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = h.emailChangeRepo.DeleteByID(r.Context(), entry.ID)
-	_ = h.userRepo.DeleteUserRefreshTokens(r.Context(), user.ID)
+	_ = h.authService.RevokeAllUserSessions(r.Context(), user.ID)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status": "success",

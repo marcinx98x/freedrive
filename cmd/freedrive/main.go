@@ -61,6 +61,7 @@ func main() {
 	cryptoRepo := sqlite.NewCryptoRepo(db)
 	syncChangeRepo := sqlite.NewSyncChangeRepo(db)
 	clientMutationRepo := sqlite.NewClientMutationRepo(db)
+	sessionRepo := sqlite.NewSessionRepo(db)
 
 	accessService := service.NewAccessService(shareRepo, fileRepo, folderRepo)
 	shareService := service.NewShareService(shareRepo, fileRepo, folderRepo, userRepo, accessService)
@@ -69,7 +70,7 @@ func main() {
 	syncChangeService := service.NewSyncChangeService(syncChangeRepo, computerRepo)
 	syncFeedService := service.NewSyncFeedService(syncChangeRepo, computerRepo, folderRepo, fileRepo)
 
-	authService := service.NewAuthService(userRepo, email2faRepo, cfg.JWTSecret)
+	authService := service.NewAuthService(userRepo, email2faRepo, sessionRepo, cfg.JWTSecret)
 	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo, accessService, folderRepo, syncChangeService)
 	computerService := service.NewComputerService(computerRepo, folderRepo)
 	folderService := service.NewFolderService(folderRepo, fileRepo, userRepo, diskStorage, activityRepo, computerRepo, accessService, syncChangeService)

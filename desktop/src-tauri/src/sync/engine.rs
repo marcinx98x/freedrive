@@ -4,10 +4,11 @@ use crate::crypto::key_to_b64url;
 use crate::db::{
     clear_folder_mapping_prefix, clear_folder_mappings, clear_stale_activity,
     clear_sync_state_for_folder, clear_sync_state_remote_file, config_get, config_set,
-    delete_folder_mapping, get_file_key, get_folder_mapping,
+    delete_folder_mapping, delete_sync_state_row, get_file_key, get_folder_mapping,
     get_sync_folder_by_path, get_sync_state, insert_sync_folder, is_pending_remote_folder,
-    list_sync_folders, set_folder_mapping, store_file_key, update_sync_folder_remote_id,
-    upsert_activity, upsert_sync_state, DbHandle, SyncFolderRow,
+    list_folder_mappings, list_sync_folders, list_sync_states_for_folder, set_folder_mapping,
+    store_file_key, update_sync_folder_remote_id, upsert_activity, upsert_sync_state, DbHandle,
+    SyncFolderRow,
 };
 use crate::error::{AppError, AppResult};
 use crate::sync::journal::{
@@ -791,11 +792,102 @@ impl SyncEngine {
             )
             .await?;
 
+        if let Err(e) = self.reconcile_local_deletions(&sf) {
+            sync_log(format!("reconcile deletions failed for {}: {}", sf.local_path, e));
+        }
+
         let summary = format!(
             "Up to date — {} uploaded, {} unchanged, {} skipped",
             stats.0, stats.2, stats.1
         );
         self.set_status(SyncStatusKind::UpToDate, &summary);
+        Ok(())
+    }
+
+    /// After a scan of existing files, detect entries we synced before whose
+    /// local file/folder no longer exists (deleted while the app was not
+    /// watching) and queue server-side deletes for them.
+    fn reconcile_local_deletions(self: &Arc<Self>, sf: &SyncFolderRow) -> AppResult<()> {
+        let root = PathBuf::from(&sf.local_path);
+        if !root.exists() {
+            // Folder unavailable (e.g. disconnected drive) — do not treat as deleted.
+            return Ok(());
+        }
+
+        let (states, mappings) = {
+            let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            (
+                list_sync_states_for_folder(&conn, sf.id)?,
+                list_folder_mappings(&conn, sf.id)?,
+            )
+        };
+
+        // Missing directories first; skip ones nested under another missing dir
+        // (the topmost folder delete covers them server-side).
+        let mut missing_dirs: Vec<_> = mappings
+            .into_iter()
+            .filter(|m| !m.relative_path.is_empty())
+            .filter(|m| !root.join(m.relative_path.replace('/', "\\")).is_dir())
+            .collect();
+        missing_dirs.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+
+        let mut delete_roots: Vec<String> = Vec::new();
+        let mut queued = 0u32;
+        for m in &missing_dirs {
+            if delete_roots
+                .iter()
+                .any(|r| m.relative_path.starts_with(&format!("{}/", r)))
+            {
+                continue;
+            }
+            delete_roots.push(m.relative_path.clone());
+            let already_pending = {
+                let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                crate::db::has_pending_journal_for_path(&conn, sf.id, &m.relative_path)?
+            };
+            if already_pending {
+                continue;
+            }
+            enqueue_folder_delete(&self.db, sf.id, &m.relative_path, &m.remote_folder_id)?;
+            queued += 1;
+        }
+
+        for (relative, local_path, remote_id) in states {
+            if delete_roots
+                .iter()
+                .any(|r| relative.starts_with(&format!("{}/", r)) || relative == *r)
+            {
+                continue;
+            }
+            if Path::new(&local_path).is_file() {
+                continue;
+            }
+            match remote_id {
+                Some(rid) if !rid.is_empty() => {
+                    let already_pending = {
+                        let conn =
+                            self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                        crate::db::has_pending_journal_for_path(&conn, sf.id, &relative)?
+                    };
+                    if already_pending {
+                        continue;
+                    }
+                    enqueue_file_delete(&self.db, sf.id, &relative, &rid)?;
+                    queued += 1;
+                }
+                _ => {
+                    let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                    delete_sync_state_row(&conn, sf.id, &relative)?;
+                }
+            }
+        }
+
+        if queued > 0 {
+            sync_log(format!(
+                "local deletions detected in {} — {} server deletes queued",
+                sf.local_path, queued
+            ));
+        }
         Ok(())
     }
 
@@ -850,6 +942,13 @@ impl SyncEngine {
             total_skipped += stats.1;
             total_unchanged += stats.2;
             total_errors += stats.3;
+
+            if let Err(e) = self.reconcile_local_deletions(&sf) {
+                sync_log(format!(
+                    "reconcile deletions failed for {}: {}",
+                    sf.local_path, e
+                ));
+            }
         }
 
         let total_processed = total_uploaded + total_skipped + total_unchanged + total_errors;
@@ -1569,15 +1668,15 @@ impl SyncEngine {
                             Some(&rec.updated_at),
                             "synced",
                         )?;
-                        if show_ui {
-                            self.emit_activity_with_conn(
-                                &conn,
-                                file_name,
-                                "Successfully uploaded",
-                                rec.size,
-                                "synced",
-                            );
-                        }
+                        // Always record successful uploads so background verify
+                        // still appears on the activity list.
+                        self.emit_activity_with_conn(
+                            &conn,
+                            file_name,
+                            "Successfully uploaded",
+                            rec.size,
+                            "synced",
+                        );
                         return Ok(SyncAttemptResult::Done(FileSyncOutcome::Synced));
                     }
                     Err(e) => {
@@ -1690,15 +1789,15 @@ impl SyncEngine {
                     Some(&rec.updated_at),
                     "synced",
                 )?;
-                if show_ui {
-                    self.emit_activity_with_conn(
-                        &conn,
-                        file_name,
-                        "Successfully uploaded",
-                        rec.size,
-                        "synced",
-                    );
-                }
+                // Always record successful uploads so background verify
+                // still appears on the activity list.
+                self.emit_activity_with_conn(
+                    &conn,
+                    file_name,
+                    "Successfully uploaded",
+                    rec.size,
+                    "synced",
+                );
                 if crate::db::has_pending_key_upload(&conn, &rec.id).unwrap_or(false) {
                     let _ = self.app.emit(
                         "crypto-key-queued",

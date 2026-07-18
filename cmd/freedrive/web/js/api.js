@@ -165,6 +165,9 @@ const API = (() => {
         resetPasswordCryptoInfo: (token, email) => request('POST', '/auth/reset-password/crypto-info', { token, email }),
         forgotPassword: (email) => request('POST', '/auth/forgot-password', { email }),
         confirmEmail: (token) => request('POST', '/auth/confirm-email', { token }),
+        getSessions: () => request('GET', '/auth/sessions'),
+        revokeSession: (id) => request('DELETE', `/auth/sessions/${id}`),
+        revokeOtherSessions: () => request('POST', '/auth/sessions/revoke-others'),
     };
 
     const files = {

@@ -57,6 +57,7 @@ func NewRouter(
 	r.Use(limiter.Limit)
 
 	authHandler := handlers.NewAuthHandler(authService, cryptoService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
+	sessionHandler := handlers.NewSessionHandler(authService)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload, clientMutationRepo)
 	folderHandler := handlers.NewFolderHandler(folderService, clientMutationRepo)
 	computerHandler := handlers.NewComputerHandler(computerService, folderService, syncFeedService)
@@ -86,6 +87,10 @@ func NewRouter(
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(authService))
+
+			r.Get("/auth/sessions", sessionHandler.List)
+			r.Delete("/auth/sessions/{id}", sessionHandler.Revoke)
+			r.Post("/auth/sessions/revoke-others", sessionHandler.RevokeOthers)
 
 			r.Get("/me", userHandler.GetMe)
 			r.Patch("/me", userHandler.UpdateMe)

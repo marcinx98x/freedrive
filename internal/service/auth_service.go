@@ -18,27 +18,35 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrUserExists         = errors.New("user with this email already exists")
-	ErrInvalidInvite      = errors.New("invalid or expired invite code")
+	ErrInvalidCredentials  = errors.New("invalid email or password")
+	ErrUserExists          = errors.New("user with this email already exists")
+	ErrInvalidInvite       = errors.New("invalid or expired invite code")
 	ErrInviteEmailMismatch = errors.New("registration email must match the invite email")
-	ErrInvalidToken          = errors.New("invalid or expired token")
-	ErrAccountSuspended      = errors.New("account suspended")
-	ErrRegistrationClosed    = errors.New("registration is closed")
+	ErrInvalidToken        = errors.New("invalid or expired token")
+	ErrAccountSuspended    = errors.New("account suspended")
+	ErrRegistrationClosed  = errors.New("registration is closed")
+	ErrSessionRevoked      = errors.New("session revoked")
 )
 
 // AuthService handles authentication and authorization.
 type AuthService struct {
 	userRepo     repository.UserRepository
 	email2faRepo repository.Email2FARepository
+	sessionRepo  repository.SessionRepository
 	jwtSecret    []byte
 }
 
 // NewAuthService creates a new auth service.
-func NewAuthService(userRepo repository.UserRepository, email2faRepo repository.Email2FARepository, jwtSecret string) *AuthService {
+func NewAuthService(
+	userRepo repository.UserRepository,
+	email2faRepo repository.Email2FARepository,
+	sessionRepo repository.SessionRepository,
+	jwtSecret string,
+) *AuthService {
 	return &AuthService{
 		userRepo:     userRepo,
 		email2faRepo: email2faRepo,
+		sessionRepo:  sessionRepo,
 		jwtSecret:    []byte(jwtSecret),
 	}
 }
@@ -50,10 +58,17 @@ type TokenPair struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
+// DeviceInfo describes the client that is logging in or refreshing.
+type DeviceInfo struct {
+	DeviceName string
+	DeviceType string
+	UserAgent  string
+	IPAddress  string
+}
+
 // Register creates a new user account.
 func (s *AuthService) Register(ctx context.Context, email, username, password, inviteCode string) (*domain.User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
-	// Check if first user (skip invite for first user)
 	userCount, err := s.userRepo.Count(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("count users: %w", err)
@@ -101,7 +116,6 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 		}
 	}
 
-	// Check if email exists
 	existing, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return nil, err
@@ -110,7 +124,6 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 		return nil, ErrUserExists
 	}
 
-	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
@@ -123,21 +136,19 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 		Role:         role,
 		QuotaBytes:   quotaBytes,
 	}
-
 	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("create user: %w", err)
+		return nil, err
 	}
-
 	return user, nil
 }
 
-// Login authenticates a user and returns JWT tokens (legacy helper; prefer VerifyCredentials + IssueTokens).
-func (s *AuthService) Login(ctx context.Context, email, password string) (*TokenPair, *domain.User, error) {
+// Login authenticates a user and returns JWT tokens (legacy helper).
+func (s *AuthService) Login(ctx context.Context, email, password string, device DeviceInfo) (*TokenPair, *domain.User, error) {
 	user, err := s.VerifyCredentials(ctx, email, password)
 	if err != nil {
 		return nil, nil, err
 	}
-	tokens, err := s.IssueTokens(ctx, user)
+	tokens, err := s.IssueTokens(ctx, user, device)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -156,8 +167,28 @@ func (s *AuthService) CheckPassword(user *domain.User, password string) error {
 }
 
 // Refresh generates a new access token from a valid refresh token.
-func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
+func (s *AuthService) Refresh(ctx context.Context, refreshToken string, device DeviceInfo) (*TokenPair, error) {
 	tokenHash := hashToken(refreshToken)
+
+	session, err := s.sessionRepo.GetByRefreshHash(ctx, tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	if session != nil {
+		if session.RevokedAt != nil || session.ExpiresAt.Before(time.Now()) {
+			return nil, ErrInvalidToken
+		}
+		user, err := s.userRepo.GetByID(ctx, session.UserID)
+		if err != nil || user == nil {
+			return nil, ErrInvalidToken
+		}
+		if user.Suspended {
+			return nil, ErrAccountSuspended
+		}
+		return s.rotateSessionTokens(ctx, user, session)
+	}
+
+	// Compatibility: migrate legacy refresh_tokens rows into sessions.
 	stored, err := s.userRepo.GetRefreshToken(ctx, tokenHash)
 	if err != nil {
 		return nil, err
@@ -165,11 +196,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 	if stored == nil || stored.ExpiresAt.Before(time.Now()) {
 		return nil, ErrInvalidToken
 	}
-
-	// Delete old refresh token (rotation)
-	if err := s.userRepo.DeleteRefreshToken(ctx, tokenHash); err != nil {
-		return nil, err
-	}
+	_ = s.userRepo.DeleteRefreshToken(ctx, tokenHash)
 
 	user, err := s.userRepo.GetByID(ctx, stored.UserID)
 	if err != nil || user == nil {
@@ -178,13 +205,19 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 	if user.Suspended {
 		return nil, ErrAccountSuspended
 	}
-
-	return s.generateTokenPair(ctx, user)
+	return s.generateTokenPair(ctx, user, device)
 }
 
-// Logout revokes a refresh token.
+// Logout revokes the session associated with a refresh token.
 func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 	tokenHash := hashToken(refreshToken)
+	session, err := s.sessionRepo.GetByRefreshHash(ctx, tokenHash)
+	if err != nil {
+		return err
+	}
+	if session != nil {
+		return s.sessionRepo.RevokeByID(ctx, session.ID, session.UserID)
+	}
 	return s.userRepo.DeleteRefreshToken(ctx, tokenHash)
 }
 
@@ -227,6 +260,49 @@ func (s *AuthService) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
+// EnsureSessionActive verifies the session is still valid and optionally updates last_seen.
+func (s *AuthService) EnsureSessionActive(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return ErrSessionRevoked
+	}
+	session, err := s.sessionRepo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil || session.RevokedAt != nil || session.ExpiresAt.Before(time.Now()) {
+		return ErrSessionRevoked
+	}
+	_ = s.sessionRepo.TouchLastSeen(ctx, sessionID, 60)
+	return nil
+}
+
+// ListSessions returns active sessions for a user.
+func (s *AuthService) ListSessions(ctx context.Context, userID string) ([]domain.Session, error) {
+	return s.sessionRepo.ListActiveByUser(ctx, userID)
+}
+
+// RevokeSession revokes one of the user's sessions.
+func (s *AuthService) RevokeSession(ctx context.Context, userID, sessionID string) error {
+	return s.sessionRepo.RevokeByID(ctx, sessionID, userID)
+}
+
+// RevokeOtherSessions revokes all sessions for the user except the current one.
+func (s *AuthService) RevokeOtherSessions(ctx context.Context, userID, currentSessionID string) error {
+	return s.sessionRepo.RevokeAllForUser(ctx, userID, currentSessionID)
+}
+
+// RevokeAllUserSessions revokes every session for a user (and legacy refresh tokens).
+func (s *AuthService) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	_ = s.userRepo.DeleteUserRefreshTokens(ctx, userID)
+	return s.sessionRepo.RevokeAllForUser(ctx, userID, "")
+}
+
+// RevokeAllSessions revokes every session in the system (admin).
+func (s *AuthService) RevokeAllSessions(ctx context.Context) error {
+	_ = s.userRepo.DeleteAllRefreshTokens(ctx)
+	return s.sessionRepo.RevokeAll(ctx)
+}
+
 // EnsureAdmin creates the admin user from config if no users exist.
 func (s *AuthService) EnsureAdmin(ctx context.Context, email, password string) error {
 	count, err := s.userRepo.Count(ctx)
@@ -243,20 +319,80 @@ func (s *AuthService) EnsureAdmin(ctx context.Context, email, password string) e
 
 // Claims represents JWT claims.
 type Claims struct {
-	UserID   string      `json:"uid"`
-	Email    string      `json:"email"`
-	Username string      `json:"username"`
-	Role     domain.Role `json:"role"`
+	UserID    string      `json:"uid"`
+	Email     string      `json:"email"`
+	Username  string      `json:"username"`
+	Role      domain.Role `json:"role"`
+	SessionID string      `json:"sid"`
 	jwt.RegisteredClaims
 }
 
-func (s *AuthService) generateTokenPair(ctx context.Context, user *domain.User) (*TokenPair, error) {
-	// Access token (15 minutes)
+// IssueTokens updates last login and returns JWT tokens bound to a new session.
+func (s *AuthService) IssueTokens(ctx context.Context, user *domain.User, device DeviceInfo) (*TokenPair, error) {
+	now := time.Now()
+	user.LastLoginAt = &now
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, err
+	}
+	return s.generateTokenPair(ctx, user, device)
+}
+
+func (s *AuthService) generateTokenPair(ctx context.Context, user *domain.User, device DeviceInfo) (*TokenPair, error) {
+	refreshBytes := make([]byte, 32)
+	if _, err := rand.Read(refreshBytes); err != nil {
+		return nil, err
+	}
+	refreshStr := hex.EncodeToString(refreshBytes)
+	refreshHash := hashToken(refreshStr)
+	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+
+	deviceType := device.DeviceType
+	if deviceType != domain.DeviceTypeDesktop {
+		deviceType = domain.DeviceTypeWeb
+	}
+	deviceName := strings.TrimSpace(device.DeviceName)
+	if deviceName == "" {
+		deviceName = "Unknown device"
+	}
+
+	session := &domain.Session{
+		UserID:           user.ID,
+		RefreshTokenHash: refreshHash,
+		DeviceName:       deviceName,
+		DeviceType:       deviceType,
+		UserAgent:        device.UserAgent,
+		IPAddress:        device.IPAddress,
+		ExpiresAt:        expiresAt,
+	}
+	if err := s.sessionRepo.Create(ctx, session); err != nil {
+		return nil, err
+	}
+
+	return s.signTokenPair(user, session.ID, refreshStr)
+}
+
+func (s *AuthService) rotateSessionTokens(ctx context.Context, user *domain.User, session *domain.Session) (*TokenPair, error) {
+	refreshBytes := make([]byte, 32)
+	if _, err := rand.Read(refreshBytes); err != nil {
+		return nil, err
+	}
+	refreshStr := hex.EncodeToString(refreshBytes)
+	refreshHash := hashToken(refreshStr)
+	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+
+	if err := s.sessionRepo.RotateRefreshHash(ctx, session.ID, refreshHash, expiresAt); err != nil {
+		return nil, err
+	}
+	return s.signTokenPair(user, session.ID, refreshStr)
+}
+
+func (s *AuthService) signTokenPair(user *domain.User, sessionID, refreshStr string) (*TokenPair, error) {
 	accessClaims := &Claims{
-		UserID:   user.ID,
-		Email:    user.Email,
-		Username: user.Username,
-		Role:     user.Role,
+		UserID:    user.ID,
+		Email:     user.Email,
+		Username:  user.Username,
+		Role:      user.Role,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -269,27 +405,10 @@ func (s *AuthService) generateTokenPair(ctx context.Context, user *domain.User) 
 		return nil, fmt.Errorf("sign access token: %w", err)
 	}
 
-	// Refresh token (7 days)
-	refreshBytes := make([]byte, 32)
-	if _, err := rand.Read(refreshBytes); err != nil {
-		return nil, err
-	}
-	refreshStr := hex.EncodeToString(refreshBytes)
-	refreshHash := hashToken(refreshStr)
-
-	rt := &domain.RefreshToken{
-		UserID:    user.ID,
-		TokenHash: refreshHash,
-		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-	}
-	if err := s.userRepo.CreateRefreshToken(ctx, rt); err != nil {
-		return nil, err
-	}
-
 	return &TokenPair{
 		AccessToken:  accessStr,
 		RefreshToken: refreshStr,
-		ExpiresIn:    86400, // 24 hours in seconds
+		ExpiresIn:    86400,
 	}, nil
 }
 

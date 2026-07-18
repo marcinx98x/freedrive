@@ -43,7 +43,7 @@ export const api = {
   getSyncFolders: () => invoke<SyncFolder[]>("get_sync_folders"),
   addSyncFolder: (path: string) => invoke<string>("add_sync_folder", { path }),
   removeSyncFolder: (folder_id: number) =>
-    invoke<void>("remove_sync_folder", { folder_id }),
+    invoke<void>("remove_sync_folder", { folderId: folder_id }),
   openPreferencesWindow: () => invoke<void>("open_preferences_window"),
   getSyncMode: () => invoke<SyncMode>("get_sync_mode"),
   setSyncMode: (mode: SyncMode) => invoke<void>("set_sync_mode", { mode }),

@@ -1,12 +1,18 @@
 use crate::api::client::ApiClient;
 use crate::db::{
-    delete_folder_mapping, delete_sync_state_row, insert_activity, mark_journal_done,
-    mark_journal_retry, set_folder_mapping, DbHandle, JournalEntry,
+    delete_folder_mapping, delete_sync_state_row, mark_journal_done, mark_journal_retry,
+    set_folder_mapping, DbHandle, JournalEntry,
 };
 use crate::error::{AppError, AppResult};
 use crate::sync::engine::SyncEngine;
 use crate::sync::log::sync_log;
 use std::path::Path;
+
+/// The target is already gone on the server — treat the delete as done.
+fn is_not_found(e: &AppError) -> bool {
+    let msg = e.to_string().to_lowercase();
+    msg.contains("not found") || msg.contains("404")
+}
 
 pub async fn process_journal_entry(
     engine: &SyncEngine,
@@ -17,33 +23,53 @@ pub async fn process_journal_entry(
     match entry.operation.as_str() {
         "file_delete" => {
             if let Some(ref remote_id) = entry.remote_entity_id {
-                api.delete_file_with_mutation(remote_id, Some(&entry.client_mutation_id))
-                    .await?;
+                match api
+                    .delete_file_with_mutation(remote_id, Some(&entry.client_mutation_id))
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(e) if is_not_found(&e) => {
+                        sync_log(format!("file {} already gone on server", remote_id));
+                    }
+                    Err(e) => return Err(e),
+                }
             }
-            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-            delete_sync_state_row(&conn, entry.sync_folder_id, &entry.relative_path)?;
-            mark_journal_done(&conn, entry.id)?;
+            {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                delete_sync_state_row(&conn, entry.sync_folder_id, &entry.relative_path)?;
+                mark_journal_done(&conn, entry.id)?;
+            }
+            // Emit after releasing db lock — emit_activity_public locks db again.
             let name = Path::new(&entry.relative_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("file");
-            insert_activity(&conn, name, "Removed from cloud", 0, "deleted")?;
             engine.emit_activity_public(name, "Removed from cloud", 0, "deleted");
         }
         "folder_delete" => {
             if let Some(ref remote_id) = entry.remote_entity_id {
-                api.delete_folder_with_mutation(remote_id, Some(&entry.client_mutation_id))
-                    .await?;
+                match api
+                    .delete_folder_with_mutation(remote_id, Some(&entry.client_mutation_id))
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(e) if is_not_found(&e) => {
+                        sync_log(format!("folder {} already gone on server", remote_id));
+                    }
+                    Err(e) => return Err(e),
+                }
             }
-            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-            delete_folder_mapping(&conn, entry.sync_folder_id, &entry.relative_path)?;
-            clear_sync_prefix(&conn, entry.sync_folder_id, &entry.relative_path)?;
-            mark_journal_done(&conn, entry.id)?;
+            {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                delete_folder_mapping(&conn, entry.sync_folder_id, &entry.relative_path)?;
+                clear_sync_prefix(&conn, entry.sync_folder_id, &entry.relative_path)?;
+                mark_journal_done(&conn, entry.id)?;
+            }
+            // Emit after releasing db lock — emit_activity_public locks db again.
             let name = Path::new(&entry.relative_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("folder");
-            insert_activity(&conn, name, "Removed from cloud", 0, "deleted")?;
             engine.emit_activity_public(name, "Removed from cloud", 0, "deleted");
         }
         "file_rename" => {

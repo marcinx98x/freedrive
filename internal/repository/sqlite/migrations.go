@@ -33,6 +33,7 @@ func runMigrations(db *sql.DB) error {
 		{10, migrationV10},
 		{11, migrationV11},
 		{12, migrationV12},
+		{13, migrationV13},
 	}
 
 	for _, m := range migrations {
@@ -348,4 +349,22 @@ CREATE TABLE IF NOT EXISTS client_mutations (
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_client_mutations_user ON client_mutations(user_id);
+`
+
+const migrationV13 = `
+CREATE TABLE IF NOT EXISTS sessions (
+    id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    user_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    refresh_token_hash  TEXT NOT NULL UNIQUE,
+    device_name         TEXT NOT NULL DEFAULT '',
+    device_type         TEXT NOT NULL DEFAULT 'web' CHECK(device_type IN ('web','desktop')),
+    user_agent          TEXT NOT NULL DEFAULT '',
+    ip_address          TEXT NOT NULL DEFAULT '',
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at          DATETIME NOT NULL,
+    revoked_at          DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 `
