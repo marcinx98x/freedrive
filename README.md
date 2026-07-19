@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Self-hosted cloud storage with a familiar Drive-like UX.</strong><br/>
-  Single Go binary, embedded SQLite, disk-backed storage, admin panel, and modern web UI.
+  Single Go binary, embedded SQLite, disk-backed storage, admin panel, modern web UI, desktop sync client, and Android app.
 </p>
 <p align="center"><strong>Licensed under MIT</strong></p>
 
@@ -33,6 +33,8 @@
 - [Production Install (systemd)](#production-install-systemd)
 - [Configuration](#configuration)
 - [API Reference](#api-reference)
+- [Desktop Client (beta)](#desktop-client-beta)
+- [Mobile Client (MVP)](#mobile-client-mvp)
 - [Project Structure](#project-structure)
 - [Deployment Options](#deployment-options)
 - [Operations](#operations)
@@ -681,6 +683,38 @@ Build outputs:
 
 ---
 
+## Mobile Client (MVP)
+
+The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app (Expo / React Native). It connects to the same REST API as the web UI and desktop client.
+
+- **Sign in** with server URL, email, password, and email 2FA when enabled
+- **Drive-like dark UI** — bottom tabs (Home, Starred, Shared, Files), pill search bar, list/grid toggle, sort chip
+- **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage bar
+- **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh
+- **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
+- **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
+- **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
+- Upload, download, offline files, and in-app preview are planned for later releases
+- See [`mobile/README.md`](mobile/README.md) for Expo Go setup and local APK build notes
+
+Quick start:
+
+```bash
+go run ./cmd/freedrive          # terminal 1 — server
+cd mobile && npm install && npm start   # terminal 2 — Expo
+```
+
+Build a release APK (requires Android SDK + JDK 17; on Windows use a short path such as `C:\fdm` if native CMake hits MAX_PATH):
+
+```bash
+cd mobile
+npm install
+npx expo prebuild --platform android
+cd android && ./gradlew assembleRelease   # Windows: gradlew.bat assembleRelease
+```
+
+---
+
 ## Project Structure
 
 ```text
@@ -715,6 +749,13 @@ desktop/                  # Tauri desktop sync client (React + Rust)
   src-tauri/              # native shell, sync engine, API client
   package.json
   README.md               # build & dev instructions
+
+mobile/                   # Expo React Native Android client (MVP)
+  src/                    # screens, navigation, API client, auth
+  assets/                 # app icon / splash (from FreeDrive logo)
+  scripts/                # generate-assets.mjs
+  package.json
+  README.md               # Expo Go + APK build instructions
 ```
 
 ---

@@ -1,13 +1,30 @@
 # FreeDrive Mobile (MVP)
 
-React Native + Expo client for FreeDrive. Android-first. Sign in to your self-hosted server and browse My Drive, Computers, Starred, and Shared.
+React Native + Expo client for [FreeDrive](https://github.com/marcinx98x/freedrive). Android-first. Sign in to your self-hosted server and browse My Drive, Computers, Starred, Shared, Recent, and Bin.
+
+Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo root (`cmd/freedrive`, `internal/`).
+
+## Features
+
+- **Sign in** — server URL, email, password, and email 2FA when enabled
+- **Secure session** — tokens in SecureStore, profile cache in AsyncStorage (supports large avatar data-URLs), auto-refresh on 401
+- **Bottom tabs** — Home, Starred, Shared, Files (with active pill indicator)
+- **Files** — My Drive | Computers, folder navigation, list/grid, sort chip
+- **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage
+- **Search** — search files by name from the top bar
+- **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
+- **User avatar** — photo from `avatar_url` on `GET /api/v1/me`, or initials fallback
+- **Devices** — appears as `Mobile (…)` on the account Devices list
+
+Upload, download, offline files, and in-app preview are planned for later releases.
 
 ## Requirements
 
 - Node.js 20+
-- Expo Go on your Android phone (same Wi‑Fi as the server, or use a public HTTPS URL)
+- Expo Go on Android (same Wi‑Fi as the server, or a public HTTPS URL)
+- For APK builds: Android SDK + JDK 17
 
-## Setup
+## Setup (Expo Go)
 
 ```bash
 cd mobile
@@ -23,22 +40,25 @@ Scan the QR code with Expo Go.
 2. Email + password
 3. Complete email 2FA if enabled
 
-The phone appears on the account **Devices** list (as a web session named `Mobile (…)`) after sign-in.
-
-## MVP features
-
-- Login + 2FA + secure token storage + auto refresh
-- Bottom tabs: Home, Starred, Shared, Files
-- Files: My Drive | Computers tabs, folder navigation, list/grid, sort
-- Search files by name
-- Pull-to-refresh
-
-Upload, download, offline files, and E2E preview are planned for later releases.
-
 ## Scripts
 
 ```bash
 npm start          # Expo dev server
 npm run android    # open Android
-npx tsc --noEmit   # typecheck
+npm run typecheck  # tsc --noEmit
+node scripts/generate-assets.mjs   # regenerate icon/splash from desktop logo
 ```
+
+## Build release APK
+
+On Windows, long paths under `Desktop\…` can break CMake. Prefer a short working copy (e.g. `C:\fdm`):
+
+```bash
+cd mobile
+npm install
+npx expo prebuild --platform android
+cd android
+./gradlew assembleRelease   # Windows: gradlew.bat assembleRelease
+```
+
+APK output: `android/app/build/outputs/apk/release/app-release.apk` (debug-signed unless you configure a release keystore).
