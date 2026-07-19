@@ -5282,12 +5282,10 @@ const FileManager = (() => {
         const shell = openEditorShell(file);
 
         const ext = getFileExtension(file.name);
-        const isRichText = ['md', 'html', 'htm'].includes(ext);
-        const isPlainDoc = ext === 'txt';
-        const useDocsPage = isRichText || isPlainDoc;
+        const isRichText = ['md', 'html', 'htm', 'txt'].includes(ext);
 
         const wrap = document.createElement('div');
-        wrap.className = `text-editor-wrap${useDocsPage ? ' text-editor-docs' : ' text-editor-code'}`;
+        wrap.className = `text-editor-wrap${isRichText ? ' text-editor-docs' : ' text-editor-code'}`;
 
         if (isRichText) {
             wrap.innerHTML = `
@@ -5351,16 +5349,6 @@ const FileManager = (() => {
                 </div>
                 <div class="text-editor-scroll">
                     <div class="text-editor text-editor-page" id="text-editor" contenteditable="true" spellcheck="true"></div>
-                </div>
-                <div class="text-meta">
-                    <span id="text-autosave">Auto-save every 30s</span>
-                    <span id="text-count">0 words · 0 chars</span>
-                </div>
-            `;
-        } else if (isPlainDoc) {
-            wrap.innerHTML = `
-                <div class="text-editor-scroll">
-                    <textarea class="text-editor text-editor-page text-editor-plain-doc" id="text-editor-plain" spellcheck="true"></textarea>
                 </div>
                 <div class="text-meta">
                     <span id="text-autosave">Auto-save every 30s</span>
