@@ -217,3 +217,75 @@ func TestLegacyRefreshTokenMigratesToSession(t *testing.T) {
 		t.Fatalf("migrated session inactive: %v", err)
 	}
 }
+
+func TestIssueTokensReusesSessionForSameDeviceID(t *testing.T) {
+	auth, userRepo, db := newTestAuth(t)
+	defer db.Close()
+	ctx := context.Background()
+	user := createTestUser(t, userRepo, "user-f", "f@test.local")
+
+	first, err := auth.IssueTokens(ctx, user, service.DeviceInfo{
+		DeviceID:   "desk-1",
+		DeviceName: "PC-A",
+		DeviceType: domain.DeviceTypeDesktop,
+		IPAddress:  "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("first issue: %v", err)
+	}
+	firstClaims, err := auth.ValidateAccessToken(first.AccessToken)
+	if err != nil {
+		t.Fatalf("validate first: %v", err)
+	}
+
+	second, err := auth.IssueTokens(ctx, user, service.DeviceInfo{
+		DeviceID:   "desk-1",
+		DeviceName: "PC-A",
+		DeviceType: domain.DeviceTypeDesktop,
+		IPAddress:  "10.0.0.2",
+	})
+	if err != nil {
+		t.Fatalf("second issue: %v", err)
+	}
+	secondClaims, err := auth.ValidateAccessToken(second.AccessToken)
+	if err != nil {
+		t.Fatalf("validate second: %v", err)
+	}
+	if firstClaims.SessionID != secondClaims.SessionID {
+		t.Fatalf("expected same session id, got %s vs %s", firstClaims.SessionID, secondClaims.SessionID)
+	}
+
+	sessions, err := auth.ListSessions(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].IPAddress != "10.0.0.2" {
+		t.Fatalf("expected updated IP, got %q", sessions[0].IPAddress)
+	}
+	if sessions[0].DeviceID != "desk-1" {
+		t.Fatalf("expected device_id desk-1, got %q", sessions[0].DeviceID)
+	}
+
+	other, err := auth.IssueTokens(ctx, user, service.DeviceInfo{
+		DeviceID:   "desk-2",
+		DeviceName: "PC-B",
+		DeviceType: domain.DeviceTypeDesktop,
+	})
+	if err != nil {
+		t.Fatalf("other device: %v", err)
+	}
+	otherClaims, _ := auth.ValidateAccessToken(other.AccessToken)
+	if otherClaims.SessionID == firstClaims.SessionID {
+		t.Fatal("different device_id should create a new session")
+	}
+	sessions, err = auth.ListSessions(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("list after other: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(sessions))
+	}
+}

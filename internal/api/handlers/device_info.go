@@ -3,23 +3,28 @@ package handlers
 import (
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/service"
 )
 
+const maxDeviceIDLen = 64
+
 // deviceInfoFromRequest builds DeviceInfo from headers / User-Agent.
 func deviceInfoFromRequest(r *http.Request) service.DeviceInfo {
 	ua := r.UserAgent()
 	deviceType := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Device-Type")))
 	deviceName := strings.TrimSpace(r.Header.Get("X-Device-Name"))
+	deviceID := sanitizeDeviceID(r.Header.Get("X-Device-ID"))
 
 	if deviceType == domain.DeviceTypeDesktop {
 		if deviceName == "" {
 			deviceName = "Desktop app"
 		}
 		return service.DeviceInfo{
+			DeviceID:   deviceID,
 			DeviceName: deviceName,
 			DeviceType: domain.DeviceTypeDesktop,
 			UserAgent:  ua,
@@ -31,11 +36,31 @@ func deviceInfoFromRequest(r *http.Request) service.DeviceInfo {
 		deviceName = describeUserAgent(ua)
 	}
 	return service.DeviceInfo{
+		DeviceID:   deviceID,
 		DeviceName: deviceName,
 		DeviceType: domain.DeviceTypeWeb,
 		UserAgent:  ua,
 		IPAddress:  middleware.ClientIP(r),
 	}
+}
+
+func sanitizeDeviceID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if len(out) > maxDeviceIDLen {
+		out = out[:maxDeviceIDLen]
+	}
+	return out
 }
 
 func describeUserAgent(ua string) string {

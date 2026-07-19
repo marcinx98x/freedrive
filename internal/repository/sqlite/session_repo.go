@@ -36,10 +36,10 @@ func (r *SessionRepo) Create(ctx context.Context, session *domain.Session) error
 	}
 	_, err := r.writer.ExecContext(ctx, `
 		INSERT INTO sessions (
-			id, user_id, refresh_token_hash, device_name, device_type,
+			id, user_id, refresh_token_hash, device_id, device_name, device_type,
 			user_agent, ip_address, created_at, last_seen_at, expires_at, revoked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-		session.ID, session.UserID, session.RefreshTokenHash, session.DeviceName, session.DeviceType,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+		session.ID, session.UserID, session.RefreshTokenHash, session.DeviceID, session.DeviceName, session.DeviceType,
 		session.UserAgent, session.IPAddress, session.CreatedAt, session.LastSeenAt, session.ExpiresAt,
 	)
 	return err
@@ -51,7 +51,7 @@ func scanSession(scanner interface {
 	s := &domain.Session{}
 	var revoked sql.NullTime
 	err := scanner.Scan(
-		&s.ID, &s.UserID, &s.RefreshTokenHash, &s.DeviceName, &s.DeviceType,
+		&s.ID, &s.UserID, &s.RefreshTokenHash, &s.DeviceID, &s.DeviceName, &s.DeviceType,
 		&s.UserAgent, &s.IPAddress, &s.CreatedAt, &s.LastSeenAt, &s.ExpiresAt, &revoked,
 	)
 	if err != nil {
@@ -65,7 +65,7 @@ func scanSession(scanner interface {
 }
 
 const sessionSelect = `
-	SELECT id, user_id, refresh_token_hash, device_name, device_type,
+	SELECT id, user_id, refresh_token_hash, device_id, device_name, device_type,
 	       user_agent, ip_address, created_at, last_seen_at, expires_at, revoked_at
 	FROM sessions`
 
@@ -80,6 +80,21 @@ func (r *SessionRepo) GetByID(ctx context.Context, id string) (*domain.Session, 
 
 func (r *SessionRepo) GetByRefreshHash(ctx context.Context, tokenHash string) (*domain.Session, error) {
 	row := r.reader.QueryRowContext(ctx, sessionSelect+` WHERE refresh_token_hash = ?`, tokenHash)
+	s, err := scanSession(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return s, err
+}
+
+func (r *SessionRepo) GetActiveByUserDevice(ctx context.Context, userID, deviceID string) (*domain.Session, error) {
+	if deviceID == "" {
+		return nil, nil
+	}
+	row := r.reader.QueryRowContext(ctx, sessionSelect+`
+		WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL AND expires_at > ?
+		ORDER BY last_seen_at DESC
+		LIMIT 1`, userID, deviceID, time.Now())
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -107,12 +122,19 @@ func (r *SessionRepo) ListActiveByUser(ctx context.Context, userID string) ([]do
 	return out, rows.Err()
 }
 
-func (r *SessionRepo) RotateRefreshHash(ctx context.Context, id, newHash string, expiresAt time.Time) error {
+func (r *SessionRepo) UpdateCredentials(ctx context.Context, session *domain.Session) error {
+	now := time.Now()
+	session.LastSeenAt = now
 	_, err := r.writer.ExecContext(ctx, `
 		UPDATE sessions
-		SET refresh_token_hash = ?, expires_at = ?, last_seen_at = ?
+		SET refresh_token_hash = ?, expires_at = ?, last_seen_at = ?,
+		    device_id = ?, device_name = ?, device_type = ?,
+		    user_agent = ?, ip_address = ?
 		WHERE id = ? AND revoked_at IS NULL`,
-		newHash, expiresAt, time.Now(), id,
+		session.RefreshTokenHash, session.ExpiresAt, now,
+		session.DeviceID, session.DeviceName, session.DeviceType,
+		session.UserAgent, session.IPAddress,
+		session.ID,
 	)
 	return err
 }

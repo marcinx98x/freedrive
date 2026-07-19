@@ -28,6 +28,16 @@ fn desktop_device_name() -> String {
         .unwrap_or_else(|| "Desktop".to_string())
 }
 
+fn desktop_device_id() -> String {
+    crate::auth_store::device_id().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
+}
+
+fn apply_device_headers(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    req.header("X-Device-Type", "desktop")
+        .header("X-Device-Name", desktop_device_name())
+        .header("X-Device-ID", desktop_device_id())
+}
+
 #[derive(Clone)]
 
 pub struct ApiClient {
@@ -254,13 +264,7 @@ impl ApiClient {
 
 
 
-        let res = http
-
-            .post(&url)
-
-            .header("X-Device-Type", "desktop")
-
-            .header("X-Device-Name", desktop_device_name())
+        let res = apply_device_headers(http.post(&url))
 
             .json(&serde_json::json!({ "refresh_token": refresh_token }))
 
@@ -324,13 +328,7 @@ impl ApiClient {
 
         let http = reqwest::Client::new();
 
-        let res = http
-
-            .post(format!("{}/api/v1/auth/login", base))
-
-            .header("X-Device-Type", "desktop")
-
-            .header("X-Device-Name", desktop_device_name())
+        let res = apply_device_headers(http.post(format!("{}/api/v1/auth/login", base)))
 
             .json(&serde_json::json!({ "email": email, "password": password }))
 
@@ -368,13 +366,7 @@ impl ApiClient {
 
         let http = reqwest::Client::new();
 
-        let res = http
-
-            .post(format!("{}/api/v1/auth/verify-2fa", base))
-
-            .header("X-Device-Type", "desktop")
-
-            .header("X-Device-Name", desktop_device_name())
+        let res = apply_device_headers(http.post(format!("{}/api/v1/auth/verify-2fa", base)))
 
             .json(&serde_json::json!({ "challenge_id": challenge_id, "code": code }))
 

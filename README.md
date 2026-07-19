@@ -128,7 +128,7 @@ FreeDrive is ideal for:
 - Secure email change with confirmation link sent to the new address
 - Security center for per-user email 2FA toggle
 - When admin enables global `require_2fa`, all users must verify a 6-digit code at sign-in
-- **Logged-in devices** — account settings list active web and desktop sessions with device name, IP address, and last activity
+- **Logged-in devices** — account settings list active web and desktop sessions with device name, IP address, and last activity; re-login from the same browser/app overwrites that device's session instead of creating a duplicate
 - **Instant remote logout** — revoke one device or every other device; server middleware rejects the revoked session immediately
 
 ### 6. Sharing Model

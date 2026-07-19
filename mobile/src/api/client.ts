@@ -1,4 +1,5 @@
 import * as Device from "expo-device";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   clearSession,
   getServerUrl,
@@ -40,15 +41,37 @@ export function setUnauthorizedHandler(handler: AuthListener | null) {
   onUnauthorized = handler;
 }
 
+const DEVICE_ID_KEY = "fd_device_id";
+let cachedDeviceId: string | null = null;
+
 function deviceName(): string {
   const model = Device.modelName || Device.deviceName || "Phone";
   return `Mobile (${model})`;
 }
 
-function deviceHeaders(): Record<string, string> {
+function newDeviceId(): string {
+  // React Native / Expo may not expose crypto.randomUUID on all runtimes.
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `mob-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function getDeviceId(): Promise<string> {
+  if (cachedDeviceId) return cachedDeviceId;
+  let id = await AsyncStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = newDeviceId();
+    await AsyncStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  cachedDeviceId = id;
+  return id;
+}
+
+async function deviceHeaders(): Promise<Record<string, string>> {
   return {
     "X-Device-Type": "web",
     "X-Device-Name": deviceName(),
+    "X-Device-ID": await getDeviceId(),
   };
 }
 
@@ -120,7 +143,7 @@ async function tryRefreshOnce(): Promise<RefreshResult> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...deviceHeaders(),
+          ...(await deviceHeaders()),
         },
         body: JSON.stringify({ refresh_token: tokens.refresh_token }),
       },
@@ -167,7 +190,7 @@ async function request<T>(
   const url = await baseUrl();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...deviceHeaders(),
+    ...(await deviceHeaders()),
   };
   if (auth) {
     const tokens = await getTokens();
@@ -384,7 +407,7 @@ export const api = {
   }> => {
     const doFetch = async (retry: boolean) => {
       const url = await baseUrl();
-      const headers: Record<string, string> = { ...deviceHeaders() };
+      const headers: Record<string, string> = { ...(await deviceHeaders()) };
       const tokens = await getTokens();
       if (tokens?.access_token) {
         headers.Authorization = `Bearer ${tokens.access_token}`;

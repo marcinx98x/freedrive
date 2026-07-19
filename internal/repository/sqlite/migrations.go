@@ -34,6 +34,7 @@ func runMigrations(db *sql.DB) error {
 		{11, migrationV11},
 		{12, migrationV12},
 		{13, migrationV13},
+		{14, migrationV14},
 	}
 
 	for _, m := range migrations {
@@ -367,4 +368,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+`
+
+const migrationV14 = `
+ALTER TABLE sessions ADD COLUMN device_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(user_id, device_id);
 `

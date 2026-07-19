@@ -12,6 +12,7 @@ type Session struct {
 	ID               string     `json:"id"`
 	UserID           string     `json:"user_id"`
 	RefreshTokenHash string     `json:"-"`
+	DeviceID         string     `json:"device_id,omitempty"`
 	DeviceName       string     `json:"device_name"`
 	DeviceType       string     `json:"device_type"`
 	UserAgent        string     `json:"user_agent,omitempty"`

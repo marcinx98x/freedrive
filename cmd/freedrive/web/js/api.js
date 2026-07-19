@@ -46,6 +46,18 @@ const API = (() => {
         localStorage.removeItem('fd_access_token');
         localStorage.removeItem('fd_refresh_token');
         localStorage.removeItem('fd_user');
+        // Keep fd_device_id so re-login overwrites the same device session.
+    }
+
+    function getDeviceID() {
+        let id = localStorage.getItem('fd_device_id') || '';
+        if (!id) {
+            id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : ('web-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10));
+            localStorage.setItem('fd_device_id', id);
+        }
+        return id;
     }
 
     async function request(method, path, body = null, isRetry = false, rlRetries = 2) {
@@ -53,6 +65,7 @@ const API = (() => {
         if (!(body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
         }
+        headers['X-Device-ID'] = getDeviceID();
         if (accessToken) {
             headers.Authorization = `Bearer ${accessToken}`;
         }

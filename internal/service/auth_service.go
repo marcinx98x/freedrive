@@ -60,6 +60,7 @@ type TokenPair struct {
 
 // DeviceInfo describes the client that is logging in or refreshing.
 type DeviceInfo struct {
+	DeviceID   string
 	DeviceName string
 	DeviceType string
 	UserAgent  string
@@ -185,7 +186,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, device D
 		if user.Suspended {
 			return nil, ErrAccountSuspended
 		}
-		return s.rotateSessionTokens(ctx, user, session)
+		return s.rotateSessionTokens(ctx, user, session, device)
 	}
 
 	// Compatibility: migrate legacy refresh_tokens rows into sessions.
@@ -354,16 +355,34 @@ func (s *AuthService) generateTokenPair(ctx context.Context, user *domain.User, 
 	if deviceName == "" {
 		deviceName = "Unknown device"
 	}
+	deviceID := strings.TrimSpace(device.DeviceID)
 
 	session := &domain.Session{
 		UserID:           user.ID,
 		RefreshTokenHash: refreshHash,
+		DeviceID:         deviceID,
 		DeviceName:       deviceName,
 		DeviceType:       deviceType,
 		UserAgent:        device.UserAgent,
 		IPAddress:        device.IPAddress,
 		ExpiresAt:        expiresAt,
 	}
+
+	if deviceID != "" {
+		existing, err := s.sessionRepo.GetActiveByUserDevice(ctx, user.ID, deviceID)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			session.ID = existing.ID
+			session.CreatedAt = existing.CreatedAt
+			if err := s.sessionRepo.UpdateCredentials(ctx, session); err != nil {
+				return nil, err
+			}
+			return s.signTokenPair(user, session.ID, refreshStr)
+		}
+	}
+
 	if err := s.sessionRepo.Create(ctx, session); err != nil {
 		return nil, err
 	}
@@ -371,7 +390,7 @@ func (s *AuthService) generateTokenPair(ctx context.Context, user *domain.User, 
 	return s.signTokenPair(user, session.ID, refreshStr)
 }
 
-func (s *AuthService) rotateSessionTokens(ctx context.Context, user *domain.User, session *domain.Session) (*TokenPair, error) {
+func (s *AuthService) rotateSessionTokens(ctx context.Context, user *domain.User, session *domain.Session, device DeviceInfo) (*TokenPair, error) {
 	refreshBytes := make([]byte, 32)
 	if _, err := rand.Read(refreshBytes); err != nil {
 		return nil, err
@@ -380,7 +399,35 @@ func (s *AuthService) rotateSessionTokens(ctx context.Context, user *domain.User
 	refreshHash := hashToken(refreshStr)
 	expiresAt := time.Now().Add(30 * 24 * time.Hour)
 
-	if err := s.sessionRepo.RotateRefreshHash(ctx, session.ID, refreshHash, expiresAt); err != nil {
+	deviceType := device.DeviceType
+	if deviceType == "" {
+		deviceType = session.DeviceType
+	}
+	if deviceType != domain.DeviceTypeDesktop {
+		deviceType = domain.DeviceTypeWeb
+	}
+	deviceName := strings.TrimSpace(device.DeviceName)
+	if deviceName == "" {
+		deviceName = session.DeviceName
+	}
+	deviceID := strings.TrimSpace(device.DeviceID)
+	if deviceID == "" {
+		deviceID = session.DeviceID
+	}
+
+	session.RefreshTokenHash = refreshHash
+	session.ExpiresAt = expiresAt
+	session.DeviceID = deviceID
+	session.DeviceName = deviceName
+	session.DeviceType = deviceType
+	if device.UserAgent != "" {
+		session.UserAgent = device.UserAgent
+	}
+	if device.IPAddress != "" {
+		session.IPAddress = device.IPAddress
+	}
+
+	if err := s.sessionRepo.UpdateCredentials(ctx, session); err != nil {
 		return nil, err
 	}
 	return s.signTokenPair(user, session.ID, refreshStr)

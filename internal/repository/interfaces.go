@@ -172,8 +172,10 @@ type SessionRepository interface {
 	Create(ctx context.Context, session *domain.Session) error
 	GetByID(ctx context.Context, id string) (*domain.Session, error)
 	GetByRefreshHash(ctx context.Context, tokenHash string) (*domain.Session, error)
+	GetActiveByUserDevice(ctx context.Context, userID, deviceID string) (*domain.Session, error)
 	ListActiveByUser(ctx context.Context, userID string) ([]domain.Session, error)
-	RotateRefreshHash(ctx context.Context, id, newHash string, expiresAt time.Time) error
+	// UpdateCredentials rotates the refresh token and refreshes device metadata.
+	UpdateCredentials(ctx context.Context, session *domain.Session) error
 	TouchLastSeen(ctx context.Context, id string, minAgeSeconds int) error
 	RevokeByID(ctx context.Context, id, userID string) error
 	RevokeAllForUser(ctx context.Context, userID string, exceptID string) error

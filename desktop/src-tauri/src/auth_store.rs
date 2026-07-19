@@ -58,6 +58,21 @@ pub fn clear_auth() -> AppResult<()> {
     Ok(())
 }
 
+/// Stable per-install device ID used for session deduplication on the server.
+/// Survives logout (stored separately from auth.json).
+pub fn device_id() -> AppResult<String> {
+    let path = data_dir()?.join("device_id");
+    if path.exists() {
+        let existing = fs::read_to_string(&path)?.trim().to_string();
+        if !existing.is_empty() {
+            return Ok(existing);
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    fs::write(&path, &id)?;
+    Ok(id)
+}
+
 fn auth_file_path() -> AppResult<PathBuf> {
     Ok(data_dir()?.join("auth.json"))
 }
