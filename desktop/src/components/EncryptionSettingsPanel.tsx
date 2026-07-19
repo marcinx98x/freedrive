@@ -18,7 +18,8 @@ interface EncryptionSettingsPanelProps {
   onRotateCryptoKey: () => void;
   onExportKeys: () => void;
   onImportKeys: () => void;
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
 }
 
 export function EncryptionSettingsPanel({
@@ -42,18 +43,23 @@ export function EncryptionSettingsPanel({
   onExportKeys,
   onImportKeys,
   onBack,
+  embedded = false,
 }: EncryptionSettingsPanelProps) {
   return (
-    <div className="encryption-settings-panel">
-      <button type="button" className="preferences-back-btn" onClick={onBack}>
-        ← Settings
-      </button>
-      <h2>Encryption &amp; keys</h2>
+    <div className={`encryption-settings-panel${embedded ? " settings-panel-embedded" : ""}`}>
+      {!embedded && onBack && (
+        <button type="button" className="preferences-back-btn" onClick={onBack}>
+          ← Settings
+        </button>
+      )}
+      {!embedded && <h2>Encryption &amp; keys</h2>}
       {settingsError && <div className="error-banner">{settingsError}</div>}
-      <div className="form-group">
-        <label>Server URL</label>
-        <p className="settings-info-value">{serverUrl || "—"}</p>
-      </div>
+      {!embedded && (
+        <div className="form-group">
+          <label>Server URL</label>
+          <p className="settings-info-value">{serverUrl || "—"}</p>
+        </div>
+      )}
       <div className="form-group">
         <label>Encryption</label>
         {needsCryptoRecovery && (

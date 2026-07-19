@@ -737,6 +737,13 @@ pub async fn open_preferences_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn quit_app(app: AppHandle) -> Result<(), String> {
+    crate::shutdown_cfapi();
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn remove_sync_folder(
     state: State<'_, AppState>,
     folder_id: i64,

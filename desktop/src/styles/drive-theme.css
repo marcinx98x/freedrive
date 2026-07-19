@@ -966,6 +966,32 @@ input {
   margin-bottom: 24px;
 }
 
+.sync-filter-toggle {
+  display: inline-flex;
+  border: 1px solid var(--fd-border);
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sync-filter-toggle button {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fd-text-secondary);
+  background: transparent;
+}
+
+.sync-filter-toggle button.active {
+  background: var(--fd-accent);
+  color: var(--fd-accent-text);
+}
+
+.sync-filter-toggle button:not(.active):hover {
+  background: var(--fd-bg-hover);
+  color: var(--fd-text);
+}
+
 .sync-table {
   width: 100%;
   border-collapse: collapse;
@@ -1864,6 +1890,14 @@ input {
   background: var(--fd-bg-hover);
 }
 
+.settings-gear-item-danger {
+  color: #f28b82;
+}
+
+.settings-gear-item-danger:hover {
+  background: rgba(242, 139, 130, 0.12);
+}
+
 .settings-gear-checkbox {
   display: flex;
   align-items: center;
@@ -1899,3 +1933,72 @@ input {
 .explorer-integration-panel {
   max-width: 520px;
 }
+
+.settings-panel-embedded {
+  max-width: none;
+}
+
+.settings-panel-embedded .form-group:first-child {
+  margin-top: 0;
+}
+
+.about-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.about-dialog {
+  width: min(420px, 100%);
+  background: var(--fd-bg-elevated);
+  border: 1px solid var(--fd-border);
+  border-radius: var(--fd-radius);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  padding: 28px 28px 24px;
+}
+
+.about-dialog h2 {
+  margin: 0 0 20px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.about-dialog-meta {
+  margin: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.about-dialog-meta div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.about-dialog-meta dt {
+  margin: 0;
+  color: var(--fd-text-secondary);
+  font-size: 13px;
+}
+
+.about-dialog-meta dd {
+  margin: 0;
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.about-dialog-server {
+  color: var(--fd-text);
+}
+
+.about-dialog .btn-primary {
+  min-width: 88px;
+}
+

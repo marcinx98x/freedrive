@@ -45,6 +45,7 @@ export const api = {
   removeSyncFolder: (folder_id: number) =>
     invoke<void>("remove_sync_folder", { folderId: folder_id }),
   openPreferencesWindow: () => invoke<void>("open_preferences_window"),
+  quitApp: () => invoke<void>("quit_app"),
   getSyncMode: () => invoke<SyncMode>("get_sync_mode"),
   setSyncMode: (mode: SyncMode) => invoke<void>("set_sync_mode", { mode }),
   getLaunchOnLogin: () => invoke<boolean>("get_launch_on_login"),

@@ -3,10 +3,14 @@ import { api } from "../api/tauri";
 import type { ExplorerIntegrationStatus } from "../types";
 
 interface ExplorerIntegrationPanelProps {
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
 }
 
-export function ExplorerIntegrationPanel({ onBack }: ExplorerIntegrationPanelProps) {
+export function ExplorerIntegrationPanel({
+  onBack,
+  embedded = false,
+}: ExplorerIntegrationPanelProps) {
   const [status, setStatus] = useState<ExplorerIntegrationStatus | null>(null);
   const [error, setError] = useState("");
 
@@ -18,11 +22,13 @@ export function ExplorerIntegrationPanel({ onBack }: ExplorerIntegrationPanelPro
   }, []);
 
   return (
-    <div className="explorer-integration-panel">
-      <button type="button" className="preferences-back-btn" onClick={onBack}>
-        ← Settings
-      </button>
-      <h2>Explorer integration</h2>
+    <div className={`explorer-integration-panel${embedded ? " settings-panel-embedded" : ""}`}>
+      {!embedded && onBack && (
+        <button type="button" className="preferences-back-btn" onClick={onBack}>
+          ← Settings
+        </button>
+      )}
+      {!embedded && <h2>Explorer integration</h2>}
       {error && <div className="error-banner">{error}</div>}
       {status && (
         <>

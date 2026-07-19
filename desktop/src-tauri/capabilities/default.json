@@ -5,6 +5,8 @@
   "windows": ["main", "preferences"],
   "permissions": [
     "core:default",
+    "core:window:allow-hide",
+    "core:app:allow-version",
     "core:tray:default",
     "opener:default",
     "dialog:default",

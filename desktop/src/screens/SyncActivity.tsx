@@ -5,6 +5,8 @@ interface SyncActivityProps {
   syncStatus: SyncStatus;
   activity: ActivityItem[];
   search: string;
+  errorsOnly?: boolean;
+  onErrorsOnlyChange?: (errorsOnly: boolean) => void;
 }
 
 function statusLabel(status: string) {
@@ -24,10 +26,18 @@ function statusLabel(status: string) {
   }
 }
 
-export function SyncActivity({ syncStatus, activity, search }: SyncActivityProps) {
-  const filtered = search
-    ? activity.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()))
-    : activity;
+export function SyncActivity({
+  syncStatus,
+  activity,
+  search,
+  errorsOnly = false,
+  onErrorsOnlyChange,
+}: SyncActivityProps) {
+  let filtered = errorsOnly ? activity.filter((a) => a.status === "error") : activity;
+  if (search) {
+    const q = search.toLowerCase();
+    filtered = filtered.filter((a) => a.name.toLowerCase().includes(q));
+  }
 
   const isError = syncStatus.status === "error";
   const isSyncing = syncStatus.status === "syncing";
@@ -59,6 +69,24 @@ export function SyncActivity({ syncStatus, activity, search }: SyncActivityProps
               : `Synced ${formatRelativeTime(syncStatus.last_synced_at)}`}
           </div>
         </div>
+        {onErrorsOnlyChange && (
+          <div className="sync-filter-toggle" role="group" aria-label="Activity filter">
+            <button
+              type="button"
+              className={!errorsOnly ? "active" : ""}
+              onClick={() => onErrorsOnlyChange(false)}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={errorsOnly ? "active" : ""}
+              onClick={() => onErrorsOnlyChange(true)}
+            >
+              Errors
+            </button>
+          </div>
+        )}
       </div>
 
       <table className="sync-table">
@@ -73,7 +101,9 @@ export function SyncActivity({ syncStatus, activity, search }: SyncActivityProps
           {filtered.length === 0 ? (
             <tr>
               <td colSpan={3}>
-                <div className="empty-state">No sync activity yet</div>
+                <div className="empty-state">
+                  {errorsOnly ? "No sync errors" : "No sync activity yet"}
+                </div>
               </td>
             </tr>
           ) : (

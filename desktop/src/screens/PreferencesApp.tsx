@@ -6,18 +6,13 @@ import {
   onCryptoRecoverySetup,
   onCryptoUnlocked,
 } from "../api/tauri";
-import { EncryptionSettingsPanel } from "../components/EncryptionSettingsPanel";
-import { ExplorerIntegrationPanel } from "../components/ExplorerIntegrationPanel";
 import { FreeDriveTab } from "../components/FreeDriveTab";
 import { MyComputerTab } from "../components/MyComputerTab";
 import {
   PreferencesHeader,
   type PreferencesView,
 } from "../components/PreferencesHeader";
-import {
-  PreferencesSettingsPage,
-  type SettingsSubPage,
-} from "../components/PreferencesSettingsPage";
+import { PreferencesSettingsPage } from "../components/PreferencesSettingsPage";
 import { PreferencesSidebar } from "../components/PreferencesSidebar";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { useEncryptionSettings } from "../hooks/useEncryptionSettings";
@@ -29,7 +24,6 @@ export function PreferencesApp() {
   const [loading, setLoading] = useState(true);
   const [preferencesView, setPreferencesView] = useState<PreferencesView>("sync");
   const [activeTab, setActiveTab] = useState<PreferencesTab>("my-computer");
-  const [settingsSubPage, setSettingsSubPage] = useState<SettingsSubPage | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileAnchor, setProfileAnchor] = useState<DOMRect | null>(null);
   const [launchOnLogin, setLaunchOnLogin] = useState(false);
@@ -77,7 +71,6 @@ export function PreferencesApp() {
       setKeysImportMessage(`Save this recovery code in a safe place: ${code}`);
       setCryptoUnlocked(true);
       setPreferencesView("settings");
-      setSettingsSubPage("encryption");
     }).then((u) => unsubs.push(u));
     onCryptoKeysSynced((stats) => {
       const total = stats.pulled + stats.pushed + stats.pending_flushed;
@@ -103,7 +96,11 @@ export function PreferencesApp() {
   ]);
 
   const handleDone = async () => {
-    await getCurrentWindow().hide();
+    try {
+      await getCurrentWindow().hide();
+    } catch (err) {
+      console.error("Failed to hide preferences window:", err);
+    }
   };
 
   const handleSignOut = async () => {
@@ -112,6 +109,7 @@ export function PreferencesApp() {
       setProfileOpen(false);
       await getCurrentWindow().hide();
     } catch (err) {
+      console.error("Failed to sign out / hide preferences:", err);
       setSettingsError(String(err));
     }
   };
@@ -126,12 +124,10 @@ export function PreferencesApp() {
   };
 
   const handleOpenSettings = () => {
-    setSettingsSubPage(null);
     setPreferencesView("settings");
   };
 
   const handleBackToSync = () => {
-    setSettingsSubPage(null);
     setPreferencesView("sync");
   };
 
@@ -187,40 +183,13 @@ export function PreferencesApp() {
             {encryption.settingsError && (
               <div className="error-banner">{encryption.settingsError}</div>
             )}
-            {settingsSubPage === null ? (
-              <PreferencesSettingsPage
-                serverUrl={serverUrl}
-                launchOnLogin={launchOnLogin}
-                onBackToSync={handleBackToSync}
-                onLaunchOnLoginChange={handleLaunchOnLoginChange}
-                onOpenSubPage={setSettingsSubPage}
-              />
-            ) : settingsSubPage === "encryption" ? (
-              <EncryptionSettingsPanel
-                serverUrl={serverUrl}
-                settingsError={encryption.settingsError}
-                keysImportMessage={encryption.keysImportMessage}
-                keysImporting={encryption.keysImporting}
-                keysExporting={encryption.keysExporting}
-                cryptoUnlocked={encryption.cryptoUnlocked}
-                serverHasCrypto={encryption.serverHasCrypto}
-                cryptoUnlockError={encryption.cryptoUnlockError}
-                needsCryptoRecovery={encryption.needsCryptoRecovery}
-                recoveryCode={encryption.recoveryCode}
-                recoveryUnlocking={encryption.recoveryUnlocking}
-                rotatePassword={encryption.rotatePassword}
-                rotatingKey={encryption.rotatingKey}
-                onRecoveryCodeChange={encryption.setRecoveryCode}
-                onRotatePasswordChange={encryption.setRotatePassword}
-                onUnlockRecovery={encryption.handleUnlockRecovery}
-                onRotateCryptoKey={encryption.handleRotateCryptoKey}
-                onExportKeys={encryption.handleExportEncryptionKeys}
-                onImportKeys={encryption.handleImportEncryptionKeys}
-                onBack={() => setSettingsSubPage(null)}
-              />
-            ) : (
-              <ExplorerIntegrationPanel onBack={() => setSettingsSubPage(null)} />
-            )}
+            <PreferencesSettingsPage
+              serverUrl={serverUrl}
+              launchOnLogin={launchOnLogin}
+              onBackToSync={handleBackToSync}
+              onLaunchOnLoginChange={handleLaunchOnLoginChange}
+              encryption={encryption}
+            />
           </main>
         )}
       </div>

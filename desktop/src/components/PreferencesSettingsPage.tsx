@@ -1,13 +1,16 @@
 import { api } from "../api/tauri";
+import { EncryptionSettingsPanel } from "./EncryptionSettingsPanel";
+import { ExplorerIntegrationPanel } from "./ExplorerIntegrationPanel";
+import type { useEncryptionSettings } from "../hooks/useEncryptionSettings";
 
-export type SettingsSubPage = "encryption" | "explorer";
+type EncryptionState = ReturnType<typeof useEncryptionSettings>;
 
 interface PreferencesSettingsPageProps {
   serverUrl: string | null;
   launchOnLogin: boolean;
   onBackToSync: () => void;
   onLaunchOnLoginChange: (enabled: boolean) => void;
-  onOpenSubPage: (page: SettingsSubPage) => void;
+  encryption: EncryptionState;
 }
 
 export function PreferencesSettingsPage({
@@ -15,7 +18,7 @@ export function PreferencesSettingsPage({
   launchOnLogin,
   onBackToSync,
   onLaunchOnLoginChange,
-  onOpenSubPage,
+  encryption,
 }: PreferencesSettingsPageProps) {
   return (
     <div className="preferences-settings-page">
@@ -51,30 +54,33 @@ export function PreferencesSettingsPage({
 
       <section className="preferences-settings-section">
         <h3>Security</h3>
-        <button
-          type="button"
-          className="preferences-settings-row"
-          onClick={() => onOpenSubPage("encryption")}
-        >
-          <span>Encryption &amp; keys</span>
-          <span className="preferences-settings-chevron" aria-hidden>
-            ›
-          </span>
-        </button>
+        <EncryptionSettingsPanel
+          embedded
+          serverUrl={serverUrl}
+          settingsError={encryption.settingsError}
+          keysImportMessage={encryption.keysImportMessage}
+          keysImporting={encryption.keysImporting}
+          keysExporting={encryption.keysExporting}
+          cryptoUnlocked={encryption.cryptoUnlocked}
+          serverHasCrypto={encryption.serverHasCrypto}
+          cryptoUnlockError={encryption.cryptoUnlockError}
+          needsCryptoRecovery={encryption.needsCryptoRecovery}
+          recoveryCode={encryption.recoveryCode}
+          recoveryUnlocking={encryption.recoveryUnlocking}
+          rotatePassword={encryption.rotatePassword}
+          rotatingKey={encryption.rotatingKey}
+          onRecoveryCodeChange={encryption.setRecoveryCode}
+          onRotatePasswordChange={encryption.setRotatePassword}
+          onUnlockRecovery={encryption.handleUnlockRecovery}
+          onRotateCryptoKey={encryption.handleRotateCryptoKey}
+          onExportKeys={encryption.handleExportEncryptionKeys}
+          onImportKeys={encryption.handleImportEncryptionKeys}
+        />
       </section>
 
       <section className="preferences-settings-section">
         <h3>File Explorer</h3>
-        <button
-          type="button"
-          className="preferences-settings-row"
-          onClick={() => onOpenSubPage("explorer")}
-        >
-          <span>Explorer integration</span>
-          <span className="preferences-settings-chevron" aria-hidden>
-            ›
-          </span>
-        </button>
+        <ExplorerIntegrationPanel embedded />
       </section>
 
       <section className="preferences-settings-section">

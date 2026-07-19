@@ -12,6 +12,8 @@ import {
   onSyncStatusChanged,
 } from "../api/tauri";
 import { ProfileMenu } from "../components/ProfileMenu";
+import { AboutDialog } from "../components/AboutDialog";
+import { SettingsMenu, type SettingsMenuAction } from "../components/SettingsMenu";
 import { Sidebar } from "../components/Sidebar";
 import { TopBar } from "../components/TopBar";
 import { useNotifications } from "../hooks/useNotifications";
@@ -50,6 +52,10 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
   const [search, setSearch] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileAnchor, setProfileAnchor] = useState<DOMRect | null>(null);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [activityErrorsOnly, setActivityErrorsOnly] = useState(false);
   const [hydrateWarning, setHydrateWarning] = useState("");
   const [folderError, setFolderError] = useState("");
   const [explorerWarning, setExplorerWarning] = useState("");
@@ -222,6 +228,27 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     }
   }, [view, markAllSeen]);
 
+  const handleSettingsAction = (action: SettingsMenuAction) => {
+    switch (action) {
+      case "preferences":
+        api.openPreferencesWindow().catch(console.error);
+        break;
+      case "error-list":
+        setActivityErrorsOnly(true);
+        setView("sync");
+        break;
+      case "about":
+        setAboutOpen(true);
+        break;
+      case "help":
+        api.openServerUrl().catch(console.error);
+        break;
+      case "quit":
+        api.quitApp().catch(console.error);
+        break;
+    }
+  };
+
   const handlePauseResume = async () => {
     try {
       if (syncStatus.paused) {
@@ -266,7 +293,10 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
       <Sidebar
         view={view}
         notificationCount={badgeCount}
-        onNavigate={setView}
+        onNavigate={(next) => {
+          if (next === "sync") setActivityErrorsOnly(false);
+          setView(next);
+        }}
         onOpenFolder={handleOpenDriveFolder}
       />
       <div className="main-content">
@@ -286,12 +316,16 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           search={search}
           onSearchChange={setSearch}
           onPauseResume={handlePauseResume}
-          onOpenSettings={() => {
-            api.openPreferencesWindow().catch(console.error);
+          onSettingsClick={(rect) => {
+            setSettingsAnchor(rect);
+            setSettingsMenuOpen((open) => !open);
+            setProfileOpen(false);
           }}
+          onHelp={() => api.openServerUrl().catch(console.error)}
           onProfileClick={(rect) => {
             setProfileAnchor(rect);
             setProfileOpen((open) => !open);
+            setSettingsMenuOpen(false);
           }}
         />
         <div className="content-area">
@@ -303,13 +337,22 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
               notifications={notifications}
               onDismiss={dismiss}
               onGoToNotifications={() => setView("notifications")}
-              onViewSyncActivity={() => setView("sync")}
+              onViewSyncActivity={() => {
+                setActivityErrorsOnly(false);
+                setView("sync");
+              }}
               onResumeSync={handlePauseResume}
               onFoldersChanged={refresh}
             />
           )}
           {view === "sync" && (
-            <SyncActivity syncStatus={syncStatus} activity={activity} search={search} />
+            <SyncActivity
+              syncStatus={syncStatus}
+              activity={activity}
+              search={search}
+              errorsOnly={activityErrorsOnly}
+              onErrorsOnlyChange={setActivityErrorsOnly}
+            />
           )}
           {view === "notifications" && (
             <Notifications
@@ -322,6 +365,18 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
           )}
         </div>
       </div>
+
+      {settingsMenuOpen && (
+        <SettingsMenu
+          anchorRect={settingsAnchor}
+          onClose={() => setSettingsMenuOpen(false)}
+          onAction={handleSettingsAction}
+        />
+      )}
+
+      {aboutOpen && (
+        <AboutDialog serverUrl={serverUrl} onClose={() => setAboutOpen(false)} />
+      )}
 
       {profileOpen && (
         <ProfileMenu

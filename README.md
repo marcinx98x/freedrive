@@ -52,7 +52,7 @@ What makes it practical:
 - Single binary backend (`Go`) with embedded web assets
 - Embedded SQLite database (no external DB required)
 - Local disk storage backend
-- JWT access + refresh-token authentication
+- Session-backed JWT access + rotating refresh-token authentication
 - Optional email-based two-factor authentication (2FA)
 - User profile settings and secure email change flow
 - User and admin workspaces in one application
@@ -126,6 +126,8 @@ FreeDrive is ideal for:
 - Secure email change with confirmation link sent to the new address
 - Security center for per-user email 2FA toggle
 - When admin enables global `require_2fa`, all users must verify a 6-digit code at sign-in
+- **Logged-in devices** — account settings list active web and desktop sessions with device name, IP address, and last activity
+- **Instant remote logout** — revoke one device or every other device; server middleware rejects the revoked session immediately
 
 ### 6. Sharing Model
 
@@ -235,7 +237,7 @@ Runtime flow summary:
 
 1. Request hits `chi` router
 2. Global middleware stack executes (CORS, rate-limit, recover, logger)
-3. Auth middleware validates JWT when required
+3. Auth middleware validates the JWT and verifies its `sid` session against SQLite when required
 4. Handler validates input and calls service/repo
 5. Service applies policy (quota, ownership, versioning, capacity, activity, IP rules)
 6. Response serialized as JSON
@@ -248,10 +250,12 @@ Admin settings are read from `data/settings.json` via the `adminsettings` packag
 
 ### Authentication
 
-- Access token: JWT
-- Refresh token: random token, stored hashed in DB
-- Token rotation on refresh
-- Logout revokes refresh token
+- Access token: JWT with a server-side session identifier (`sid`)
+- Refresh token: random token, stored hashed with device metadata in the `sessions` table
+- Refresh-token rotation keeps the same session and `sid`
+- Every protected request verifies that the session still exists and has not been revoked
+- Logout and remote device removal revoke the session immediately
+- Active sessions record device type/name, user agent, IP address, creation time, and last activity
 - Optional **email 2FA**: 6-digit code sent via SMTP after password verification
 - Global `require_2fa` admin setting forces 2FA for every account
 
@@ -514,6 +518,9 @@ Base path: `/api/v1`
 - `GET /me/storage`
 - `GET /activity`
 - `GET /disk-stats`
+- `GET /auth/sessions` — list the current user's active devices; marks the current session
+- `DELETE /auth/sessions/{id}` — remotely sign out one of the current user's devices
+- `POST /auth/sessions/revoke-others` — sign out every device except the current session
 - `GET /search` — advanced search (query + filters: type, owner, location, trash, starred, modified, approvals, follow-ups, …)
 - `GET /approvals` — list approvals for current user (`?status=pending` optional)
 - `PATCH /approvals/{id}` — `{ status: "approved" | "rejected" }` (approver only)
@@ -633,9 +640,14 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
 - **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
-- **Preferences window** — separate window (gear icon) with **My computer** (sync folders, add/remove), **FreeDrive** (My Drive stream/mirror mode + Explorer integration), and **Settings** (encryption, launch on login, sync log)
+- **Settings menu** — the main-window gear opens **Preferences**, **Error list**, **About**, **Help**, and **Quit**
+- **Preferences window** — separate window with **My computer** (sync folders, add/remove), **FreeDrive** (My Drive stream/mirror mode), and a single scrollable Settings page
+- **Unified Settings page** — launch on login, diagnostics, encryption and keys, File Explorer integration, and server information are expanded in one view
+- **Error list** — opens Sync activity filtered to failed items, with an All / Errors toggle
+- **About dialog** — displays the desktop app version and connected server
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
 - **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out
+- **Device identification** — login, 2FA verification, and refresh requests report the desktop hostname so the app appears clearly in the account's logged-in-device list
 - **Non-blocking sign-in** — encryption unlock, sync restore, and Explorer (CfAPI) integration run in the background so the UI returns immediately after login
 - **Silent background sync** — on restart, background verification shows progress on Home (`Syncing…` / `Processing N/M`) without flooding Sync activity; if initial sync was interrupted, startup resumes the full sync instead of verify-only
 - **Queued changes during sync** — uploads and deletes that happen while initial sync or verify is running are queued and applied when that pass finishes
@@ -652,6 +664,20 @@ Quick start (from repo root):
 go run ./cmd/freedrive          # terminal 1 — server
 cd desktop && npm install && npm run tauri dev   # terminal 2 — desktop
 ```
+
+Build Windows installers:
+
+```bash
+cd desktop
+npm install
+npm run build:exe
+```
+
+Build outputs:
+
+- `desktop/src-tauri/target/release/freedrive-desktop.exe`
+- `desktop/src-tauri/target/release/bundle/nsis/FreeDrive_0.1.0_x64-setup.exe`
+- `desktop/src-tauri/target/release/bundle/msi/FreeDrive_0.1.0_x64_en-US.msi`
 
 ---
 

@@ -18,7 +18,7 @@ use tauri::{
     Manager, RunEvent, WindowEvent,
 };
 
-fn shutdown_cfapi() {
+pub(crate) fn shutdown_cfapi() {
     #[cfg(windows)]
     crate::cfapi::stop();
 }
@@ -51,6 +51,7 @@ pub fn run() {
             commands::add_sync_folder,
             commands::remove_sync_folder,
             commands::open_preferences_window,
+            commands::quit_app,
             commands::get_sync_mode,
             commands::set_sync_mode,
             commands::get_launch_on_login,
