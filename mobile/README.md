@@ -15,8 +15,13 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
 - **User avatar** — photo from `avatar_url` on `GET /api/v1/me`, or initials fallback
 - **Devices** — appears as `Mobile (…)` on the account Devices list
+- **File actions** — item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
+- **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
+- **In-app preview** — native image, text/Markdown/JSON/CSV, and PDF previews
+- **Share a copy** — opens the Android share sheet with the decrypted file
+- **Download** — saves silently to Android's shared Downloads collection and posts a tappable “Download complete” notification; Android 13+ asks for notification permission
 
-Upload, download, offline files, and in-app preview are planned for later releases.
+Upload and offline files are planned for later releases.
 
 ## Requirements
 

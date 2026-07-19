@@ -694,7 +694,11 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
-- Upload, download, offline files, and in-app preview are planned for later releases
+- **File actions** — open, share a decrypted copy, download, star/unstar, and move files to Bin from item menus
+- **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
+- **In-app preview** — images, text/Markdown/JSON/CSV, and PDF files
+- **Android downloads** — saves silently to the shared Downloads collection, then shows a tappable system notification that opens the file
+- Upload and offline files are planned for later releases
 - See [`mobile/README.md`](mobile/README.md) for Expo Go setup and local APK build notes
 
 Quick start:
