@@ -2416,6 +2416,11 @@ const FileManager = (() => {
             setElementHidden(actionMap.request_approval, !showApproval);
             actionMap.request_approval.style.display = showApproval ? '' : 'none';
         }
+        if (actionMap.open_with) {
+            const showOpenWith = !inTrash && target && target.type === 'file';
+            setElementHidden(actionMap.open_with, !showOpenWith);
+            actionMap.open_with.style.display = showOpenWith ? '' : 'none';
+        }
 
         const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
         if (computerEntry) {
@@ -2581,7 +2586,7 @@ const FileManager = (() => {
                 }
                 return;
             case 'open_with':
-                Components.toast('Open with is available for connected apps soon', 'info');
+                if (type === 'file') showOpenWithDialog(data);
                 return;
             case 'share':
                 openShareModal({ type, data });
@@ -4235,6 +4240,92 @@ const FileManager = (() => {
             console.error('Failed to open file:', err);
             Components.toast('Failed to open file: ' + err.message, 'error');
         }
+    }
+
+    function showOpenWithDialog(file) {
+        document.querySelector('.open-with-overlay')?.remove();
+
+        const group = getMimeGroup(file.mime_type, 'file', file.name);
+        const apps = [];
+        const addApp = (id, label, description, icon, action, recommended = false) => {
+            apps.push({ id, label, description, icon, action, recommended });
+        };
+
+        if (group === 'image') {
+            addApp('image', 'FreeDrive Photos', 'View and edit the image', 'photo', () => openImageEditor(file), true);
+        } else if (isJsonMimeOrName(file.mime_type, file.name)) {
+            addApp('json', 'FreeDrive JSON Viewer', 'Structured JSON editor', 'data_object', () => openJsonViewer(file), true);
+            addApp('text', 'FreeDrive Text Editor', 'Open as plain text', 'description', () => openTextEditor(file));
+        } else if (group === 'text' || file.mime_type === 'text/markdown') {
+            addApp('text', 'FreeDrive Docs', 'Edit text and documents', 'description', () => openTextEditor(file), true);
+        } else if (group === 'pdf') {
+            addApp('pdf', 'FreeDrive PDF Viewer', 'Read the PDF document', 'picture_as_pdf', () => openPdfViewer(file), true);
+        } else if (group === 'video') {
+            addApp('video', 'FreeDrive Video Player', 'Play the video', 'movie', () => openVideoPlayer(file), true);
+        } else if (group === 'audio') {
+            addApp('audio', 'FreeDrive Audio Player', 'Play the audio file', 'music_note', () => openAudioPlayer(file), true);
+        } else if (group === 'sheet') {
+            addApp('sheet', 'FreeDrive Sheets', 'View and edit the spreadsheet', 'table_chart', () => openSheetViewer(file), true);
+        }
+
+        if (!apps.length) {
+            addApp('download', 'Download', 'Download and open on this device', 'download', () => downloadFile(file), true);
+        }
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay open-with-overlay';
+        overlay.innerHTML = `
+            <div class="modal open-with-modal" role="dialog" aria-modal="true" aria-labelledby="open-with-title">
+                <div class="modal-header">
+                    <div>
+                        <h3 id="open-with-title">Open with</h3>
+                        <p class="open-with-filename">${esc(file.name || 'File')}</p>
+                    </div>
+                    <button type="button" class="btn-icon open-with-close" aria-label="Close"><span class="material-icons-outlined">close</span></button>
+                </div>
+                <div class="modal-body open-with-apps">
+                    ${apps.map((app) => `
+                        <button type="button" class="open-with-app" data-open-app="${app.id}">
+                            <span class="open-with-app-icon material-icons-outlined">${app.icon}</span>
+                            <span class="open-with-app-copy">
+                                <span class="open-with-app-title">${esc(app.label)}</span>
+                                <span class="open-with-app-description">${esc(app.description)}</span>
+                            </span>
+                            ${app.recommended ? '<span class="open-with-recommended">Recommended</span>' : ''}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        const close = () => {
+            document.removeEventListener('keydown', onKeyDown);
+            overlay.remove();
+        };
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') close();
+        };
+
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) close();
+        });
+        overlay.querySelector('.open-with-close').addEventListener('click', close);
+        overlay.querySelectorAll('[data-open-app]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const app = apps.find((candidate) => candidate.id === button.dataset.openApp);
+                if (!app) return;
+                close();
+                try {
+                    await app.action();
+                } catch (err) {
+                    console.error('Failed to open file with selected app:', err);
+                    Components.toast('Failed to open file: ' + (err.message || 'Unknown error'), 'error');
+                }
+            });
+        });
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(overlay);
+        overlay.querySelector('.open-with-app')?.focus();
     }
 
     function openFileById(file) {
@@ -5922,64 +6013,57 @@ const FileManager = (() => {
         wrap.className = 'sheet-wrap';
         wrap.innerHTML = `
             <div class="sheet-toolbar">
-                <div class="row-inline">
-                    <input id="sheet-search" placeholder="Search / filter" style="height:32px;border-radius:8px;border:1px solid var(--fd-border);background:var(--fd-bg-soft);color:var(--fd-text);padding:0 8px;">
-                </div>
-                <div class="row-inline" id="sheet-tabs" style="display:none;gap:4px;flex-wrap:wrap;"></div>
-                <div class="row-inline">
-                    <button class="btn btn-secondary btn-sm" id="sheet-export">Export CSV</button>
-                </div>
+                <button type="button" class="tool-btn tool-btn-icon" id="sheet-undo" title="Undo"><span class="material-icons-outlined">undo</span></button>
+                <button type="button" class="tool-btn tool-btn-icon" id="sheet-redo" title="Redo"><span class="material-icons-outlined">redo</span></button>
+                <span class="tool-sep" aria-hidden="true"></span>
+                <label class="sheet-search-wrap" title="Find rows">
+                    <span class="material-icons-outlined">search</span>
+                    <input id="sheet-search" placeholder="Search">
+                </label>
+                <span class="tool-sep" aria-hidden="true"></span>
+                <button type="button" class="tool-btn tool-btn-icon" id="sheet-export" title="Export CSV"><span class="material-icons-outlined">download</span></button>
+            </div>
+            <div class="sheet-formula-bar">
+                <span class="sheet-cell-address" id="sheet-cell-address">A1</span>
+                <span class="sheet-fx">fx</span>
+                <input id="sheet-formula-input" aria-label="Cell value or formula" placeholder="Select a cell">
             </div>
             <div class="sheet-body" id="sheet-body"><div style="padding:40px;text-align:center;color:var(--fd-text-muted)">Loading...</div></div>
+            <div class="sheet-tabs-bar" id="sheet-tabs"></div>
         `;
         shell.appendChild(wrap);
 
         let workbook = null;
         let sheetNames = [];
         let activeSheetIdx = 0;
-        let rows = [];
+        let csvRows = [];
+        let activeCell = { row: 0, col: 0 };
+        let searchTerm = '';
+        const changes = new Map();
+        const undoStack = [];
+        const redoStack = [];
 
         try {
             const blob = await decryptFileBlob(file);
             if (isXlsx) {
                 await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', 'XLSX');
                 const arrayBuffer = await blob.arrayBuffer();
-                workbook = window.XLSX.read(arrayBuffer, { type: 'array' });
+                workbook = window.XLSX.read(arrayBuffer, {
+                    type: 'array',
+                    cellFormula: true,
+                    cellStyles: true,
+                    cellNF: true,
+                    cellDates: true,
+                });
                 sheetNames = workbook.SheetNames || [];
                 if (!sheetNames.length) {
                     throw new Error('No worksheet found in this file');
                 }
-
-                if (sheetNames.length > 1) {
-                    const tabsEl = document.getElementById('sheet-tabs');
-                    if (tabsEl) {
-                        tabsEl.style.display = 'flex';
-                        sheetNames.forEach((name, i) => {
-                            const tab = document.createElement('button');
-                            tab.className = `btn btn-sm ${i === 0 ? 'btn-primary' : 'btn-secondary'}`;
-                            tab.textContent = name;
-                            tab.style.fontSize = '12px';
-                            tab.addEventListener('click', () => {
-                                activeSheetIdx = i;
-                                tabsEl.querySelectorAll('button').forEach((b, j) => {
-                                    b.className = `btn btn-sm ${j === i ? 'btn-primary' : 'btn-secondary'}`;
-                                });
-                                const sheet = workbook.Sheets[sheetNames[i]];
-                                rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
-                                if (!rows.length) rows.push(['']);
-                                tableData = rows;
-                                renderTable('');
-                            });
-                            tabsEl.appendChild(tab);
-                        });
-                    }
-                }
-
-                const sheet = workbook.Sheets[sheetNames[0]];
-                rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
             } else {
                 const csv = await blob.text();
-                rows = csv.split(/\r?\n/).filter((r) => r.length > 0).map((r) => r.split(','));
+                csvRows = csv.split(/\r?\n/).filter((r) => r.length > 0).map((r) => r.split(','));
+                if (!csvRows.length) csvRows = [['']];
+                sheetNames = ['Sheet1'];
             }
         } catch (err) {
             const body = document.getElementById('sheet-body');
@@ -5989,46 +6073,183 @@ const FileManager = (() => {
             return;
         }
 
-        if (!rows.length) rows.push(['']);
-        let tableData = rows;
+        const changeKey = (sheetIdx, row, col) => `${sheetIdx}:${row}:${col}`;
+        const encodeCell = (row, col) => window.XLSX
+            ? window.XLSX.utils.encode_cell({ r: row, c: col })
+            : `${columnName(col)}${row + 1}`;
 
-        const renderTable = (search = '') => {
+        function columnName(index) {
+            let value = index + 1;
+            let name = '';
+            while (value > 0) {
+                const remainder = (value - 1) % 26;
+                name = String.fromCharCode(65 + remainder) + name;
+                value = Math.floor((value - 1) / 26);
+            }
+            return name;
+        }
+
+        function sheetDimensions() {
+            if (!workbook) {
+                return {
+                    rows: Math.max(20, csvRows.length),
+                    cols: Math.max(10, ...csvRows.map((row) => row.length)),
+                };
+            }
+            const sheet = workbook.Sheets[sheetNames[activeSheetIdx]];
+            const range = window.XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+            return {
+                rows: Math.max(20, range.e.r + 1),
+                cols: Math.max(10, range.e.c + 1),
+            };
+        }
+
+        function originalCellValue(sheetIdx, row, col, formula = false) {
+            if (!workbook) return String(csvRows[row]?.[col] ?? '');
+            const sheet = workbook.Sheets[sheetNames[sheetIdx]];
+            const cell = sheet?.[encodeCell(row, col)];
+            if (!cell) return '';
+            if (formula && cell.f) return `=${cell.f}`;
+            return String(window.XLSX.utils.format_cell(cell) ?? cell.v ?? '');
+        }
+
+        function displayedCellValue(sheetIdx, row, col, formula = false) {
+            const changed = changes.get(changeKey(sheetIdx, row, col));
+            return changed !== undefined ? changed : originalCellValue(sheetIdx, row, col, formula);
+        }
+
+        function recordChange(row, col, value, addHistory = true) {
+            const key = changeKey(activeSheetIdx, row, col);
+            const oldValue = displayedCellValue(activeSheetIdx, row, col, true);
+            const newValue = String(value ?? '');
+            if (oldValue === newValue) return;
+            const original = originalCellValue(activeSheetIdx, row, col, true);
+            if (newValue === original) changes.delete(key);
+            else changes.set(key, newValue);
+            if (addHistory) {
+                undoStack.push({ sheetIdx: activeSheetIdx, row, col, oldValue, newValue });
+                redoStack.length = 0;
+            }
+            setEditorSaved(false);
+        }
+
+        function selectCell(row, col, focus = false) {
+            activeCell = { row, col };
+            wrap.querySelectorAll('.sheet-table td.active').forEach((cell) => cell.classList.remove('active'));
+            const cell = wrap.querySelector(`.sheet-table td[data-row="${row}"][data-col="${col}"]`);
+            cell?.classList.add('active');
+            document.getElementById('sheet-cell-address').textContent = `${columnName(col)}${row + 1}`;
+            document.getElementById('sheet-formula-input').value = displayedCellValue(activeSheetIdx, row, col, true);
+            if (focus) cell?.focus();
+        }
+
+        const renderTable = () => {
             const body = document.getElementById('sheet-body');
             if (!body) return;
-            const headers = tableData[0] || ['Column'];
-            const dataRows = tableData.slice(1).filter((r) => {
-                if (!search) return true;
-                return r.join(' ').toLowerCase().includes(search.toLowerCase());
-            });
+            const dimensions = sheetDimensions();
+            const matchingRows = new Set();
+            for (let row = 0; row < dimensions.rows; row += 1) {
+                if (!searchTerm) {
+                    matchingRows.add(row);
+                    continue;
+                }
+                for (let col = 0; col < dimensions.cols; col += 1) {
+                    if (displayedCellValue(activeSheetIdx, row, col).toLowerCase().includes(searchTerm)) {
+                        matchingRows.add(row);
+                        break;
+                    }
+                }
+            }
 
             body.innerHTML = `
                 <table class="sheet-table" id="sheet-table">
-                    <thead><tr>${headers.map((h, i) => `<th data-col="${i}">${esc(String(h || ''))} ↕</th>`).join('')}</tr></thead>
+                    <thead><tr><th class="sheet-corner"></th>${Array.from({ length: dimensions.cols }, (_, col) => `<th>${columnName(col)}</th>`).join('')}</tr></thead>
                     <tbody>
-                        ${dataRows.map((r) => `<tr>${headers.map((_, i) => `<td contenteditable="true">${esc(String(r[i] || ''))}</td>`).join('')}</tr>`).join('')}
+                        ${Array.from({ length: dimensions.rows }, (_, row) => `
+                            <tr${matchingRows.has(row) ? '' : ' hidden'}>
+                                <th class="sheet-row-number">${row + 1}</th>
+                                ${Array.from({ length: dimensions.cols }, (_, col) => `<td contenteditable="true" spellcheck="false" data-row="${row}" data-col="${col}">${esc(displayedCellValue(activeSheetIdx, row, col))}</td>`).join('')}
+                            </tr>
+                        `).join('')}
                     </tbody>
                 </table>
             `;
 
-            document.querySelectorAll('#sheet-table th').forEach((th) => {
-                th.addEventListener('click', () => {
-                    const c = Number(th.dataset.col);
-                    dataRows.sort((a, b) => String(a[c] || '').localeCompare(String(b[c] || '')));
-                    renderTable(search);
-                    setEditorSaved(false);
+            body.querySelectorAll('#sheet-table td').forEach((td) => {
+                td.addEventListener('focus', () => {
+                    td.dataset.startDisplay = td.textContent;
+                    selectCell(Number(td.dataset.row), Number(td.dataset.col));
+                });
+                td.addEventListener('click', () => selectCell(Number(td.dataset.row), Number(td.dataset.col)));
+                td.addEventListener('blur', () => {
+                    const row = Number(td.dataset.row);
+                    const col = Number(td.dataset.col);
+                    if (td.textContent !== td.dataset.startDisplay) {
+                        recordChange(row, col, td.textContent);
+                    }
+                    td.textContent = displayedCellValue(activeSheetIdx, row, col);
+                    selectCell(row, col);
                 });
             });
-
-            document.querySelectorAll('#sheet-table td').forEach((td) => {
-                td.addEventListener('input', () => setEditorSaved(false));
-            });
+            selectCell(activeCell.row, activeCell.col);
         };
 
-        renderTable('');
+        function renderTabs() {
+            const tabs = document.getElementById('sheet-tabs');
+            tabs.innerHTML = sheetNames.map((name, index) => `
+                <button type="button" class="sheet-tab${index === activeSheetIdx ? ' active' : ''}" data-sheet-index="${index}">
+                    <span class="material-icons-outlined">table_chart</span>${esc(name)}
+                </button>
+            `).join('');
+            tabs.querySelectorAll('.sheet-tab').forEach((tab) => {
+                tab.addEventListener('click', () => {
+                    activeSheetIdx = Number(tab.dataset.sheetIndex);
+                    activeCell = { row: 0, col: 0 };
+                    renderTabs();
+                    renderTable();
+                });
+            });
+        }
 
-        document.getElementById('sheet-search')?.addEventListener('input', (e) => renderTable(e.target.value));
+        function applyHistoryEntry(entry, useOldValue) {
+            const key = changeKey(entry.sheetIdx, entry.row, entry.col);
+            const value = useOldValue ? entry.oldValue : entry.newValue;
+            const original = originalCellValue(entry.sheetIdx, entry.row, entry.col, true);
+            if (value === original) changes.delete(key);
+            else changes.set(key, value);
+            activeSheetIdx = entry.sheetIdx;
+            activeCell = { row: entry.row, col: entry.col };
+            renderTabs();
+            renderTable();
+            setEditorSaved(false);
+        }
+
+        editorState.onUndo = () => {
+            const entry = undoStack.pop();
+            if (!entry) return;
+            redoStack.push(entry);
+            applyHistoryEntry(entry, true);
+        };
+        editorState.onRedo = () => {
+            const entry = redoStack.pop();
+            if (!entry) return;
+            undoStack.push(entry);
+            applyHistoryEntry(entry, false);
+        };
+
+        document.getElementById('sheet-undo').addEventListener('click', () => editorState.onUndo());
+        document.getElementById('sheet-redo').addEventListener('click', () => editorState.onRedo());
+        document.getElementById('sheet-search').addEventListener('input', (e) => {
+            searchTerm = e.target.value.trim().toLowerCase();
+            renderTable();
+        });
+        document.getElementById('sheet-formula-input').addEventListener('change', (e) => {
+            recordChange(activeCell.row, activeCell.col, e.target.value);
+            renderTable();
+            selectCell(activeCell.row, activeCell.col, true);
+        });
         document.getElementById('sheet-export')?.addEventListener('click', () => {
-            const data = collectTableData();
+            const data = collectSheetData();
             const out = data.map((r) => r.join(',')).join('\n');
             const outBlob = new Blob([out], { type: 'text/csv' });
             const url = URL.createObjectURL(outBlob);
@@ -6039,26 +6260,67 @@ const FileManager = (() => {
             URL.revokeObjectURL(url);
         });
 
-        function collectTableData() {
-            const out = [];
-            const headers = Array.from(document.querySelectorAll('#sheet-table thead th')).map((h) => h.textContent.replace(' ↕', ''));
-            out.push(headers);
-            document.querySelectorAll('#sheet-table tbody tr').forEach((tr) => {
-                out.push(Array.from(tr.querySelectorAll('td')).map((td) => td.textContent));
-            });
-            return out;
+        function collectSheetData() {
+            const dimensions = sheetDimensions();
+            return Array.from({ length: dimensions.rows }, (_, row) =>
+                Array.from({ length: dimensions.cols }, (_, col) =>
+                    displayedCellValue(activeSheetIdx, row, col, true),
+                ),
+            );
+        }
+
+        function assignCellValue(sheet, address, value) {
+            const existing = sheet[address] || {};
+            const next = { ...existing };
+            delete next.w;
+            if (value.startsWith('=')) {
+                next.f = value.slice(1);
+                delete next.v;
+                if (!next.t) next.t = 'n';
+            } else {
+                delete next.f;
+                if (value === '') {
+                    next.v = '';
+                    next.t = 's';
+                } else if (/^-?(?:\d+|\d*\.\d+)$/.test(value)) {
+                    next.v = Number(value);
+                    next.t = 'n';
+                } else if (/^(true|false)$/i.test(value)) {
+                    next.v = value.toLowerCase() === 'true';
+                    next.t = 'b';
+                } else {
+                    next.v = value;
+                    next.t = 's';
+                }
+            }
+            sheet[address] = next;
+
+            const decoded = window.XLSX.utils.decode_cell(address);
+            const range = window.XLSX.utils.decode_range(sheet['!ref'] || address);
+            range.s.r = Math.min(range.s.r, decoded.r);
+            range.s.c = Math.min(range.s.c, decoded.c);
+            range.e.r = Math.max(range.e.r, decoded.r);
+            range.e.c = Math.max(range.e.c, decoded.c);
+            sheet['!ref'] = window.XLSX.utils.encode_range(range);
         }
 
         editorState.onSave = async () => {
-            const data = collectTableData();
             let saveBlob;
             let mimeType;
 
             if (workbook && window.XLSX) {
-                const ws = window.XLSX.utils.aoa_to_sheet(data);
-                workbook.Sheets[sheetNames[activeSheetIdx]] = ws;
+                changes.forEach((value, key) => {
+                    const [sheetIdx, row, col] = key.split(':').map(Number);
+                    const sheet = workbook.Sheets[sheetNames[sheetIdx]];
+                    assignCellValue(sheet, encodeCell(row, col), value);
+                });
                 const bookType = ext === 'xls' ? 'xls' : 'xlsx';
-                const out = window.XLSX.write(workbook, { bookType, type: 'array' });
+                const out = window.XLSX.write(workbook, {
+                    bookType,
+                    type: 'array',
+                    cellStyles: true,
+                    cellNF: true,
+                });
                 if (bookType === 'xls') {
                     saveBlob = new Blob([out], { type: 'application/vnd.ms-excel' });
                     mimeType = 'application/vnd.ms-excel';
@@ -6067,14 +6329,25 @@ const FileManager = (() => {
                     mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
                 }
             } else {
+                changes.forEach((value, key) => {
+                    const [, row, col] = key.split(':').map(Number);
+                    while (csvRows.length <= row) csvRows.push([]);
+                    csvRows[row][col] = value;
+                });
+                const data = csvRows;
                 const out = data.map((r) => r.join(',')).join('\n');
                 saveBlob = new Blob([out], { type: 'text/csv' });
                 mimeType = 'text/csv';
             }
 
             const fileName = document.getElementById('editor-file-name').value.trim() || file.name;
-            return await saveBlobToExistingFile(file, saveBlob, mimeType, fileName);
+            const saved = await saveBlobToExistingFile(file, saveBlob, mimeType, fileName);
+            if (saved) changes.clear();
+            return saved;
         };
+
+        renderTabs();
+        renderTable();
     }
 
     function loadScript(src, globalName) {

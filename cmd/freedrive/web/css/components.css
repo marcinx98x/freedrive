@@ -138,6 +138,90 @@
     background: #a50e0e;
 }
 
+.open-with-modal {
+    width: min(520px, 100%);
+}
+
+.open-with-modal .modal-header {
+    align-items: flex-start;
+}
+
+.open-with-filename {
+    max-width: 390px;
+    margin: 5px 0 0;
+    color: #5f6368;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.open-with-apps {
+    display: grid;
+    gap: 8px;
+}
+
+.open-with-app {
+    width: 100%;
+    min-height: 68px;
+    padding: 10px 12px;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #202124;
+    text-align: left;
+    cursor: pointer;
+}
+
+.open-with-app:hover,
+.open-with-app:focus-visible {
+    border-color: #a8c7fa;
+    background: #f0f4ff;
+    outline: none;
+}
+
+.open-with-app-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: #e8f0fe;
+    color: #1a73e8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.open-with-app-copy {
+    min-width: 0;
+    flex: 1;
+    display: grid;
+    gap: 3px;
+}
+
+.open-with-app-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.open-with-app-description {
+    color: #5f6368;
+    font-size: 12px;
+}
+
+.open-with-recommended {
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: #e6f4ea;
+    color: #137333;
+    font-size: 10px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
 /* ── Share & Shortcuts Modals ── */
 .share-modal { width: min(680px, 100%); }
 
@@ -822,15 +906,13 @@
 }
 
 /* ── PDF Viewer ── */
-.pdf-wrap,
-.sheet-wrap {
+.pdf-wrap {
     height: calc(100% - 56px);
     display: grid;
     grid-template-rows: 50px 1fr;
 }
 
-.pdf-toolbar,
-.sheet-toolbar {
+.pdf-toolbar {
     border-bottom: 1px solid #dadce0;
     display: flex;
     align-items: center;
@@ -872,30 +954,213 @@
 }
 
 /* ── Spreadsheet ── */
-.sheet-body { overflow: auto; padding: 10px; }
-.sheet-table { width: 100%; border-collapse: collapse; }
+.sheet-wrap {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto 34px minmax(0, 1fr) 40px;
+    background: #fff;
+    color: #202124;
+}
+
+.sheet-toolbar {
+    min-height: 44px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #dadce0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: #e6f4ea;
+}
+
+.sheet-toolbar .tool-btn-icon {
+    border: none;
+    background: transparent;
+}
+
+.sheet-toolbar .tool-btn-icon:hover {
+    background: #cce8d4;
+}
+
+.sheet-search-wrap {
+    height: 32px;
+    width: min(260px, 40vw);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border-radius: 16px;
+    background: #fff;
+    border: 1px solid #c4c7c5;
+}
+
+.sheet-search-wrap .material-icons-outlined {
+    font-size: 18px;
+    color: #5f6368;
+}
+
+.sheet-search-wrap input {
+    min-width: 0;
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: #202124;
+    font-size: 13px;
+}
+
+.sheet-formula-bar {
+    min-height: 34px;
+    display: grid;
+    grid-template-columns: 72px 34px minmax(0, 1fr);
+    align-items: center;
+    border-bottom: 1px solid #dadce0;
+    background: #fff;
+}
+
+.sheet-cell-address {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid #dadce0;
+    font-size: 12px;
+    color: #3c4043;
+}
+
+.sheet-fx {
+    text-align: center;
+    font-family: Georgia, serif;
+    font-size: 15px;
+    font-style: italic;
+    color: #5f6368;
+}
+
+#sheet-formula-input {
+    height: 100%;
+    min-width: 0;
+    border: none;
+    border-left: 1px solid #dadce0;
+    outline: none;
+    padding: 0 10px;
+    color: #202124;
+    background: #fff;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+}
+
+.sheet-body {
+    overflow: auto;
+    padding: 0;
+    background: #fff;
+}
+
+.sheet-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+}
 
 .sheet-table th,
 .sheet-table td {
-    border: 1px solid #dadce0;
-    min-width: 120px;
-    height: 32px;
+    border-right: 1px solid #dadce0;
+    border-bottom: 1px solid #dadce0;
+    min-width: 110px;
+    width: 110px;
+    height: 28px;
     padding: 4px 6px;
+    box-sizing: border-box;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.sheet-table th {
+.sheet-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
     background: #f8f9fa;
     color: #5f6368;
-    cursor: pointer;
+    text-align: center;
+    font-weight: 500;
+}
+
+.sheet-table .sheet-corner {
+    left: 0;
+    z-index: 5;
+    min-width: 46px;
+    width: 46px;
+}
+
+.sheet-table .sheet-row-number {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    min-width: 46px;
+    width: 46px;
+    background: #f8f9fa;
+    color: #5f6368;
+    text-align: center;
+    font-weight: 400;
 }
 
 .sheet-table td {
     background: #fff;
     color: #202124;
+    cursor: cell;
+    outline: none;
 }
 
+.sheet-table td.active,
 .sheet-table td[contenteditable='true']:focus {
-    outline: 2px solid #1a73e8;
+    position: relative;
+    z-index: 1;
+    box-shadow: inset 0 0 0 2px #1a73e8;
+    overflow: visible;
+}
+
+.sheet-tabs-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px;
+    border-top: 1px solid #dadce0;
+    background: #f8f9fa;
+    overflow-x: auto;
+}
+
+.sheet-tab {
+    height: 32px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #3c4043;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.sheet-tab .material-icons-outlined {
+    font-size: 16px;
+    color: #188038;
+}
+
+.sheet-tab:hover {
+    background: #e8eaed;
+}
+
+.sheet-tab.active {
+    background: #ceead6;
+    color: #137333;
+    font-weight: 600;
 }
 
 /* ── Video Player (Google Drive style) ── */
@@ -1291,7 +1556,35 @@
         border-top: 1px solid #dadce0;
         box-shadow: 0 -4px 16px rgba(0,0,0,.12);
     }
+    .sheet-toolbar {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+    .sheet-search-wrap {
+        min-width: 150px;
+    }
+    .sheet-table th,
+    .sheet-table td {
+        min-width: 96px;
+        width: 96px;
+    }
+    .sheet-table .sheet-corner,
+    .sheet-table .sheet-row-number {
+        min-width: 40px;
+        width: 40px;
+    }
     .shortcuts-grid { grid-template-columns: repeat(2, 1fr); }
     .pdf-content { grid-template-columns: 1fr; }
     .pdf-thumbs { display: none; }
+}
+
+@media (max-width: 560px) {
+    .open-with-recommended {
+        display: none;
+    }
+    .open-with-modal .modal-header,
+    .open-with-apps {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
 }

@@ -109,14 +109,22 @@ FreeDrive is ideal for:
 - Permanent delete (files and folders)
 - Scheduled and admin trash purge removes old trashed **files** (blobs + rows) and **folders** (metadata rows)
 
-### 4. Versioning Support
+### 4. In-browser editors & Open with
+
+- **Docs** — Google Docs-style rich-text editor for `.txt`, `.md`, and `.html` (toolbar, page canvas, autosave)
+- **Photos** — Google Photos-style image editor (top icon toolbar, crop/draw/rotate, Adjustments and Filters panels)
+- **Sheets** — Google Sheets-style grid for `.xlsx`, `.xls`, and `.csv` (formula bar, sheet tabs, search); saves only changed cells so untouched formulas and formatting stay intact
+- **PDF / video / audio / JSON** — dedicated viewers and players
+- **Open with…** — context menu lists FreeDrive apps for the file type (recommended app highlighted); unsupported types offer download
+
+### 5. Versioning Support
 
 - File version records are kept when content is updated (can be disabled in admin settings)
 - Configurable `keep_versions` retention per file
 - List versions per file
 - Restore an earlier version
 
-### 5. User Profile & Security
+### 6. User Profile & Security
 
 - Profile settings modal (name, avatar photo)
 - Forgot-password flow with SQLite-persisted reset tokens (survives server restart; single-use)
@@ -131,7 +139,7 @@ FreeDrive is ideal for:
 - **Logged-in devices** — account settings list active web and desktop sessions with device name, IP address, and last activity; re-login from the same browser/app overwrites that device's session instead of creating a duplicate
 - **Instant remote logout** — revoke one device or every other device; server middleware rejects the revoked session immediately
 
-### 6. Sharing Model
+### 7. Sharing Model
 
 - User-to-user sharing data model (`user_shares`) with role-based access control enforced on read/write mutations
 - Share-link data model (`share_links`) with optional password, expiry, and download limits
@@ -141,27 +149,27 @@ FreeDrive is ideal for:
 - `GET /shares/by-me` API supports Share dialog, details panel, and search (not a separate nav view)
 - Update share permission (`PATCH /shares/users/{id}`) and folder shares in shared listings
 
-### 7. Comments & Approvals
+### 8. Comments & Approvals
 
 - File comments with optional assignee (`assigned_to_email`) — visible in the details Activity tab
 - Advanced search follow-ups: “Comments assigned to me only”, approval awaiting / requested filters
 - Request approval from context menu or file details; approver can approve/reject in Activity tab
 - `GET /approvals`, `POST /files/{id}/approvals`, `PATCH /approvals/{id}` workflow
 
-### 8. Storage & Quota Awareness
+### 9. Storage & Quota Awareness
 
 - Per-user quota enforcement during uploads/content updates
 - Server-wide capacity limit (`total_capacity_gb`) enforced from admin settings
 - Used-bytes accounting on delete/restore/permanent-delete paths
 - Disk usage endpoint for runtime visibility
 
-### 9. Activity Logging
+### 10. Activity Logging
 
 - File/folder actions are recorded in activity logs
 - Login and failed-login events with client IP
 - User and admin activity listing endpoints
 
-### 10. Embedded App Delivery
+### 11. Embedded App Delivery
 
 - Frontend is embedded with `go:embed`
 - Single process serves API + SPA + static assets
