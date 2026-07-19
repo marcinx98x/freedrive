@@ -14,7 +14,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Search** — search files by name from the top bar
 - **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
 - **User avatar** — photo from `avatar_url` on `GET /api/v1/me`, or initials fallback
-- **Devices** — appears as `Mobile (…)` on the account Devices list
+- **Devices** — appears as `Mobile (…)` and keeps a stable installation ID, so re-login updates the same entry in the account Devices list instead of creating a duplicate
 - **File actions** — item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
 - **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
 - **In-app preview** — native image, text/Markdown/JSON/CSV, and PDF previews
