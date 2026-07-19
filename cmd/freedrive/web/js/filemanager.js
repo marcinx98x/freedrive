@@ -4824,62 +4824,72 @@ const FileManager = (() => {
         const shell = openEditorShell(file);
 
         const layout = document.createElement('div');
-        layout.className = 'editor-layout';
+        layout.className = 'image-editor-wrap';
         layout.innerHTML = `
-            <div class="editor-side">
-                <div class="tool-group"><h5>Tools</h5>
-                    <div class="tool-list" id="img-tool-list">
-                        <button class="tool-btn active" data-tool="pen">Pen</button>
-                        <button class="tool-btn" data-tool="brush">Brush</button>
-                        <button class="tool-btn" data-tool="eraser">Eraser</button>
-                        <button class="tool-btn" data-tool="line">Line</button>
-                        <button class="tool-btn" data-tool="arrow">Arrow</button>
-                        <button class="tool-btn" data-tool="rect">Rectangle</button>
-                        <button class="tool-btn" data-tool="circle">Circle</button>
-                        <button class="tool-btn" data-tool="triangle">Triangle</button>
-                        <button class="tool-btn" data-tool="text">Text</button>
-                        <button class="tool-btn" data-tool="emoji">Sticker</button>
-                        <button class="tool-btn" data-tool="blur">Blur</button>
-                        <button class="tool-btn" data-tool="crop">Crop</button>
-                    </div>
+            <div class="image-toolbar" id="image-toolbar">
+                <div class="tool-list" id="img-tool-list">
+                    <button type="button" class="tool-btn tool-btn-icon active" data-tool="pen" title="Pen"><span class="material-icons-outlined">edit</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="brush" title="Brush"><span class="material-icons-outlined">brush</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="eraser" title="Eraser"><span class="material-icons-outlined">auto_fix_off</span></button>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="line" title="Line"><span class="material-icons-outlined">show_chart</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="arrow" title="Arrow"><span class="material-icons-outlined">north_east</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="rect" title="Rectangle"><span class="material-icons-outlined">crop_square</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="circle" title="Circle"><span class="material-icons-outlined">circle</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="triangle" title="Triangle"><span class="material-icons-outlined">change_history</span></button>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="text" title="Text"><span class="material-icons-outlined">title</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="emoji" title="Sticker"><span class="material-icons-outlined">emoji_emotions</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="blur" title="Blur"><span class="material-icons-outlined">blur_on</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-tool="crop" title="Crop"><span class="material-icons-outlined">crop</span></button>
                 </div>
-                <div class="tool-group">
-                    <h5>Rotate & Flip</h5>
-                    <div class="tool-list">
-                        <button class="tool-btn" id="img-rot-l">⟲ 90°</button>
-                        <button class="tool-btn" id="img-rot-r">⟳ 90°</button>
-                        <button class="tool-btn" id="img-flip-h">Flip H</button>
-                        <button class="tool-btn" id="img-flip-v">Flip V</button>
-                    </div>
-                </div>
+                <span class="tool-sep" aria-hidden="true"></span>
+                <button type="button" class="tool-btn tool-btn-icon" id="img-rot-l" title="Rotate left"><span class="material-icons-outlined">rotate_left</span></button>
+                <button type="button" class="tool-btn tool-btn-icon" id="img-rot-r" title="Rotate right"><span class="material-icons-outlined">rotate_right</span></button>
+                <button type="button" class="tool-btn tool-btn-icon" id="img-flip-h" title="Flip horizontal"><span class="material-icons-outlined">flip</span></button>
+                <button type="button" class="tool-btn tool-btn-icon" id="img-flip-v" title="Flip vertical"><span class="material-icons-outlined img-flip-v-icon">flip</span></button>
+                <span class="tool-sep" aria-hidden="true"></span>
+                <button type="button" class="tool-btn tool-btn-icon" id="img-btn-tune" title="Adjustments" data-panel="adjust"><span class="material-icons-outlined">tune</span></button>
+                <button type="button" class="tool-btn tool-btn-icon" id="img-btn-filters" title="Filters" data-panel="filters"><span class="material-icons-outlined">photo_filter</span></button>
             </div>
-            <div class="editor-canvas-wrap" id="img-canvas-wrap">
-                <canvas id="img-editor-canvas"></canvas>
-                <div class="zoom-indicator" id="img-zoom-indicator">100%</div>
-                <div class="selection-indicator" id="img-selection-indicator">0 × 0 px</div>
-            </div>
-            <div class="editor-adjust">
-                <div class="tool-group"><h5>Adjustments</h5>
-                    ${renderAdjustSlider('brightness', -100, 100, 0)}
-                    ${renderAdjustSlider('contrast', -100, 100, 0)}
-                    ${renderAdjustSlider('saturation', -100, 100, 0)}
-                    ${renderAdjustSlider('sharpness', 0, 100, 0)}
-                    ${renderAdjustSlider('blur', 0, 20, 0)}
-                    ${renderAdjustSlider('opacity', 0, 100, 100)}
+            <div class="image-editor-body">
+                <div class="editor-canvas-wrap" id="img-canvas-wrap">
+                    <canvas id="img-editor-canvas"></canvas>
+                    <div class="zoom-indicator" id="img-zoom-indicator">100%</div>
+                    <div class="selection-indicator" id="img-selection-indicator">0 × 0 px</div>
                 </div>
-                <div class="tool-group">
-                    <h5>Presets</h5>
-                    <div class="tool-list">
-                        <button class="tool-btn img-preset" data-preset="original">Original</button>
-                        <button class="tool-btn img-preset" data-preset="grayscale">Grayscale</button>
-                        <button class="tool-btn img-preset" data-preset="sepia">Sepia</button>
-                        <button class="tool-btn img-preset" data-preset="vivid">Vivid</button>
-                        <button class="tool-btn img-preset" data-preset="cool">Cool</button>
-                        <button class="tool-btn img-preset" data-preset="warm">Warm</button>
-                        <button class="tool-btn img-preset" data-preset="fade">Fade</button>
-                        <button class="tool-btn img-preset" data-preset="dramatic">Dramatic</button>
+                <aside class="image-panel" id="img-panel-adjust" hidden>
+                    <div class="image-panel-header">
+                        <h5>Adjustments</h5>
+                        <button type="button" class="tool-btn tool-btn-icon image-panel-close" data-close-panel="adjust" title="Close"><span class="material-icons-outlined">close</span></button>
                     </div>
-                </div>
+                    <div class="image-panel-body">
+                        ${renderAdjustSlider('brightness', -100, 100, 0)}
+                        ${renderAdjustSlider('contrast', -100, 100, 0)}
+                        ${renderAdjustSlider('saturation', -100, 100, 0)}
+                        ${renderAdjustSlider('sharpness', 0, 100, 0)}
+                        ${renderAdjustSlider('blur', 0, 20, 0)}
+                        ${renderAdjustSlider('opacity', 0, 100, 100)}
+                    </div>
+                </aside>
+                <aside class="image-panel" id="img-panel-filters" hidden>
+                    <div class="image-panel-header">
+                        <h5>Filters</h5>
+                        <button type="button" class="tool-btn tool-btn-icon image-panel-close" data-close-panel="filters" title="Close"><span class="material-icons-outlined">close</span></button>
+                    </div>
+                    <div class="image-panel-body">
+                        <div class="tool-list img-preset-list">
+                            <button type="button" class="tool-btn img-preset" data-preset="original">Original</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="grayscale">Grayscale</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="sepia">Sepia</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="vivid">Vivid</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="cool">Cool</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="warm">Warm</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="fade">Fade</button>
+                            <button type="button" class="tool-btn img-preset" data-preset="dramatic">Dramatic</button>
+                        </div>
+                    </div>
+                </aside>
             </div>
         `;
         shell.appendChild(layout);
@@ -5091,20 +5101,50 @@ const FileManager = (() => {
             });
         });
 
-        document.querySelectorAll('.adjust-slider').forEach((s) => {
+        const panelAdjust = document.getElementById('img-panel-adjust');
+        const panelFilters = document.getElementById('img-panel-filters');
+        const btnTune = document.getElementById('img-btn-tune');
+        const btnFilters = document.getElementById('img-btn-filters');
+
+        function setImagePanel(name) {
+            const showAdjust = name === 'adjust';
+            const showFilters = name === 'filters';
+            panelAdjust.hidden = !showAdjust;
+            panelFilters.hidden = !showFilters;
+            panelAdjust.classList.toggle('open', showAdjust);
+            panelFilters.classList.toggle('open', showFilters);
+            btnTune.classList.toggle('active', showAdjust);
+            btnFilters.classList.toggle('active', showFilters);
+        }
+
+        btnTune.addEventListener('click', () => {
+            setImagePanel(panelAdjust.classList.contains('open') ? null : 'adjust');
+        });
+        btnFilters.addEventListener('click', () => {
+            setImagePanel(panelFilters.classList.contains('open') ? null : 'filters');
+        });
+        layout.querySelectorAll('[data-close-panel]').forEach((b) => {
+            b.addEventListener('click', () => setImagePanel(null));
+        });
+
+        layout.querySelectorAll('.adjust-slider').forEach((s) => {
             s.addEventListener('input', () => {
                 const key = s.dataset.key;
                 adjustment[key] = Number(s.value);
+                const label = document.getElementById(`adj-${key}`);
+                if (label) label.textContent = String(s.value);
                 applyImageTransform();
                 setEditorSaved(false);
             });
         });
 
-        document.querySelectorAll('.img-preset').forEach((b) => {
+        layout.querySelectorAll('.img-preset').forEach((b) => {
             b.addEventListener('click', () => {
                 applyPreset(b.dataset.preset, adjustment);
-                document.querySelectorAll('.adjust-slider').forEach((s) => {
+                layout.querySelectorAll('.adjust-slider').forEach((s) => {
                     s.value = String(adjustment[s.dataset.key]);
+                    const label = document.getElementById(`adj-${s.dataset.key}`);
+                    if (label) label.textContent = String(s.value);
                 });
                 applyImageTransform();
                 setEditorSaved(false);
@@ -5132,8 +5172,10 @@ const FileManager = (() => {
             adjustment.blur       = 0;
             adjustment.opacity    = 100;
 
-            document.querySelectorAll('.adjust-slider').forEach((s) => {
+            layout.querySelectorAll('.adjust-slider').forEach((s) => {
                 s.value = String(adjustment[s.dataset.key] ?? 0);
+                const label = document.getElementById(`adj-${s.dataset.key}`);
+                if (label) label.textContent = String(s.value);
             });
 
             zoom = 1;
