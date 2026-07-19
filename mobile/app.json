@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "FreeDrive",
+    "slug": "freedrive-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "freedrive",
+    "backgroundColor": "#121212",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.freedrive.mobile"
+    },
+    "android": {
+      "package": "com.freedrive.mobile",
+      "versionCode": 5,
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#121212",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#121212"
+        }
+      ]
+    ]
+  }
+}
