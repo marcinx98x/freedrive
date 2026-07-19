@@ -8,6 +8,8 @@ import {
 import type {
   ActivityLog,
   Computer,
+  CryptoAccount,
+  EncryptionKeyEntry,
   FileItem,
   FilesListResponse,
   FolderContents,
@@ -15,10 +17,12 @@ import type {
   LoginResult,
   LoginSuccess,
   SharedItem,
+  ShareLink,
   SortDir,
   SortKey,
   TokenPair,
   User,
+  UserShare,
 } from "./types";
 
 export class ApiError extends Error {
@@ -64,16 +68,31 @@ async function parseError(res: Response): Promise<string> {
   return `Request failed (${res.status})`;
 }
 
-const REQUEST_TIMEOUT_MS = 15_000;
+const GET_TIMEOUT_MS = 45_000;
+const MUTATION_TIMEOUT_MS = 60_000;
+const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+const REFRESH_TIMEOUT_MS = 20_000;
 
-async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Response> {
+function isAbortError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "AbortError") return true;
+  // Expo WinterCG fetch wraps aborts as FetchError: "fetch failed: Fetch request has been canceled"
+  const msg = err.message.toLowerCase();
+  return msg.includes("cancel") || msg.includes("abort");
+}
+
+async function fetchWithTimeout(
+  input: string,
+  init?: RequestInit,
+  timeoutMs = GET_TIMEOUT_MS,
+): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new ApiError("Request timed out", 0);
+    if (isAbortError(err)) {
+      throw new ApiError("Request timed out — check your connection", 0);
     }
     throw err;
   } finally {
@@ -81,30 +100,55 @@ async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Resp
   }
 }
 
-let refreshInFlight: Promise<boolean> | null = null;
+type RefreshResult = "ok" | "invalid" | "transient";
 
-async function tryRefresh(): Promise<boolean> {
-  if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = (async () => {
-    try {
-      const tokens = await getTokens();
-      if (!tokens?.refresh_token) return false;
-      const url = await baseUrl();
-      const res = await fetchWithTimeout(`${url}/api/v1/auth/refresh`, {
+let refreshInFlight: Promise<RefreshResult> | null = null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function tryRefreshOnce(): Promise<RefreshResult> {
+  const tokens = await getTokens();
+  if (!tokens?.refresh_token) return "invalid";
+  const url = await baseUrl();
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      `${url}/api/v1/auth/refresh`,
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...deviceHeaders(),
         },
         body: JSON.stringify({ refresh_token: tokens.refresh_token }),
-      });
-      if (!res.ok) return false;
-      const data = (await res.json()) as { tokens: TokenPair };
-      if (!data?.tokens?.access_token) return false;
-      await setTokens(data.tokens);
-      return true;
-    } catch {
-      return false;
+      },
+      REFRESH_TIMEOUT_MS,
+    );
+  } catch {
+    return "transient";
+  }
+  if (res.status === 401 || res.status === 403) return "invalid";
+  if (!res.ok) return "transient";
+  try {
+    const data = (await res.json()) as { tokens: TokenPair };
+    if (!data?.tokens?.access_token) return "invalid";
+    await setTokens(data.tokens);
+    return "ok";
+  } catch {
+    return "transient";
+  }
+}
+
+async function tryRefresh(): Promise<RefreshResult> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const first = await tryRefreshOnce();
+      if (first === "ok" || first === "invalid") return first;
+      await sleep(1000);
+      return await tryRefreshOnce();
     } finally {
       refreshInFlight = null;
     }
@@ -132,16 +176,26 @@ async function request<T>(
     }
   }
 
-  const res = await fetchWithTimeout(`${url}/api/v1${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const timeoutMs =
+    method === "GET" || method === "HEAD" ? GET_TIMEOUT_MS : MUTATION_TIMEOUT_MS;
+
+  const res = await fetchWithTimeout(
+    `${url}/api/v1${path}`,
+    {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    timeoutMs,
+  );
 
   if (res.status === 401 && auth && retry) {
     const refreshed = await tryRefresh();
-    if (refreshed) {
+    if (refreshed === "ok") {
       return request<T>(method, path, body, { auth, retry: false });
+    }
+    if (refreshed === "transient") {
+      throw new ApiError("Request timed out — check your connection", 0);
     }
     await clearSession();
     onUnauthorized?.();
@@ -262,4 +316,122 @@ export const api = {
     if (Array.isArray(data)) return data;
     return data.shares ?? data.items ?? [];
   },
+
+  sharedByMe: async () => {
+    const data = await request<{ items?: SharedItem[] }>("GET", "/shares/by-me");
+    return data.items ?? [];
+  },
+
+  createUserShare: (body: {
+    file_id?: string;
+    folder_id?: string;
+    shared_email?: string;
+    shared_with?: string;
+    permission: string;
+  }) => request<UserShare>("POST", "/shares/users", body),
+
+  updateUserShare: (id: string, permission: string) =>
+    request<UserShare>("PATCH", `/shares/users/${id}`, { permission }),
+
+  deleteUserShare: (id: string) => request("DELETE", `/shares/users/${id}`),
+
+  listLinks: async () => {
+    const data = await request<{ links?: ShareLink[] | null }>("GET", "/shares/links");
+    return data.links ?? [];
+  },
+
+  createLink: (body: {
+    file_id?: string;
+    folder_id?: string;
+    permission?: string;
+    password?: string;
+  }) => request<ShareLink>("POST", "/shares/links", body),
+
+  deleteLink: (id: string) => request("DELETE", `/shares/links/${id}`),
+
+  updateFile: (
+    id: string,
+    body: { name?: string; folder_id?: string | null; is_starred?: boolean },
+  ) => request<FileItem>("PATCH", `/files/${id}`, body),
+
+  deleteFile: (id: string) => request("DELETE", `/files/${id}`),
+
+  getFile: (id: string) => request<FileItem>("GET", `/files/${id}`),
+
+  updateFolder: (
+    id: string,
+    body: {
+      name?: string;
+      parent_id?: string | null;
+      is_starred?: boolean;
+      color?: string;
+    },
+  ) => request<FolderItem>("PATCH", `/folders/${id}`, body),
+
+  deleteFolder: (id: string) => request("DELETE", `/folders/${id}`),
+
+  listAllFolders: async (search?: string) => {
+    const q = search ? `?search=${encodeURIComponent(search)}` : "";
+    const data = await request<{ folders?: FolderItem[] | null }>("GET", `/folders/all${q}`);
+    return data.folders ?? [];
+  },
+
+  downloadEncrypted: async (fileId: string): Promise<{
+    data: ArrayBuffer;
+    iv: string;
+    mime: string;
+    originalSize: number;
+  }> => {
+    const doFetch = async (retry: boolean) => {
+      const url = await baseUrl();
+      const headers: Record<string, string> = { ...deviceHeaders() };
+      const tokens = await getTokens();
+      if (tokens?.access_token) {
+        headers.Authorization = `Bearer ${tokens.access_token}`;
+      }
+      const res = await fetchWithTimeout(
+        `${url}/api/v1/files/${fileId}/download`,
+        { headers },
+        DOWNLOAD_TIMEOUT_MS,
+      );
+      if (res.status === 401 && retry) {
+        const refreshed = await tryRefresh();
+        if (refreshed === "ok") return doFetch(false);
+        if (refreshed === "transient") {
+          throw new ApiError("Request timed out — check your connection", 0);
+        }
+        await clearSession();
+        onUnauthorized?.();
+        throw new ApiError("Session expired", 401);
+      }
+      if (!res.ok) {
+        throw new ApiError(await parseError(res), res.status);
+      }
+      const buffer = await res.arrayBuffer();
+      return {
+        data: buffer,
+        iv: res.headers.get("X-File-IV") || "",
+        mime: res.headers.get("X-File-Mime") || "application/octet-stream",
+        originalSize: Number(res.headers.get("X-Original-Size") || 0),
+      };
+    };
+    return doFetch(true);
+  },
+
+  getCryptoAccount: () => request<CryptoAccount>("GET", "/crypto/account"),
+
+  listEncryptionKeys: async (since?: string) => {
+    const q = since ? `?since=${encodeURIComponent(since)}` : "";
+    const data = await request<{ keys?: EncryptionKeyEntry[] | null }>(
+      "GET",
+      `/encryption-keys${q}`,
+    );
+    return data.keys ?? [];
+  },
+
+  getFileEncryptionKey: (fileId: string) =>
+    request<{ file_id: string; wrapped_file_key: string }>(
+      "GET",
+      `/files/${fileId}/encryption-key`,
+    ),
 };

@@ -19,10 +19,12 @@ import { AppDrawer } from "../components/AppDrawer";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { Icon } from "../components/Icon";
+import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, radii, spacing } from "../theme";
+import { openFile } from "../utils/openFile";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, "Home">,
@@ -32,6 +34,30 @@ type Props = CompositeScreenProps<
 type HomeTab = "suggested" | "activity";
 
 const HOME_VIEW_KEY = "fd_home_view_mode";
+const ACTIVITY_CACHE_KEY = "fd_home_activity_cache";
+
+function filterActivity(items: ActivityLog[]): ActivityLog[] {
+  return items.filter((a) => a.target_type === "file" || a.target_type === "folder");
+}
+
+async function readActivityCache(): Promise<ActivityLog[]> {
+  try {
+    const raw = await AsyncStorage.getItem(ACTIVITY_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ActivityLog[];
+    return Array.isArray(parsed) ? filterActivity(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeActivityCache(items: ActivityLog[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(ACTIVITY_CACHE_KEY, JSON.stringify(items));
+  } catch {
+    /* ignore */
+  }
+}
 
 function formatWhen(iso?: string | null): string {
   if (!iso) return "";
@@ -83,17 +109,23 @@ export function HomeScreen({ navigation }: Props) {
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [loading, setLoading] = useState(true);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [filesError, setFilesError] = useState("");
   const [activityError, setActivityError] = useState("");
   const [files, setFiles] = useState<FileItem[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>([]);
+  const [activityLoaded, setActivityLoaded] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(HOME_VIEW_KEY).then((v) => {
       if (v === "list" || v === "grid") setViewMode(v);
+    });
+    readActivityCache().then((cached) => {
+      if (cached.length) setActivities(cached);
     });
   }, []);
 
@@ -102,48 +134,66 @@ export function HomeScreen({ navigation }: Props) {
     await AsyncStorage.setItem(HOME_VIEW_KEY, mode);
   };
 
-  // Load Suggested + Activity in parallel on mount so Activity is ready when opened.
-  const load = useCallback(async () => {
+  const loadSuggested = useCallback(async () => {
     setFilesError("");
-    setActivityError("");
-    const [filesResult, activityResult] = await Promise.allSettled([
-      api.listFiles({ sort: "updated_at", dir: "desc", page_size: 30 }),
-      api.myActivity(50),
-    ]);
-
-    if (filesResult.status === "fulfilled") {
-      setFiles(filesResult.value.files);
-    } else {
-      const err = filesResult.reason;
+    try {
+      const data = await api.listFiles({ sort: "updated_at", dir: "desc", page_size: 30 });
+      setFiles(data.files);
+    } catch (err) {
       setFilesError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
+  }, []);
 
-    if (activityResult.status === "fulfilled") {
-      setActivities(
-        activityResult.value.filter(
-          (a) => a.target_type === "file" || a.target_type === "folder",
-        ),
-      );
-    } else {
-      const err = activityResult.reason;
+  const loadActivity = useCallback(async (opts?: { soft?: boolean }) => {
+    if (!opts?.soft) setActivityLoading(true);
+    setActivityError("");
+    try {
+      const items = filterActivity(await api.myActivity(50));
+      setActivities(items);
+      await writeActivityCache(items);
+      setActivityLoaded(true);
+    } catch (err) {
+      // Keep cached rows visible when the network times out.
       setActivityError(err instanceof ApiError ? err.message : String(err));
+      setActivityLoaded(true);
+    } finally {
+      setActivityLoading(false);
+      setRefreshing(false);
     }
-
-    setLoading(false);
-    setRefreshing(false);
   }, []);
 
   useEffect(() => {
     setLoading(true);
-    load();
-  }, [load]);
+    loadSuggested();
+  }, [loadSuggested]);
+
+  useEffect(() => {
+    if (tab !== "activity") return;
+    if (activityLoaded || activityLoading) return;
+    void loadActivity();
+  }, [tab, activityLoaded, activityLoading, loadActivity]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    load();
+    if (tab === "activity") {
+      void loadActivity({ soft: true });
+    } else {
+      void loadSuggested();
+    }
+  };
+
+  const onChanged = () => {
+    void loadSuggested();
+    if (activityLoaded) void loadActivity({ soft: true });
   };
 
   const error = tab === "suggested" ? filesError : activityError;
+  const showSpinner =
+    (tab === "suggested" && loading) ||
+    (tab === "activity" && activityLoading && activities.length === 0);
 
   const suggestedHeader = (
     <View style={styles.cardHeader}>
@@ -178,6 +228,11 @@ export function HomeScreen({ navigation }: Props) {
         onSettings={() => setProfileOpen(true)}
       />
       <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
+      <ItemActionsSheet
+        target={menuTarget}
+        onClose={() => setMenuTarget(null)}
+        onChanged={onChanged}
+      />
       <SearchBar
         value={search}
         onChangeText={setSearch}
@@ -210,7 +265,7 @@ export function HomeScreen({ navigation }: Props) {
       <View style={styles.card}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        {loading ? (
+        {showSpinner ? (
           <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
         ) : tab === "suggested" ? (
           <FlatList
@@ -220,9 +275,19 @@ export function HomeScreen({ navigation }: Props) {
             ListHeaderComponent={suggestedHeader}
             renderItem={({ item }) =>
               viewMode === "grid" ? (
-                <FileGridTile file={item} subtitle={suggestionReason(item)} />
+                <FileGridTile
+                  file={item}
+                  subtitle={suggestionReason(item)}
+                  onPress={() => openFile(item, navigation)}
+                  onMenuPress={() => setMenuTarget({ kind: "file", item })}
+                />
               ) : (
-                <FileRow file={item} subtitle={suggestionReason(item)} />
+                <FileRow
+                  file={item}
+                  subtitle={suggestionReason(item)}
+                  onPress={() => openFile(item, navigation)}
+                  onMenuPress={() => setMenuTarget({ kind: "file", item })}
+                />
               )
             }
             numColumns={viewMode === "grid" ? 2 : 1}

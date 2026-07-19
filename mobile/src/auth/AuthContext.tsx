@@ -11,6 +11,7 @@ import {
   setTokens,
   setUser,
 } from "../auth/storage";
+import { lockAndClearDevice, tryRestoreUnlock, unlockWithPassword } from "../crypto";
 
 interface AuthContextValue {
   booting: boolean;
@@ -25,11 +26,22 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/** Held only until 2FA completes so we can unlock crypto with the same password. */
+let pendingLoginPassword: string | null = null;
+
 async function cacheUser(user: User): Promise<void> {
   try {
     await setUser(user);
   } catch {
     // Cache write must never log the user out (avatar data-URLs can be large).
+  }
+}
+
+async function unlockCryptoSafe(password: string, userId: string): Promise<void> {
+  try {
+    await unlockWithPassword(password, userId);
+  } catch (err) {
+    console.warn("Crypto unlock failed:", err);
   }
 }
 
@@ -39,14 +51,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [serverUrl, setServerUrlState] = useState<string | null>(null);
 
   const logout = useCallback(async () => {
+    const uid = user?.id ?? null;
     try {
       await api.logout();
     } catch {
       /* ignore */
     }
+    await lockAndClearDevice(uid);
+    pendingLoginPassword = null;
     await clearSession();
     setUserState(null);
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -62,10 +77,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setServerUrlState(url);
         if (await hasSession()) {
           const cached = await getUser();
-          if (cached) setUserState(cached);
+          if (cached) {
+            setUserState(cached);
+            await tryRestoreUnlock(cached.id);
+          }
         }
       } finally {
-        // Unblock UI immediately from local storage; refresh profile in background.
         setBooting(false);
       }
 
@@ -74,9 +91,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const me = await api.me();
           setUserState(me);
           await cacheUser(me);
+          if (!pendingLoginPassword) {
+            await tryRestoreUnlock(me.id);
+          }
         } catch {
           // Network/timeout: keep cached session. 401 is handled by request()
-          // (clearSession + onUnauthorized).
         }
       }
     })();
@@ -86,11 +105,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await setServerUrl(url);
     setServerUrlState(url.replace(/\/$/, ""));
     const result = await api.login(email.trim().toLowerCase(), password);
-    if (!is2FAChallenge(result)) {
-      await setTokens(result.tokens);
-      setUserState(result.user);
-      await cacheUser(result.user);
+    if (is2FAChallenge(result)) {
+      pendingLoginPassword = password;
+      return result;
     }
+    pendingLoginPassword = null;
+    await setTokens(result.tokens);
+    setUserState(result.user);
+    await cacheUser(result.user);
+    await unlockCryptoSafe(password, result.user.id);
     return result;
   }, []);
 
@@ -99,6 +122,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await setTokens(result.tokens);
     setUserState(result.user);
     await cacheUser(result.user);
+    const password = pendingLoginPassword;
+    pendingLoginPassword = null;
+    if (password) {
+      await unlockCryptoSafe(password, result.user.id);
+    } else {
+      await tryRestoreUnlock(result.user.id);
+    }
   }, []);
 
   const refreshProfile = useCallback(async () => {

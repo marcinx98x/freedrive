@@ -126,6 +126,45 @@ export interface ActivityLog {
   created_at: string;
 }
 
+export interface ShareLink {
+  id: string;
+  file_id?: string | null;
+  folder_id?: string | null;
+  created_by: string;
+  token: string;
+  permission: string;
+  has_password: boolean;
+  expires_at?: string | null;
+  max_downloads?: number | null;
+  download_count: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface UserShare {
+  id: string;
+  file_id?: string | null;
+  folder_id?: string | null;
+  shared_by: string;
+  shared_with: string;
+  permission: string;
+  created_at: string;
+}
+
+export interface CryptoAccount {
+  has_crypto: boolean;
+  has_recovery?: boolean;
+  key_salt?: number[] | string;
+  wrapped_uek?: string;
+  wrapped_uek_recovery?: string;
+}
+
+export interface EncryptionKeyEntry {
+  file_id: string;
+  wrapped_file_key: string;
+  updated_at?: string;
+}
+
 export type ViewMode = "list" | "grid";
 export type SortKey = "name" | "updated_at";
 export type SortDir = "asc" | "desc";

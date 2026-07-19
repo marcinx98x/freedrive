@@ -14,9 +14,11 @@ import type { FileItem, FolderItem, SortDir, SortKey, ViewMode } from "../api/ty
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { FolderGridTile, FolderRow } from "../components/FolderRow";
+import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
 import { SortHeader } from "../components/SortHeader";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
+import { openFile } from "../utils/openFile";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Folder">;
 
@@ -36,6 +38,7 @@ export function FolderScreen({ route, navigation }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [sort, setSort] = useState<SortKey>("name");
   const [dir, setDir] = useState<SortDir>("asc");
+  const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
 
   useEffect(() => {
     navigation.setOptions({
@@ -110,6 +113,7 @@ export function FolderScreen({ route, navigation }: Props) {
             onPress={() =>
               navigation.push("Folder", { folderId: item.item.id, title: item.item.name })
             }
+            onMenuPress={() => setMenuTarget({ kind: "folder", item: item.item })}
           />
         );
       }
@@ -119,14 +123,32 @@ export function FolderScreen({ route, navigation }: Props) {
           onPress={() =>
             navigation.push("Folder", { folderId: item.item.id, title: item.item.name })
           }
+          onMenuPress={() => setMenuTarget({ kind: "folder", item: item.item })}
         />
       );
     }
-    return viewMode === "grid" ? <FileGridTile file={item.item} /> : <FileRow file={item.item} />;
+    return viewMode === "grid" ? (
+      <FileGridTile
+        file={item.item}
+        onPress={() => openFile(item.item, navigation)}
+        onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
+      />
+    ) : (
+      <FileRow
+        file={item.item}
+        onPress={() => openFile(item.item, navigation)}
+        onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
+      />
+    );
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
+      <ItemActionsSheet
+        target={menuTarget}
+        onClose={() => setMenuTarget(null)}
+        onChanged={load}
+      />
       <SortHeader
         sort={sort}
         dir={dir}

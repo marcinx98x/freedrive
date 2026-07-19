@@ -6,6 +6,13 @@ export type RootStackParamList = {
   Search: { query: string };
   Recent: undefined;
   Trash: undefined;
+  FilePreview: {
+    title: string;
+    uri: string;
+    mime: string;
+    mode: "image" | "text" | "pdf";
+    text?: string;
+  };
 };
 
 export type MainTabParamList = {

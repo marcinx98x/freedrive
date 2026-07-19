@@ -19,11 +19,13 @@ import { AppDrawer } from "../components/AppDrawer";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { ComputerRow, FolderGridTile, FolderRow } from "../components/FolderRow";
+import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
 import { SortHeader } from "../components/SortHeader";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
+import { openFile } from "../utils/openFile";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, "Files">,
@@ -53,6 +55,7 @@ export function FilesScreen({ navigation }: Props) {
   const [dir, setDir] = useState<SortDir>("asc");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem(VIEW_KEY).then((v) => {
@@ -146,17 +149,34 @@ export function FilesScreen({ navigation }: Props) {
           <FolderGridTile
             folder={item.item}
             onPress={() => openFolder(item.item.id, item.item.name)}
+            onMenuPress={() => setMenuTarget({ kind: "folder", item: item.item })}
           />
         );
       }
       return (
-        <FolderRow folder={item.item} onPress={() => openFolder(item.item.id, item.item.name)} />
+        <FolderRow
+          folder={item.item}
+          onPress={() => openFolder(item.item.id, item.item.name)}
+          onMenuPress={() => setMenuTarget({ kind: "folder", item: item.item })}
+        />
       );
     }
     if (viewMode === "grid") {
-      return <FileGridTile file={item.item} />;
+      return (
+        <FileGridTile
+          file={item.item}
+          onPress={() => openFile(item.item, navigation)}
+          onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
+        />
+      );
     }
-    return <FileRow file={item.item} />;
+    return (
+      <FileRow
+        file={item.item}
+        onPress={() => openFile(item.item, navigation)}
+        onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
+      />
+    );
   };
 
   return (
@@ -168,6 +188,11 @@ export function FilesScreen({ navigation }: Props) {
         onSettings={() => setProfileOpen(true)}
       />
       <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
+      <ItemActionsSheet
+        target={menuTarget}
+        onClose={() => setMenuTarget(null)}
+        onChanged={load}
+      />
       <SearchBar
         value={search}
         onChangeText={setSearch}

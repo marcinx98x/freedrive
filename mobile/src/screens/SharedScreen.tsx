@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -19,6 +20,7 @@ import { Icon } from "../components/Icon";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, radii, spacing } from "../theme";
 import { formatRelativeDate } from "../utils/format";
+import { openFile } from "../utils/openFile";
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, "Shared">,
@@ -54,6 +56,16 @@ export function SharedScreen({ navigation }: Props) {
         folderId: item.item_id || String(item.share.folder_id),
         title: item.item_name || "Shared folder",
       });
+      return;
+    }
+    // Shared files: fetch metadata then open
+    if (item.item_id) {
+      api
+        .getFile(item.item_id)
+        .then((file) => openFile(file, navigation))
+        .catch((err) =>
+          Alert.alert("Cannot open", err instanceof Error ? err.message : String(err)),
+        );
     }
   };
 

@@ -4,6 +4,7 @@ import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../auth/AuthContext";
 import { FolderScreen } from "../screens/FolderScreen";
+import { FilePreviewScreen } from "../screens/FilePreviewScreen";
 import { LoginScreen } from "../screens/LoginScreen";
 import { RecentScreen } from "../screens/RecentScreen";
 import { SearchScreen } from "../screens/SearchScreen";
@@ -67,6 +68,11 @@ export function RootNavigator() {
             <Stack.Screen
               name="Trash"
               component={TrashScreen}
+              options={{ headerShown: true }}
+            />
+            <Stack.Screen
+              name="FilePreview"
+              component={FilePreviewScreen}
               options={{ headerShown: true }}
             />
           </>
