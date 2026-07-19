@@ -505,16 +505,121 @@
     flex-direction: column;
     overflow: hidden;
     background: #fff;
+    min-height: 0;
+}
+
+.text-editor-docs {
+    background: #f3f3f3;
 }
 
 .text-toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
-    padding: 8px 16px;
+    gap: 2px;
+    padding: 6px 12px;
     border-bottom: 1px solid #dadce0;
-    background: #fff;
+    background: #edf2fa;
+    flex-shrink: 0;
+}
+
+.tool-sep {
+    width: 1px;
+    height: 20px;
+    background: #c4c7c5;
+    margin: 0 6px;
+    flex-shrink: 0;
+}
+
+.tool-btn-icon {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+}
+
+.tool-btn-icon .material-icons-outlined {
+    font-size: 20px;
+    line-height: 1;
+    color: #444746;
+}
+
+.tool-btn-icon:hover {
+    background: #d3e3fd;
+    border-color: transparent;
+}
+
+.tool-btn-icon.active {
+    background: #c2e7ff;
+    border-color: transparent;
+    color: #001d35;
+}
+
+.tool-btn-icon.active .material-icons-outlined {
+    color: #001d35;
+}
+
+.tool-select {
+    height: 32px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: #202124;
+    font-size: 13px;
+    font-family: 'Roboto', Arial, sans-serif;
+    padding: 0 6px;
+    max-width: 140px;
+    cursor: pointer;
+}
+
+.tool-select:hover {
+    background: #d3e3fd;
+}
+
+.tool-color {
+    position: relative;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.tool-color:hover {
+    background: #d3e3fd;
+}
+
+.tool-color .material-icons-outlined {
+    font-size: 20px;
+    color: #444746;
+    pointer-events: none;
+}
+
+.tool-color input[type="color"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+}
+
+.text-editor-scroll {
+    flex: 1;
+    overflow: auto;
+    background: #f3f3f3;
+    padding: 24px 16px 40px;
+    min-height: 0;
 }
 
 .text-editor {
@@ -528,6 +633,70 @@
     color: #202124;
 }
 
+.text-editor-page {
+    flex: none;
+    width: min(100%, 8.5in);
+    min-height: 11in;
+    margin: 0 auto;
+    padding: 1in;
+    background: #fff;
+    color: #202124;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.2);
+    border-radius: 2px;
+    overflow: visible;
+    box-sizing: border-box;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+}
+
+.text-editor-page:focus {
+    outline: none;
+}
+
+.text-editor-page h1 { font-size: 20pt; margin: 0.4em 0; font-weight: 700; }
+.text-editor-page h2 { font-size: 16pt; margin: 0.4em 0; font-weight: 700; }
+.text-editor-page h3 { font-size: 14pt; margin: 0.35em 0; font-weight: 700; }
+.text-editor-page h4,
+.text-editor-page h5,
+.text-editor-page h6 { font-size: 12pt; margin: 0.3em 0; font-weight: 700; }
+.text-editor-page p { margin: 0 0 0.5em; }
+.text-editor-page blockquote {
+    margin: 0.5em 0;
+    padding: 0.25em 0 0.25em 1em;
+    border-left: 3px solid #dadce0;
+    color: #5f6368;
+}
+.text-editor-page pre {
+    background: #f1f3f4;
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 10pt;
+}
+.text-editor-page img {
+    max-width: 100%;
+    height: auto;
+}
+.text-editor-page a {
+    color: #1a73e8;
+}
+
+.text-editor-plain-doc {
+    display: block;
+    resize: none;
+    border: none;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.text-editor-code {
+    background: #fff;
+}
+
 .text-editor-plain {
     flex: 1;
     border: none;
@@ -538,6 +707,9 @@
     font-size: 14px;
     background: #fdfdfd;
     color: #202124;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
 }
 
 .text-meta {
@@ -550,6 +722,22 @@
     background: #f8f9fa;
     min-height: 32px;
     align-items: center;
+    flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+    .text-editor-scroll {
+        padding: 12px 8px 24px;
+    }
+    .text-editor-page {
+        min-height: auto;
+        padding: 24px 20px;
+        width: 100%;
+        box-shadow: none;
+    }
+    .tool-select {
+        max-width: 110px;
+    }
 }
 
 /* ── PDF Viewer ── */

@@ -5280,32 +5280,88 @@ const FileManager = (() => {
         const blob = await decryptFileBlob(file);
         const text = await blob.text();
         const shell = openEditorShell(file);
-        
+
         const ext = getFileExtension(file.name);
         const isRichText = ['md', 'html', 'htm'].includes(ext);
+        const isPlainDoc = ext === 'txt';
+        const useDocsPage = isRichText || isPlainDoc;
 
         const wrap = document.createElement('div');
-        wrap.className = 'text-editor-wrap';
+        wrap.className = `text-editor-wrap${useDocsPage ? ' text-editor-docs' : ' text-editor-code'}`;
+
         if (isRichText) {
             wrap.innerHTML = `
                 <div class="text-toolbar" id="text-toolbar">
-                    <button class="tool-btn" data-cmd="bold">Bold</button>
-                    <button class="tool-btn" data-cmd="italic">Italic</button>
-                    <button class="tool-btn" data-cmd="underline">Underline</button>
-                    <button class="tool-btn" data-cmd="strikeThrough">Strikethrough</button>
-                    <button class="tool-btn" data-block="h1">H1</button>
-                    <button class="tool-btn" data-block="h2">H2</button>
-                    <button class="tool-btn" data-block="h3">H3</button>
-                    <button class="tool-btn" data-cmd="insertUnorderedList">• List</button>
-                    <button class="tool-btn" data-cmd="insertOrderedList">1. List</button>
-                    <button class="tool-btn" id="text-link">Link</button>
-                    <button class="tool-btn" id="text-code">Code block</button>
-                    <select id="text-font"><option>Manrope</option><option>Space Grotesk</option><option>Georgia</option><option>Courier New</option></select>
-                    <select id="text-size"><option>12</option><option>14</option><option selected>16</option><option>18</option><option>24</option><option>32</option></select>
-                    <input type="color" id="text-color" value="#ffffff">
-                    <input type="color" id="text-highlight" value="#7c5cfc">
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="undo" title="Undo"><span class="material-icons-outlined">undo</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="redo" title="Redo"><span class="material-icons-outlined">redo</span></button>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <select id="text-block" class="tool-select" title="Styles">
+                        <option value="p">Normal</option>
+                        <option value="h1">Heading 1</option>
+                        <option value="h2">Heading 2</option>
+                        <option value="h3">Heading 3</option>
+                        <option value="h4">Heading 4</option>
+                        <option value="h5">Heading 5</option>
+                        <option value="h6">Heading 6</option>
+                    </select>
+                    <select id="text-font" class="tool-select" title="Font">
+                        <option value="Arial">Arial</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                        <option value="Courier New">Courier New</option>
+                        <option value="Manrope">Manrope</option>
+                        <option value="Space Grotesk">Space Grotesk</option>
+                    </select>
+                    <select id="text-size" class="tool-select" title="Font size">
+                        <option value="12">12</option>
+                        <option value="14">14</option>
+                        <option value="16" selected>16</option>
+                        <option value="18">18</option>
+                        <option value="24">24</option>
+                        <option value="32">32</option>
+                        <option value="48">48</option>
+                    </select>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="bold" title="Bold"><span class="material-icons-outlined">format_bold</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="italic" title="Italic"><span class="material-icons-outlined">format_italic</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="underline" title="Underline"><span class="material-icons-outlined">format_underlined</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="strikeThrough" title="Strikethrough"><span class="material-icons-outlined">strikethrough_s</span></button>
+                    <label class="tool-color" title="Text color"><span class="material-icons-outlined">format_color_text</span><input type="color" id="text-color" value="#202124"></label>
+                    <label class="tool-color" title="Highlight color"><span class="material-icons-outlined">format_color_fill</span><input type="color" id="text-highlight" value="#ffff00"></label>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="insertUnorderedList" title="Bulleted list"><span class="material-icons-outlined">format_list_bulleted</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="insertOrderedList" title="Numbered list"><span class="material-icons-outlined">format_list_numbered</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="outdent" title="Decrease indent"><span class="material-icons-outlined">format_indent_decrease</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="indent" title="Increase indent"><span class="material-icons-outlined">format_indent_increase</span></button>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyLeft" title="Align left"><span class="material-icons-outlined">format_align_left</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyCenter" title="Align center"><span class="material-icons-outlined">format_align_center</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyRight" title="Align right"><span class="material-icons-outlined">format_align_right</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyFull" title="Justify"><span class="material-icons-outlined">format_align_justify</span></button>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="subscript" title="Subscript"><span class="material-icons-outlined">subscript</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="superscript" title="Superscript"><span class="material-icons-outlined">superscript</span></button>
+                    <span class="tool-sep" aria-hidden="true"></span>
+                    <button type="button" class="tool-btn tool-btn-icon" id="text-link" title="Insert link"><span class="material-icons-outlined">link</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" id="text-image" title="Insert image"><span class="material-icons-outlined">image</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" id="text-quote" title="Quote"><span class="material-icons-outlined">format_quote</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" id="text-code" title="Code block"><span class="material-icons-outlined">code</span></button>
+                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="removeFormat" title="Clear formatting"><span class="material-icons-outlined">format_clear</span></button>
+                    <input type="file" id="text-image-input" accept="image/*" hidden>
                 </div>
-                <div class="text-editor" id="text-editor" contenteditable="true"></div>
+                <div class="text-editor-scroll">
+                    <div class="text-editor text-editor-page" id="text-editor" contenteditable="true" spellcheck="true"></div>
+                </div>
+                <div class="text-meta">
+                    <span id="text-autosave">Auto-save every 30s</span>
+                    <span id="text-count">0 words · 0 chars</span>
+                </div>
+            `;
+        } else if (isPlainDoc) {
+            wrap.innerHTML = `
+                <div class="text-editor-scroll">
+                    <textarea class="text-editor text-editor-page text-editor-plain-doc" id="text-editor-plain" spellcheck="true"></textarea>
+                </div>
                 <div class="text-meta">
                     <span id="text-autosave">Auto-save every 30s</span>
                     <span id="text-count">0 words · 0 chars</span>
@@ -5313,7 +5369,7 @@ const FileManager = (() => {
             `;
         } else {
             wrap.innerHTML = `
-                <textarea class="text-editor text-editor-plain" id="text-editor-plain" spellcheck="false" style="width:100%;height:100%;resize:none;border:none;outline:none;padding:16px;font-family:monospace;font-size:14px;background:#f8f9fa;"></textarea>
+                <textarea class="text-editor text-editor-plain" id="text-editor-plain" spellcheck="false"></textarea>
                 <div class="text-meta">
                     <span id="text-autosave">Auto-save every 30s</span>
                     <span id="text-count">0 words · 0 chars</span>
@@ -5323,44 +5379,91 @@ const FileManager = (() => {
         shell.appendChild(wrap);
 
         let editor, getEditorValue, setEditorValue;
+        let selectionListener = null;
 
         if (isRichText) {
             editor = document.getElementById('text-editor');
-            editor.textContent = text;
+            const loadRichContent = (v) => {
+                const trimmed = (v || '').trim();
+                if (trimmed.startsWith('<') || /<[a-z][\s\S]*>/i.test(trimmed)) {
+                    editor.innerHTML = v;
+                } else {
+                    editor.textContent = v;
+                }
+            };
+            loadRichContent(text);
             getEditorValue = () => editor.innerHTML;
-            setEditorValue = (v) => editor.textContent = v;
-            
+            setEditorValue = (v) => loadRichContent(v);
+
+            const syncToolbarState = () => {
+                document.querySelectorAll('#text-toolbar [data-cmd]').forEach((b) => {
+                    const cmd = b.dataset.cmd;
+                    if (['undo', 'redo', 'indent', 'outdent', 'removeFormat'].includes(cmd)) {
+                        b.classList.remove('active');
+                        return;
+                    }
+                    try {
+                        b.classList.toggle('active', document.queryCommandState(cmd));
+                    } catch (_) {
+                        b.classList.remove('active');
+                    }
+                });
+            };
+
+            const runCmd = (cmd, value = null) => {
+                document.execCommand(cmd, false, value);
+                editor.focus();
+                setEditorSaved(false);
+                syncToolbarState();
+            };
+
             document.querySelectorAll('#text-toolbar [data-cmd]').forEach((b) => {
-                b.addEventListener('click', () => {
-                    document.execCommand(b.dataset.cmd, false);
-                    editor.focus();
-                    setEditorSaved(false);
-                });
+                b.addEventListener('mousedown', (e) => e.preventDefault());
+                b.addEventListener('click', () => runCmd(b.dataset.cmd));
             });
 
-            document.querySelectorAll('#text-toolbar [data-block]').forEach((b) => {
-                b.addEventListener('click', () => {
-                    document.execCommand('formatBlock', false, b.dataset.block);
-                    editor.focus();
-                    setEditorSaved(false);
-                });
+            document.getElementById('text-block').addEventListener('change', (e) => {
+                const tag = e.target.value || 'p';
+                runCmd('formatBlock', `<${tag}>`);
             });
 
+            document.getElementById('text-link').addEventListener('mousedown', (e) => e.preventDefault());
             document.getElementById('text-link').addEventListener('click', () => {
                 const href = prompt('Enter URL');
                 if (!href) return;
-                document.execCommand('createLink', false, href);
+                runCmd('createLink', href);
+            });
+
+            document.getElementById('text-quote').addEventListener('mousedown', (e) => e.preventDefault());
+            document.getElementById('text-quote').addEventListener('click', () => {
+                runCmd('formatBlock', '<blockquote>');
+            });
+
+            document.getElementById('text-code').addEventListener('mousedown', (e) => e.preventDefault());
+            document.getElementById('text-code').addEventListener('click', () => {
+                document.execCommand('insertHTML', false, '<pre><code></code></pre>');
+                editor.focus();
                 setEditorSaved(false);
             });
 
-            document.getElementById('text-code').addEventListener('click', () => {
-                document.execCommand('insertHTML', false, '<pre><code>// code</code></pre>');
-                setEditorSaved(false);
+            const imageInput = document.getElementById('text-image-input');
+            document.getElementById('text-image').addEventListener('mousedown', (e) => e.preventDefault());
+            document.getElementById('text-image').addEventListener('click', () => imageInput.click());
+            imageInput.addEventListener('change', () => {
+                const fileObj = imageInput.files?.[0];
+                imageInput.value = '';
+                if (!fileObj) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    document.execCommand('insertImage', false, reader.result);
+                    editor.focus();
+                    setEditorSaved(false);
+                };
+                reader.readAsDataURL(fileObj);
             });
 
             document.getElementById('text-font').addEventListener('change', (e) => {
-                document.execCommand('fontName', false, e.target.value);
-                setEditorSaved(false);
+                runCmd('fontName', e.target.value);
             });
 
             document.getElementById('text-size').addEventListener('change', (e) => {
@@ -5373,28 +5476,34 @@ const FileManager = (() => {
                         fonts[i].style.fontSize = `${px}px`;
                     }
                 }
+                editor.focus();
                 setEditorSaved(false);
             });
 
             document.getElementById('text-color').addEventListener('input', (e) => {
-                document.execCommand('foreColor', false, e.target.value);
-                setEditorSaved(false);
+                runCmd('foreColor', e.target.value);
             });
 
             document.getElementById('text-highlight').addEventListener('input', (e) => {
-                document.execCommand('hiliteColor', false, e.target.value);
-                setEditorSaved(false);
+                runCmd('hiliteColor', e.target.value);
             });
 
             editor.addEventListener('input', () => {
                 updateWordCount(editor.innerText || '');
                 setEditorSaved(false);
             });
+
+            selectionListener = () => {
+                if (!editorState || document.getElementById('text-editor') !== editor) return;
+                syncToolbarState();
+            };
+            document.addEventListener('selectionchange', selectionListener);
+            syncToolbarState();
         } else {
             editor = document.getElementById('text-editor-plain');
             editor.value = text;
             getEditorValue = () => editor.value;
-            setEditorValue = (v) => editor.value = v;
+            setEditorValue = (v) => { editor.value = v; };
 
             editor.addEventListener('input', () => {
                 updateWordCount(editor.value || '');
@@ -5405,7 +5514,11 @@ const FileManager = (() => {
         updateWordCount(isRichText ? (editor.innerText || '') : editor.value);
 
         editorState.onUndo = () => {
-            document.execCommand('undo', false, null);
+            if (isRichText) {
+                document.execCommand('undo', false, null);
+            } else {
+                document.execCommand('undo', false, null);
+            }
             setEditorSaved(false);
         };
         editorState.onRedo = () => {
@@ -5437,10 +5550,14 @@ const FileManager = (() => {
 
         editorState.onReset = () => {
             setEditorValue(text);
+            updateWordCount(isRichText ? (editor.innerText || '') : editor.value);
             setEditorSaved(false);
         };
-        
-        editorState.cleanup = () => clearInterval(autosaveTimer);
+
+        editorState.cleanup = () => {
+            clearInterval(autosaveTimer);
+            if (selectionListener) document.removeEventListener('selectionchange', selectionListener);
+        };
     }
 
     function updateWordCount(text) {
