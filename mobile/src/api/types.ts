@@ -114,6 +114,18 @@ export interface SharedItem {
   owner_email?: string;
 }
 
+export interface ActivityLog {
+  id: string;
+  user_id: string;
+  username?: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  target_name?: string;
+  metadata?: string;
+  created_at: string;
+}
+
 export type ViewMode = "list" | "grid";
 export type SortKey = "name" | "updated_at";
 export type SortDir = "asc" | "desc";

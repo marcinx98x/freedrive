@@ -1,7 +1,6 @@
 import React from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../auth/AuthContext";
-import { colors } from "../theme";
 import { initials } from "../utils/format";
 
 // Renders the signed-in user's avatar (data:image URL stored on the server,
@@ -30,12 +29,12 @@ export function UserAvatar({ size = 36 }: UserAvatarProps) {
 
 const styles = StyleSheet.create({
   fallback: {
-    backgroundColor: colors.accent,
+    backgroundColor: "#004A77",
     alignItems: "center",
     justifyContent: "center",
   },
   fallbackText: {
-    color: "#0B1C2C",
-    fontWeight: "700",
+    color: "#FFFFFF",
+    fontWeight: "500",
   },
 });

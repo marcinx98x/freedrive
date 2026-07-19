@@ -1,172 +1,360 @@
-import React, { useCallback, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  Alert,
+  ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAuth } from "../auth/AuthContext";
-import { AppDrawer } from "../components/AppDrawer";
-import { Icon } from "../components/Icon";
-import { SearchBar } from "../components/SearchBar";
-import { colors, radii, spacing } from "../theme";
-import { formatBytes } from "../utils/format";
+import type { CompositeScreenProps } from "@react-navigation/native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
-import type { MainTabParamList } from "../navigation/types";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { api, ApiError } from "../api/client";
+import type { ActivityLog, FileItem, ViewMode } from "../api/types";
+import { AppDrawer } from "../components/AppDrawer";
+import { EmptyState } from "../components/EmptyState";
+import { FileGridTile, FileRow } from "../components/FileRow";
+import { Icon } from "../components/Icon";
+import { ProfileMenu } from "../components/ProfileMenu";
+import { SearchBar } from "../components/SearchBar";
+import type { MainTabParamList, RootStackParamList } from "../navigation/types";
+import { colors, radii, spacing } from "../theme";
 
-type Props = BottomTabScreenProps<MainTabParamList, "Home">;
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<MainTabParamList, "Home">,
+  NativeStackScreenProps<RootStackParamList>
+>;
+
+type HomeTab = "suggested" | "activity";
+
+const HOME_VIEW_KEY = "fd_home_view_mode";
+
+function formatWhen(iso?: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
+}
+
+// Same rule as the web Home (formatHomeReason in filemanager.js).
+function suggestionReason(file: FileItem): string {
+  const created = new Date(file.created_at).getTime();
+  const updated = new Date(file.updated_at).getTime();
+  const edited = Number.isFinite(updated) && Number.isFinite(created) && updated > created;
+  return `You ${edited ? "edited" : "created"} · ${formatWhen(file.updated_at || file.created_at)}`;
+}
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  upload: "You uploaded",
+  download: "You downloaded",
+  delete: "You deleted",
+  rename: "You renamed",
+  move: "You moved",
+  copy: "You copied",
+  share: "You shared",
+  unshare: "You unshared",
+  restore: "You restored",
+  comment: "You commented",
+  create: "You created",
+};
+
+function activityLabel(action: string): string {
+  return ACTIVITY_LABELS[action] || action.charAt(0).toUpperCase() + action.slice(1);
+}
 
 export function HomeScreen({ navigation }: Props) {
-  const { user, serverUrl, logout, refreshProfile } = useAuth();
-  const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<HomeTab>("suggested");
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [filesError, setFilesError] = useState("");
+  const [activityError, setActivityError] = useState("");
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [activities, setActivities] = useState<ActivityLog[]>([]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refreshProfile();
-    } catch {
-      /* ignore */
-    } finally {
-      setRefreshing(false);
-    }
-  }, [refreshProfile]);
+  useEffect(() => {
+    AsyncStorage.getItem(HOME_VIEW_KEY).then((v) => {
+      if (v === "list" || v === "grid") setViewMode(v);
+    });
+  }, []);
 
-  const onAvatar = () => {
-    Alert.alert(user?.username || "Account", user?.email || serverUrl || "", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign out",
-        style: "destructive",
-        onPress: () => {
-          logout().catch(console.error);
-        },
-      },
-    ]);
+  const changeViewMode = async (mode: ViewMode) => {
+    setViewMode(mode);
+    await AsyncStorage.setItem(HOME_VIEW_KEY, mode);
   };
 
-  const used = user?.used_bytes ?? 0;
-  const total = user?.quota_bytes ?? 0;
-  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  // Load Suggested + Activity in parallel on mount so Activity is ready when opened.
+  const load = useCallback(async () => {
+    setFilesError("");
+    setActivityError("");
+    const [filesResult, activityResult] = await Promise.allSettled([
+      api.listFiles({ sort: "updated_at", dir: "desc", page_size: 30 }),
+      api.myActivity(50),
+    ]);
+
+    if (filesResult.status === "fulfilled") {
+      setFiles(filesResult.value.files);
+    } else {
+      const err = filesResult.reason;
+      setFilesError(err instanceof ApiError ? err.message : String(err));
+    }
+
+    if (activityResult.status === "fulfilled") {
+      setActivities(
+        activityResult.value.filter(
+          (a) => a.target_type === "file" || a.target_type === "folder",
+        ),
+      );
+    } else {
+      const err = activityResult.reason;
+      setActivityError(err instanceof ApiError ? err.message : String(err));
+    }
+
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    load();
+  }, [load]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    load();
+  };
+
+  const error = tab === "suggested" ? filesError : activityError;
+
+  const suggestedHeader = (
+    <View style={styles.cardHeader}>
+      <Text style={styles.cardHeaderTitle}>Files</Text>
+      <View style={styles.toggle}>
+        <Pressable
+          style={[styles.toggleBtn, viewMode === "list" && styles.toggleActive]}
+          onPress={() => changeViewMode("list")}
+        >
+          <Icon name="list" size={16} color={viewMode === "list" ? "#0B1C2C" : colors.text} />
+        </Pressable>
+        <Pressable
+          style={[styles.toggleBtn, viewMode === "grid" && styles.toggleActive]}
+          onPress={() => changeViewMode("grid")}
+        >
+          <Icon name="grid" size={16} color={viewMode === "grid" ? "#0B1C2C" : colors.text} />
+        </Pressable>
+      </View>
+    </View>
+  );
+
+  const refreshControl = (
+    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <AppDrawer
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        onNavigate={(route) => navigation.getParent()?.navigate(route)}
-        onSettings={onAvatar}
+        onNavigate={(route) => navigation.navigate(route)}
+        onSettings={() => setProfileOpen(true)}
       />
+      <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
       <SearchBar
         value={search}
         onChangeText={setSearch}
         onSubmit={() => {
-          if (search.trim()) {
-            navigation.getParent()?.navigate("Search", { query: search.trim() });
-          }
+          if (search.trim()) navigation.navigate("Search", { query: search.trim() });
         }}
-        onAvatarPress={onAvatar}
+        onAvatarPress={() => setProfileOpen(true)}
         onMenuPress={() => setDrawerOpen(true)}
       />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
-      >
-        <Text style={styles.greeting}>Hi, {user?.username || "there"}</Text>
-        <Text style={styles.subtitle}>Your files are ready on this server.</Text>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Storage</Text>
-          <View style={styles.barTrack}>
-            <View style={[styles.barFill, { width: `${pct}%` }]} />
-          </View>
-          <Text style={styles.cardMeta}>
-            {formatBytes(used)} of {formatBytes(total)} used ({pct}%)
+      <View style={styles.tabs}>
+        <Pressable
+          style={[styles.tab, tab === "suggested" && styles.tabActive]}
+          onPress={() => setTab("suggested")}
+        >
+          <Text style={[styles.tabText, tab === "suggested" && styles.tabTextActive]}>
+            Suggested
           </Text>
-        </View>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, tab === "activity" && styles.tabActive]}
+          onPress={() => setTab("activity")}
+        >
+          <Text style={[styles.tabText, tab === "activity" && styles.tabTextActive]}>
+            Activity
+          </Text>
+        </Pressable>
+      </View>
 
-        <View style={styles.shortcuts}>
-          <Pressable style={styles.shortcut} onPress={() => navigation.navigate("Files")}>
-            <View style={styles.shortcutIcon}>
-              <Icon name="folder" size={24} color={colors.accent} />
-            </View>
-            <Text style={styles.shortcutLabel}>Files</Text>
-          </Pressable>
-          <Pressable style={styles.shortcut} onPress={() => navigation.navigate("Starred")}>
-            <View style={styles.shortcutIcon}>
-              <Icon name="star" size={24} color={colors.accent} />
-            </View>
-            <Text style={styles.shortcutLabel}>Starred</Text>
-          </Pressable>
-          <Pressable style={styles.shortcut} onPress={() => navigation.navigate("Shared")}>
-            <View style={styles.shortcutIcon}>
-              <Icon name="people" size={24} color={colors.accent} />
-            </View>
-            <Text style={styles.shortcutLabel}>Shared</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+      <View style={styles.card}>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        {loading ? (
+          <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
+        ) : tab === "suggested" ? (
+          <FlatList
+            key={viewMode}
+            data={files}
+            keyExtractor={(item) => item.id}
+            ListHeaderComponent={suggestedHeader}
+            renderItem={({ item }) =>
+              viewMode === "grid" ? (
+                <FileGridTile file={item} subtitle={suggestionReason(item)} />
+              ) : (
+                <FileRow file={item} subtitle={suggestionReason(item)} />
+              )
+            }
+            numColumns={viewMode === "grid" ? 2 : 1}
+            columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
+            contentContainerStyle={files.length === 0 ? styles.emptyContainer : styles.listBottom}
+            refreshControl={refreshControl}
+            ListEmptyComponent={
+              <EmptyState
+                title="No suggestions yet"
+                subtitle="Files you work with will show up here"
+              />
+            }
+          />
+        ) : (
+          <FlatList
+            data={activities}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <View style={styles.activityRow}>
+                <View style={styles.activityIcon}>
+                  <Icon
+                    name={item.target_type === "folder" ? "folder" : "doc"}
+                    size={22}
+                    color={colors.folder}
+                  />
+                </View>
+                <View style={styles.activityMeta}>
+                  <Text style={styles.activityName} numberOfLines={1}>
+                    {item.target_name || (item.target_type === "folder" ? "Folder" : "File")}
+                  </Text>
+                  <Text style={styles.activitySub} numberOfLines={1}>
+                    {activityLabel(item.action)} · {formatWhen(item.created_at)}
+                  </Text>
+                </View>
+              </View>
+            )}
+            contentContainerStyle={
+              activities.length === 0 ? styles.emptyContainer : styles.listBottom
+            }
+            refreshControl={refreshControl}
+            ListEmptyComponent={
+              <EmptyState
+                title="You're all caught up"
+                subtitle="Files with recent comments or other activity that needs your attention will appear here"
+              />
+            }
+          />
+        )}
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  greeting: {
-    color: colors.text,
-    fontSize: 26,
-    fontWeight: "700",
-    marginTop: spacing.md,
+  tabs: {
+    flexDirection: "row",
+    paddingHorizontal: spacing.lg,
+    gap: spacing.xl,
   },
-  subtitle: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: spacing.xs,
-    marginBottom: spacing.xl,
+  tab: {
+    paddingVertical: spacing.md,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
   },
+  tabActive: { borderBottomColor: colors.accent },
+  tabText: { color: colors.textSecondary, fontSize: 15, fontWeight: "500" },
+  tabTextActive: { color: colors.accent },
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.xl,
-  },
-  cardTitle: {
-    color: colors.text,
-    fontWeight: "600",
-    marginBottom: spacing.md,
-  },
-  barTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.surfaceElevated,
+    flex: 1,
+    backgroundColor: "#0E0E0F",
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    marginHorizontal: spacing.xs,
     overflow: "hidden",
   },
-  barFill: {
-    height: "100%",
-    backgroundColor: "#F9AB00",
-  },
-  cardMeta: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    marginTop: spacing.sm,
-  },
-  shortcuts: {
+  cardHeader: {
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  cardHeaderTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  toggle: {
+    flexDirection: "row",
+    backgroundColor: colors.surface,
+    borderRadius: radii.pill,
+    padding: 2,
+  },
+  toggleBtn: {
+    width: 40,
+    height: 32,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleActive: {
+    backgroundColor: colors.accentSoft,
+  },
+  error: {
+    color: colors.danger,
+    paddingHorizontal: spacing.lg,
+    marginVertical: spacing.sm,
+  },
+  gridRow: {
+    paddingHorizontal: spacing.lg,
+    justifyContent: "space-between",
+  },
+  listBottom: { paddingBottom: spacing.lg },
+  emptyContainer: { flexGrow: 1 },
+  activityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     gap: spacing.md,
   },
-  shortcut: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    paddingVertical: spacing.lg,
+  activityIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceElevated,
     alignItems: "center",
+    justifyContent: "center",
   },
-  shortcutIcon: { marginBottom: spacing.sm },
-  shortcutLabel: { color: colors.text, fontWeight: "600" },
+  activityMeta: { flex: 1, minWidth: 0 },
+  activityName: { color: colors.text, fontSize: 16, fontWeight: "500" },
+  activitySub: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
 });

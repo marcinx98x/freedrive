@@ -2,7 +2,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -16,11 +15,11 @@ import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { api, ApiError } from "../api/client";
 import type { Computer, FileItem, FolderItem, SortDir, SortKey, ViewMode } from "../api/types";
-import { useAuth } from "../auth/AuthContext";
 import { AppDrawer } from "../components/AppDrawer";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { ComputerRow, FolderGridTile, FolderRow } from "../components/FolderRow";
+import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
 import { SortHeader } from "../components/SortHeader";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
@@ -41,7 +40,6 @@ type ListEntry =
 const VIEW_KEY = "fd_view_mode";
 
 export function FilesScreen({ navigation }: Props) {
-  const { user, logout } = useAuth();
   const [tab, setTab] = useState<FilesTab>("my-drive");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -54,6 +52,7 @@ export function FilesScreen({ navigation }: Props) {
   const [sort, setSort] = useState<SortKey>("name");
   const [dir, setDir] = useState<SortDir>("asc");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(VIEW_KEY).then((v) => {
@@ -130,13 +129,6 @@ export function FilesScreen({ navigation }: Props) {
     navigation.navigate("Folder", { folderId: id, title });
   };
 
-  const onAvatar = () => {
-    Alert.alert(user?.username || "Account", user?.email || "", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Sign out", style: "destructive", onPress: () => logout().catch(console.error) },
-    ]);
-  };
-
   const renderItem = ({ item }: { item: ListEntry }) => {
     if (item.kind === "computer") {
       return (
@@ -173,15 +165,16 @@ export function FilesScreen({ navigation }: Props) {
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         onNavigate={(route) => navigation.navigate(route)}
-        onSettings={onAvatar}
+        onSettings={() => setProfileOpen(true)}
       />
+      <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
       <SearchBar
         value={search}
         onChangeText={setSearch}
         onSubmit={() => {
           if (search.trim()) navigation.navigate("Search", { query: search.trim() });
         }}
-        onAvatarPress={onAvatar}
+        onAvatarPress={() => setProfileOpen(true)}
         onMenuPress={() => setDrawerOpen(true)}
       />
 

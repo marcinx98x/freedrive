@@ -63,18 +63,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (await hasSession()) {
           const cached = await getUser();
           if (cached) setUserState(cached);
-          try {
-            const me = await api.me();
-            setUserState(me);
-            await cacheUser(me);
-          } catch {
-            // Only clear the session when the API call itself fails (auth/network).
-            await clearSession();
-            setUserState(null);
-          }
         }
       } finally {
+        // Unblock UI immediately from local storage; refresh profile in background.
         setBooting(false);
+      }
+
+      if (await hasSession()) {
+        try {
+          const me = await api.me();
+          setUserState(me);
+          await cacheUser(me);
+        } catch {
+          // Network/timeout: keep cached session. 401 is handled by request()
+          // (clearSession + onUnauthorized).
+        }
       }
     })();
   }, []);

@@ -6,6 +6,7 @@ import {
   setTokens,
 } from "../auth/storage";
 import type {
+  ActivityLog,
   Computer,
   FileItem,
   FilesListResponse,
@@ -63,6 +64,23 @@ async function parseError(res: Response): Promise<string> {
   return `Request failed (${res.status})`;
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiError("Request timed out", 0);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let refreshInFlight: Promise<boolean> | null = null;
 
 async function tryRefresh(): Promise<boolean> {
@@ -72,7 +90,7 @@ async function tryRefresh(): Promise<boolean> {
       const tokens = await getTokens();
       if (!tokens?.refresh_token) return false;
       const url = await baseUrl();
-      const res = await fetch(`${url}/api/v1/auth/refresh`, {
+      const res = await fetchWithTimeout(`${url}/api/v1/auth/refresh`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -114,7 +132,7 @@ async function request<T>(
     }
   }
 
-  const res = await fetch(`${url}/api/v1${path}`, {
+  const res = await fetchWithTimeout(`${url}/api/v1${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -216,6 +234,14 @@ export const api = {
       total: data.total ?? 0,
       page: data.page ?? 1,
     };
+  },
+
+  myActivity: async (pageSize = 50) => {
+    const data = await request<{ activities: ActivityLog[] | null; total: number }>(
+      "GET",
+      `/activity?page_size=${pageSize}`,
+    );
+    return data.activities ?? [];
   },
 
   trashedFiles: async () => {

@@ -7,6 +7,7 @@ import { Icon, type IconName } from "./Icon";
 
 interface FileRowProps {
   file: FileItem;
+  subtitle?: string;
   onPress?: () => void;
   onMenuPress?: () => void;
 }
@@ -27,7 +28,7 @@ function iconFor(mime: string): { bg: string; name: IconName } {
   }
 }
 
-export function FileRow({ file, onPress, onMenuPress }: FileRowProps) {
+export function FileRow({ file, subtitle, onPress, onMenuPress }: FileRowProps) {
   const icon = iconFor(file.mime_type);
   return (
     <Pressable style={styles.row} onPress={onPress}>
@@ -39,7 +40,7 @@ export function FileRow({ file, onPress, onMenuPress }: FileRowProps) {
           {file.name}
         </Text>
         <Text style={styles.sub} numberOfLines={1}>
-          {formatRelativeDate(file.updated_at || file.accessed_at)}
+          {subtitle ?? formatRelativeDate(file.updated_at || file.accessed_at)}
         </Text>
       </View>
       <Pressable style={styles.menu} onPress={onMenuPress} hitSlop={10}>
@@ -49,7 +50,7 @@ export function FileRow({ file, onPress, onMenuPress }: FileRowProps) {
   );
 }
 
-export function FileGridTile({ file, onPress, onMenuPress }: FileRowProps) {
+export function FileGridTile({ file, subtitle, onPress, onMenuPress }: FileRowProps) {
   const icon = iconFor(file.mime_type);
   return (
     <Pressable style={styles.tile} onPress={onPress}>
@@ -62,6 +63,11 @@ export function FileGridTile({ file, onPress, onMenuPress }: FileRowProps) {
       <Text style={styles.tileName} numberOfLines={2}>
         {file.name}
       </Text>
+      {subtitle ? (
+        <Text style={styles.tileSub} numberOfLines={1}>
+          {subtitle}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -125,5 +131,10 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 13,
     fontWeight: "500",
+  },
+  tileSub: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
   },
 });
