@@ -2481,12 +2481,20 @@ const FileManager = (() => {
                 && !el.hasAttribute('hidden');
             const dividers = Array.from(menu.querySelectorAll('.context-divider'));
             dividers.forEach((divider) => {
-                let prev = divider.previousElementSibling;
-                let next = divider.nextElementSibling;
-                while (prev && !isVisibleItem(prev)) prev = prev.previousElementSibling;
-                while (next && !isVisibleItem(next)) next = next.nextElementSibling;
-                divider.style.display = prev && next ? '' : 'none';
+                divider.style.display = 'none';
             });
+            const visibleItems = Array.from(menu.children).filter(isVisibleItem);
+            for (let i = 0; i < visibleItems.length - 1; i++) {
+                let el = visibleItems[i].nextElementSibling;
+                let firstDivider = null;
+                while (el && el !== visibleItems[i + 1]) {
+                    if (el.classList.contains('context-divider') && !firstDivider) {
+                        firstDivider = el;
+                    }
+                    el = el.nextElementSibling;
+                }
+                if (firstDivider) firstDivider.style.display = '';
+            }
         }
     }
 
