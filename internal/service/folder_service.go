@@ -50,6 +50,16 @@ func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error
 		if err := s.access.CanWriteFolder(ctx, *folder.ParentID, folder.OwnerID); err != nil {
 			return err
 		}
+		parent, err := s.folderRepo.GetByID(ctx, *folder.ParentID)
+		if err != nil {
+			return err
+		}
+		if parent == nil {
+			return fmt.Errorf("parent folder not found")
+		}
+		if parent.IsTrashed {
+			return fmt.Errorf("cannot create folder inside a trashed folder")
+		}
 	}
 	if err := s.folderRepo.Create(ctx, folder); err != nil {
 		return err

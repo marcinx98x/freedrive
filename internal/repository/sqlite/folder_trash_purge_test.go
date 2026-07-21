@@ -202,3 +202,125 @@ func TestPurgeOldTrashedFolderWithFiles(t *testing.T) {
 		t.Fatal("file row should be deleted after purge")
 	}
 }
+
+func TestEmptyTrashDoesNotOrphanLiveFilesToMyDrive(t *testing.T) {
+	db, ctx := setupFolderTrashTestDB(t)
+	userRepo := NewUserRepo(db)
+	folderRepo := NewFolderRepo(db)
+	fileRepo := NewFileRepo(db)
+
+	owner := createTestUser(t, userRepo, ctx, "orphan@example.com", "orphan")
+	folder := createTestFolder(t, folderRepo, ctx, owner.ID, "TrashedDir", nil)
+
+	// Live (non-trashed) file inside a folder that will be purged — simulates
+	// incomplete MoveToTrash / upload-into-trash before Empty bin.
+	live := &domain.File{
+		ID:            uuid.New().String(),
+		Name:          "should-die.txt",
+		MimeType:      "text/plain",
+		Size:          4,
+		EncryptedSize: 4,
+		OwnerID:       owner.ID,
+		FolderID:      &folder.ID,
+		BlobPath:      "/tmp/should-die.txt",
+		IV:            "iv",
+		Version:       1,
+	}
+	if err := fileRepo.Create(ctx, live); err != nil {
+		t.Fatalf("create live file: %v", err)
+	}
+
+	if err := folderRepo.MoveToTrash(ctx, folder.ID); err != nil {
+		t.Fatalf("move folder to trash: %v", err)
+	}
+	// Force the file back to live while folder stays trashed.
+	_, err := db.Writer.ExecContext(ctx,
+		`UPDATE files SET is_trashed = 0, trashed_at = NULL WHERE id = ?`, live.ID)
+	if err != nil {
+		t.Fatalf("untrash file: %v", err)
+	}
+
+	// Mimic EmptyTrash: purge trashed files, then remaining files in pending folders, then folders.
+	if _, err := fileRepo.PurgeAllTrashedForOwner(ctx, owner.ID); err != nil {
+		t.Fatalf("purge trashed files: %v", err)
+	}
+	pending, err := folderRepo.ListAllTrashedForOwner(ctx, owner.ID)
+	if err != nil {
+		t.Fatalf("list trashed folders: %v", err)
+	}
+	ids := make([]string, 0, len(pending))
+	for _, f := range pending {
+		ids = append(ids, f.ID)
+	}
+	leftover, err := fileRepo.GetByFolderIDs(ctx, ids)
+	if err != nil {
+		t.Fatalf("get leftover files: %v", err)
+	}
+	for _, f := range leftover {
+		if err := fileRepo.Delete(ctx, f.ID); err != nil {
+			t.Fatalf("delete leftover: %v", err)
+		}
+	}
+	if _, err := folderRepo.PurgeAllTrashedForOwner(ctx, owner.ID); err != nil {
+		t.Fatalf("purge folders: %v", err)
+	}
+
+	got, err := fileRepo.GetByID(ctx, live.ID)
+	if err != nil {
+		t.Fatalf("get file: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected live file hard-deleted, still present folder_id=%v is_trashed=%v", got.FolderID, got.IsTrashed)
+	}
+
+	rootFiles, err := fileRepo.GetByFolderID(ctx, nil, owner.ID)
+	if err != nil {
+		t.Fatalf("list my drive root: %v", err)
+	}
+	if len(rootFiles) != 0 {
+		t.Fatalf("expected no My Drive root orphans, got %d", len(rootFiles))
+	}
+}
+
+func TestMoveToTrashIsTransactional(t *testing.T) {
+	db, ctx := setupFolderTrashTestDB(t)
+	userRepo := NewUserRepo(db)
+	folderRepo := NewFolderRepo(db)
+	fileRepo := NewFileRepo(db)
+
+	owner := createTestUser(t, userRepo, ctx, "tx@example.com", "tx")
+	folder := createTestFolder(t, folderRepo, ctx, owner.ID, "Docs", nil)
+	file := &domain.File{
+		ID:       uuid.New().String(),
+		Name:     "a.txt",
+		MimeType: "text/plain",
+		Size:     1,
+		OwnerID:  owner.ID,
+		FolderID: &folder.ID,
+		BlobPath: "/tmp/a.txt",
+		IV:       "iv",
+		Version:  1,
+	}
+	if err := fileRepo.Create(ctx, file); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	if err := folderRepo.MoveToTrash(ctx, folder.ID); err != nil {
+		t.Fatalf("move to trash: %v", err)
+	}
+
+	gotFolder, err := folderRepo.GetByID(ctx, folder.ID)
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+	if gotFolder == nil || !gotFolder.IsTrashed {
+		t.Fatal("folder should be trashed")
+	}
+	gotFile, err := fileRepo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("get file: %v", err)
+	}
+	if gotFile == nil || !gotFile.IsTrashed {
+		t.Fatal("file should be trashed atomically with folder")
+	}
+}

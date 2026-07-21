@@ -110,13 +110,14 @@ func (h *ComputerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	rootFolderID := computer.RootFolderID
 
-	// Drop registration first so GET /computers no longer lists this device.
-	if err := h.computerService.Delete(r.Context(), userID, computerID); err != nil {
+	// Delete the tree first so the computer root (parent_id NULL) never appears
+	// briefly under My Drive after the computers row is dropped.
+	if err := h.folderService.PermanentDelete(r.Context(), rootFolderID, userID); err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if err := h.folderService.PermanentDelete(r.Context(), rootFolderID, userID); err != nil {
+	if err := h.computerService.Delete(r.Context(), userID, computerID); err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

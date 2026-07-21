@@ -2339,7 +2339,9 @@ const FileManager = (() => {
     }
 
     function isTrashMode(target) {
-        return Boolean(target?.isTrash) || inTrashView();
+        // Permanent-delete UX is tied to the Trash page only — never stale
+        // contextTarget.isTrash from a previous visit.
+        return inTrashView() || Boolean(target?.isTrash && currentPage === 'trash');
     }
 
     function setElementHidden(el, hidden) {
@@ -2358,7 +2360,7 @@ const FileManager = (() => {
     }
 
     function syncTrashActionLabels(target = contextTarget) {
-        const trashMode = isTrashMode(target);
+        const trashMode = inTrashView();
         const computerList = currentPage === 'computers' && !currentFolderId;
 
         setActionLabel(
@@ -2521,6 +2523,7 @@ const FileManager = (() => {
         selectedItems.clear();
         selectedPrimary = null;
         selectionAnchor = null;
+        contextTarget = null;
         syncSelectionStyles();
     }
 
@@ -2821,7 +2824,8 @@ const FileManager = (() => {
             return;
         }
 
-        if (isTrashMode({ isTrash })) {
+        // Permanent delete only on the Trash page — ignore stale payload.isTrash.
+        if (inTrashView()) {
             const ok = await Components.confirm(
                 TrashCopy.deleteForeverTitle,
                 TrashCopy.singleDeleteBody(data.name),

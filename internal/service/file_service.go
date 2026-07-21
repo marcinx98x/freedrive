@@ -47,6 +47,19 @@ func NewFileService(
 
 // Upload stores a file and creates metadata.
 func (s *FileService) Upload(ctx context.Context, file *domain.File, blobPath string) error {
+	if file.FolderID != nil && *file.FolderID != "" && s.folderRepo != nil {
+		folder, err := s.folderRepo.GetByID(ctx, *file.FolderID)
+		if err != nil {
+			return err
+		}
+		if folder == nil {
+			return fmt.Errorf("folder not found")
+		}
+		if folder.IsTrashed {
+			return fmt.Errorf("cannot upload into a trashed folder")
+		}
+	}
+
 	// Check quota
 	user, err := s.userRepo.GetByID(ctx, file.OwnerID)
 	if err != nil {
@@ -291,34 +304,93 @@ type EmptyTrashResult struct {
 	FreedBytes     int64 `json:"freed_bytes"`
 }
 
+// hardDeleteFileRows removes file DB rows (and version blobs) and returns main blob
+// paths plus freed encrypted bytes. Callers delete main blobs asynchronously if desired.
+func (s *FileService) hardDeleteFileRows(ctx context.Context, files []domain.File) (blobPaths []string, freed int64) {
+	for _, f := range files {
+		versions, _ := s.fileRepo.GetVersions(ctx, f.ID)
+		for _, v := range versions {
+			_ = s.storage.Delete(v.BlobPath)
+		}
+		blobPaths = append(blobPaths, f.BlobPath)
+		freed += f.EncryptedSize
+		_ = s.fileRepo.Delete(ctx, f.ID)
+		_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
+	}
+	return blobPaths, freed
+}
+
+// purgeFilesInFolders hard-deletes every file still pointing at the given folders
+// so folder DELETE cannot orphan them to My Drive via ON DELETE SET NULL.
+func (s *FileService) purgeFilesInFolders(ctx context.Context, folderIDs []string) (blobPaths []string, count int, freed int64, err error) {
+	if len(folderIDs) == 0 {
+		return nil, 0, 0, nil
+	}
+	files, err := s.fileRepo.GetByFolderIDs(ctx, folderIDs)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	paths, freed := s.hardDeleteFileRows(ctx, files)
+	return paths, len(files), freed, nil
+}
+
+func folderIDsOf(folders []domain.Folder) []string {
+	ids := make([]string, 0, len(folders))
+	for _, f := range folders {
+		ids = append(ids, f.ID)
+	}
+	return ids
+}
+
 // EmptyTrash permanently removes all trashed files and folders for the owner.
 // Database rows are cleared first so the trash list is empty immediately; blob
 // I/O runs afterward (and does not block list freshness).
+// Any non-trashed files still inside trashed folders are hard-deleted before
+// folders are removed, so SQLite ON DELETE SET NULL cannot move them to My Drive.
 func (s *FileService) EmptyTrash(ctx context.Context, ownerID string) (*EmptyTrashResult, error) {
-	// Snapshot blob paths (including versions) before DB purge cascades versions away.
 	files, err := s.fileRepo.PurgeAllTrashedForOwner(ctx, ownerID)
 	if err != nil {
 		return nil, err
 	}
 
 	blobPaths := make([]string, 0, len(files))
+	var freed int64
 	for _, f := range files {
 		blobPaths = append(blobPaths, f.BlobPath)
+		freed += f.EncryptedSize
+		_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
 	}
 
 	var foldersRemoved int
 	if s.folderRepo != nil {
+		pending, err := s.folderRepo.ListAllTrashedForOwner(ctx, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		extraPaths, extraCount, extraFreed, err := s.purgeFilesInFolders(ctx, folderIDsOf(pending))
+		if err != nil {
+			return nil, err
+		}
+		blobPaths = append(blobPaths, extraPaths...)
+		freed += extraFreed
+
 		folders, err := s.folderRepo.PurgeAllTrashedForOwner(ctx, ownerID)
 		if err != nil {
 			return nil, err
 		}
 		foldersRemoved = len(folders)
-	}
 
-	var freed int64
-	for _, f := range files {
-		freed += f.EncryptedSize
-		_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
+		go func(paths []string) {
+			for _, p := range paths {
+				_ = s.storage.Delete(p)
+			}
+		}(blobPaths)
+
+		return &EmptyTrashResult{
+			RemovedFiles:   len(files) + extraCount,
+			RemovedFolders: foldersRemoved,
+			FreedBytes:     freed,
+		}, nil
 	}
 
 	go func(paths []string) {
@@ -353,17 +425,30 @@ func (s *FileService) StartTrashPurge(ctx context.Context) {
 					log.Printf("trash purge error: %v", err)
 					continue
 				}
+				for _, f := range files {
+					_ = s.storage.Delete(f.BlobPath)
+					_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
+				}
 				if s.folderRepo != nil {
+					pending, err := s.folderRepo.ListOldTrashed(ctx, days)
+					if err != nil {
+						log.Printf("list old trashed folders error: %v", err)
+						continue
+					}
+					extraPaths, _, _, err := s.purgeFilesInFolders(ctx, folderIDsOf(pending))
+					if err != nil {
+						log.Printf("purge files in old trashed folders error: %v", err)
+						continue
+					}
+					for _, p := range extraPaths {
+						_ = s.storage.Delete(p)
+					}
 					folders, err := s.folderRepo.PurgeOldTrashed(ctx, days)
 					if err != nil {
 						log.Printf("folder trash purge error: %v", err)
 					} else if len(folders) > 0 {
 						log.Printf("purged %d old trashed folders", len(folders))
 					}
-				}
-				for _, f := range files {
-					_ = s.storage.Delete(f.BlobPath)
-					_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
 				}
 				if len(files) > 0 {
 					log.Printf("purged %d old trash items", len(files))

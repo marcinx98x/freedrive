@@ -108,6 +108,9 @@ type FolderRepository interface {
 	MoveToTrash(ctx context.Context, id string) error
 	RestoreFromTrash(ctx context.Context, id string) error
 	GetTrashedFolders(ctx context.Context, ownerID string) ([]domain.Folder, error)
+	ListAllTrashed(ctx context.Context) ([]domain.Folder, error)
+	ListAllTrashedForOwner(ctx context.Context, ownerID string) ([]domain.Folder, error)
+	ListOldTrashed(ctx context.Context, days int) ([]domain.Folder, error)
 	PurgeAllTrashed(ctx context.Context) ([]domain.Folder, error)
 	PurgeAllTrashedForOwner(ctx context.Context, ownerID string) ([]domain.Folder, error)
 	PurgeOldTrashed(ctx context.Context, days int) ([]domain.Folder, error)

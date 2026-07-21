@@ -74,10 +74,43 @@ func (h *AdminHandler) PurgeTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear folder rows immediately after files so trash list cannot retain empty folders
-	// while blob I/O is still running.
+	// Before deleting folder rows, hard-delete any remaining files that still
+	// point at those folders (avoids ON DELETE SET NULL → My Drive orphans).
 	var foldersRemoved int
 	if h.folderRepo != nil {
+		var pending []domain.Folder
+		var listErr error
+		if days == 0 {
+			pending, listErr = h.folderRepo.ListAllTrashed(r.Context())
+		} else {
+			pending, listErr = h.folderRepo.ListOldTrashed(r.Context(), days)
+		}
+		if listErr != nil {
+			writeError(w, "failed to list trashed folders", http.StatusInternalServerError)
+			return
+		}
+		if len(pending) > 0 {
+			ids := make([]string, 0, len(pending))
+			for _, f := range pending {
+				ids = append(ids, f.ID)
+			}
+			leftover, getErr := h.fileRepo.GetByFolderIDs(r.Context(), ids)
+			if getErr != nil {
+				writeError(w, "failed to list files in trashed folders", http.StatusInternalServerError)
+				return
+			}
+			for _, f := range leftover {
+				versions, _ := h.fileRepo.GetVersions(r.Context(), f.ID)
+				for _, v := range versions {
+					if h.diskStorage != nil {
+						_ = h.diskStorage.Delete(v.BlobPath)
+					}
+				}
+				_ = h.fileRepo.Delete(r.Context(), f.ID)
+				files = append(files, f)
+			}
+		}
+
 		var folders []domain.Folder
 		var folderErr error
 		if days == 0 {
