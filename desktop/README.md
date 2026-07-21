@@ -7,14 +7,17 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 ## Features
 
 - **Sign in** to your FreeDrive server (JWT auth + 2FA support)
+- **Single-instance** — a second launch focuses the existing main window
 - **Onboarding wizard** — choose folders to sync (Desktop, Documents, Downloads, or custom)
 - **Background sync** — uploads local changes, polls for remote changes; skips `.git`, `node_modules`, and `.svn` folders during scan
+- **Local deletes → server trash** — removing a file from a sync folder (including Explorer Delete, which moves it out of the tree) soft-deletes the matching server file; periodic verify (~5 min) and pre-upload same-name cleanup catch missed events and avoid live duplicates
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan; if initial sync was never completed, startup resumes full sync with a “Resuming sync…” status
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
 - **Google Drive-style sidebar** — SVG icons for Home, Sync activity, and Notifications with alert badge; top bar uses matching SVG icons (pause/play, settings, help, lock)
 - **Preferences window** — dedicated window opened from the gear icon: **My computer** (manage sync folders), **FreeDrive** (Windows Explorer / CfAPI status), **Settings** (encryption, launch on login, open sync log)
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
 - **Profile menu** — server avatar, storage bar, Manage storage, Sign out
+- **Sign out** — stops CfAPI and clears contents of `%USERPROFILE%\FreeDrive\My Drive` (folder kept for next login)
 - **Device identity** — reports the computer hostname and keeps a stable installation ID, so signing in again updates the same entry in the server's Devices list instead of creating a duplicate
 - **Non-blocking sign-in** — crypto unlock, sync restore, and Explorer (CfAPI) start in the background so login does not block the UI
 - **System tray** — minimize to tray, pause/resume sync from the menu
@@ -106,6 +109,12 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 - Check **Sync activity** in the app for per-file errors.
 - Check `%APPDATA%\FreeDrive\sync.log` for detailed sync steps.
 - Do not run the app as Administrator (different `%APPDATA%` profile).
+
+### Deleted locally but still on the server
+
+- Soft-delete on the server can take a few seconds (journal). Look for `Removed from cloud` in Sync activity or `file_delete` lines in `sync.log`.
+- Explorer Delete moves the file out of the sync tree; the client treats that as a local delete. If an event was missed, the next periodic verify (~5 min) or app restart should soft-delete orphans.
+- Re-uploading the same name after a missed delete used to leave two live files; the client now trashes same-name siblings in that remote folder before a fresh upload.
 
 ### Encryption notes
 
