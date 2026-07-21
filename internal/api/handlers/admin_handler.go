@@ -313,9 +313,34 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.userRepo.Delete(r.Context(), userID); err != nil {
-		writeError(w, "failed to delete user", http.StatusInternalServerError)
+	target, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, "failed to load user", http.StatusInternalServerError)
 		return
+	}
+	if target == nil {
+		writeError(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	var blobPaths []string
+	if h.fileRepo != nil {
+		blobPaths, err = h.fileRepo.ListBlobPathsByOwner(r.Context(), userID)
+		if err != nil {
+			writeError(w, "failed to list user files", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := h.userRepo.Delete(r.Context(), userID); err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if h.diskStorage != nil {
+		for _, p := range blobPaths {
+			_ = h.diskStorage.Delete(p)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})

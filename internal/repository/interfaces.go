@@ -70,6 +70,7 @@ type FileRepository interface {
 	ListDuplicateGroups(ctx context.Context) ([]domain.DuplicateGroup, error)
 	ListDuplicateFilesToRemove(ctx context.Context) ([]domain.File, error)
 	ListAllBlobPaths(ctx context.Context) ([]string, error)
+	ListBlobPathsByOwner(ctx context.Context, ownerID string) ([]string, error)
 	CountByOwner(ctx context.Context, ownerID string) (int, error)
 	SumEncryptedSizeByOwner(ctx context.Context, ownerID string) (int64, error)
 	SumAllEncryptedSize(ctx context.Context) (int64, error)

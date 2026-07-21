@@ -117,9 +117,52 @@ func (r *UserRepo) Update(ctx context.Context, user *domain.User) error {
 }
 
 func (r *UserRepo) Delete(ctx context.Context, id string) error {
-	_, err := r.writer.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
+	tx, err := r.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete user tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Clear FK references that lack ON DELETE CASCADE, then remove all owned
+	// content explicitly so user deletion always wipes their files/folders.
+	type delStmt struct {
+		q    string
+		args []interface{}
+	}
+	stmts := []delStmt{
+		{`DELETE FROM invite_links WHERE created_by = ?`, []interface{}{id}},
+		{`DELETE FROM share_links WHERE created_by = ?`, []interface{}{id}},
+		{`DELETE FROM user_shares WHERE shared_by = ? OR shared_with = ?`, []interface{}{id, id}},
+		{`DELETE FROM comments WHERE user_id = ? OR assigned_to = ?`, []interface{}{id, id}},
+		{`DELETE FROM activity_log WHERE user_id = ?`, []interface{}{id}},
+		{`DELETE FROM file_approvals WHERE requested_by = ? OR approver_id = ?`, []interface{}{id, id}},
+		// Versions created by this user (incl. on others' files) block user DELETE.
+		{`DELETE FROM file_versions WHERE created_by = ?`, []interface{}{id}},
+		// Owned storage — explicit so files are gone even if CASCADE is incomplete.
+		{`DELETE FROM file_versions WHERE file_id IN (SELECT id FROM files WHERE owner_id = ?)`, []interface{}{id}},
+		{`DELETE FROM files WHERE owner_id = ?`, []interface{}{id}},
+		{`DELETE FROM computers WHERE owner_id = ?`, []interface{}{id}},
+		{`DELETE FROM folders WHERE owner_id = ?`, []interface{}{id}},
+		{`DELETE FROM notifications WHERE user_id = ?`, []interface{}{id}},
+		{`DELETE FROM refresh_tokens WHERE user_id = ?`, []interface{}{id}},
+		{`DELETE FROM user_crypto WHERE user_id = ?`, []interface{}{id}},
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s.q, s.args...); err != nil {
+			return fmt.Errorf("delete user cleanup: %w", err)
+		}
+	}
+
+	res, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete user: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete user: %w", err)
 	}
 	return nil
 }

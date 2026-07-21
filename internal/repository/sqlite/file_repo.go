@@ -473,6 +473,33 @@ func (r *FileRepo) ListAllBlobPaths(ctx context.Context) ([]string, error) {
 	return paths, rows.Err()
 }
 
+// ListBlobPathsByOwner returns blob paths for a user's files and their versions
+// (call before deleting the user so disk blobs can be removed).
+func (r *FileRepo) ListBlobPathsByOwner(ctx context.Context, ownerID string) ([]string, error) {
+	rows, err := r.reader.QueryContext(ctx, `
+		SELECT blob_path FROM files WHERE owner_id = ?
+		UNION ALL
+		SELECT fv.blob_path FROM file_versions fv
+		INNER JOIN files f ON f.id = fv.file_id
+		WHERE f.owner_id = ?`, ownerID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, rows.Err()
+}
+
 func (r *FileRepo) CountByOwner(ctx context.Context, ownerID string) (int, error) {
 	var count int
 	err := r.reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM files WHERE owner_id = ?", ownerID).Scan(&count)

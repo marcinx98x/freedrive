@@ -1959,14 +1959,18 @@ const AdminPanel = (() => {
         }
 
         if (action === 'delete-user') {
-            const ok = await Components.confirm('Delete user', 'This action is irreversible and will remove user access permanently.', 'Delete');
+            const ok = await Components.confirm(
+                'Delete user',
+                'This permanently deletes the account and all of their files, folders, and devices. This cannot be undone.',
+                'Delete',
+            );
             if (!ok) return;
             await API.admin.deleteUser(userId).catch((err) => {
                 Components.toast(err.message, 'error');
                 throw err;
             });
             state.userSelection.delete(userId);
-            Components.toast('User deleted', 'success');
+            Components.toast('User and all their files deleted', 'success');
             await load(state.section);
             return;
         }
@@ -2342,14 +2346,31 @@ const AdminPanel = (() => {
                 }
 
                 if (action === 'bulk-delete') {
-                    const ok = await Components.confirm('Delete selected users', 'This action cannot be undone.', 'Delete');
+                    const ok = await Components.confirm(
+                        'Delete selected users',
+                        'This permanently deletes the selected accounts and all of their files, folders, and devices. This cannot be undone.',
+                        'Delete',
+                    );
                     if (!ok) return;
+                    let deleted = 0;
+                    const failures = [];
                     for (const id of state.userSelection) {
-                        await API.admin.deleteUser(id).catch(() => {});
+                        try {
+                            await API.admin.deleteUser(id);
+                            deleted += 1;
+                        } catch (err) {
+                            failures.push(err?.message || 'failed');
+                        }
                     }
                     state.userSelection.clear();
                     await load('users');
-                    Components.toast('Selected users deleted', 'success');
+                    if (failures.length && deleted === 0) {
+                        Components.toast(failures[0], 'error');
+                    } else if (failures.length) {
+                        Components.toast(`Deleted ${deleted}; ${failures.length} failed (${failures[0]})`, 'warning');
+                    } else {
+                        Components.toast(`Deleted ${deleted} user(s) and their files`, 'success');
+                    }
                     return;
                 }
 
