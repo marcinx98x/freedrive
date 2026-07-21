@@ -15,6 +15,12 @@ import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { api, ApiError } from "../api/client";
 import type { ActivityLog, FileItem, ViewMode } from "../api/types";
+import {
+  LIST_CACHE_KEYS,
+  readListCache,
+  writeListCache,
+  type HomeSuggestedCache,
+} from "../cache/listCache";
 import { AppDrawer } from "../components/AppDrawer";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
@@ -134,11 +140,15 @@ export function HomeScreen({ navigation }: Props) {
     await AsyncStorage.setItem(HOME_VIEW_KEY, mode);
   };
 
-  const loadSuggested = useCallback(async () => {
+  const loadSuggested = useCallback(async (opts?: { soft?: boolean }) => {
+    if (!opts?.soft) setLoading(true);
     setFilesError("");
     try {
       const data = await api.listFiles({ sort: "updated_at", dir: "desc", page_size: 30 });
       setFiles(data.files);
+      await writeListCache<HomeSuggestedCache>(LIST_CACHE_KEYS.homeSuggested, {
+        files: data.files,
+      });
     } catch (err) {
       setFilesError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -166,8 +176,20 @@ export function HomeScreen({ navigation }: Props) {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
-    loadSuggested();
+    let cancelled = false;
+    void (async () => {
+      const cached = await readListCache<HomeSuggestedCache>(LIST_CACHE_KEYS.homeSuggested);
+      if (!cancelled && cached?.files?.length) {
+        setFiles(cached.files);
+        setLoading(false);
+      }
+      if (!cancelled) {
+        await loadSuggested({ soft: Boolean(cached?.files?.length) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadSuggested]);
 
   useEffect(() => {
@@ -181,18 +203,18 @@ export function HomeScreen({ navigation }: Props) {
     if (tab === "activity") {
       void loadActivity({ soft: true });
     } else {
-      void loadSuggested();
+      void loadSuggested({ soft: true });
     }
   };
 
   const onChanged = () => {
-    void loadSuggested();
+    void loadSuggested({ soft: true });
     if (activityLoaded) void loadActivity({ soft: true });
   };
 
   const error = tab === "suggested" ? filesError : activityError;
   const showSpinner =
-    (tab === "suggested" && loading) ||
+    (tab === "suggested" && loading && files.length === 0) ||
     (tab === "activity" && activityLoading && activities.length === 0);
 
   const suggestedHeader = (

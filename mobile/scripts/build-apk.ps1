@@ -1,0 +1,54 @@
+# Canonical FreeDrive mobile APK build (Windows).
+# Incremental by default: sync TS -> C:\fdm, gradlew, copy to mobile\dist.
+param(
+    [switch]$Clean
+)
+
+$ErrorActionPreference = "Stop"
+
+$RepoMobile = Split-Path $PSScriptRoot -Parent
+$Fdm = "C:\fdm"
+$ApkSrc = Join-Path $Fdm "android\app\build\outputs\apk\release\app-release.apk"
+$ApkDest = Join-Path $RepoMobile "dist\FreeDrive-1.0.0.apk"
+
+if ($Clean -and (Test-Path $Fdm)) {
+    Remove-Item -Recurse -Force $Fdm
+}
+
+if (-not (Test-Path $Fdm)) {
+    New-Item -ItemType Directory -Path $Fdm -Force | Out-Null
+}
+
+robocopy $RepoMobile $Fdm /E /XD node_modules android .expo dist /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+
+if (-not (Test-Path (Join-Path $Fdm "node_modules"))) {
+    Push-Location $Fdm
+    npm ci
+    Pop-Location
+}
+
+if (-not (Test-Path (Join-Path $Fdm "android"))) {
+    $env:CI = "1"
+    Push-Location $Fdm
+    npx expo prebuild --platform android
+    Pop-Location
+}
+
+$env:CI = "1"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+$env:JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot"
+$env:PATH = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
+
+Push-Location (Join-Path $Fdm "android")
+.\gradlew.bat assembleRelease
+Pop-Location
+
+if (-not (Test-Path $ApkSrc)) {
+    Write-Error "APK not found: $ApkSrc"
+}
+
+New-Item -ItemType Directory -Force -Path (Split-Path $ApkDest -Parent) | Out-Null
+Copy-Item $ApkSrc $ApkDest -Force
+Get-Item $ApkDest | Format-List FullName, Length, LastWriteTime

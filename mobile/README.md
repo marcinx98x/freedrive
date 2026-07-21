@@ -56,14 +56,32 @@ node scripts/generate-assets.mjs   # regenerate icon/splash from desktop logo
 
 ## Build release APK
 
-On Windows, long paths under `Desktop\…` can break CMake. Prefer a short working copy (e.g. `C:\fdm`):
+**Canonical procedure (Windows):** always build from `C:\fdm`, copy to `mobile\dist\FreeDrive-1.0.0.apk`. Do not build from `Desktop\Projekty\...` (CMake MAX_PATH).
 
-```bash
-cd mobile
-npm install
-npx expo prebuild --platform android
-cd android
-./gradlew assembleRelease   # Windows: gradlew.bat assembleRelease
+### Routine rebuild (TS/UI changes, ~1–5 min)
+
+```powershell
+powershell -File mobile\scripts\build-apk.ps1
 ```
 
-APK output: `android/app/build/outputs/apk/release/app-release.apk` (debug-signed unless you configure a release keystore).
+Manual steps (same as the script):
+
+```powershell
+robocopy "C:\Users\marci\Desktop\Projekty\freedrive-master\mobile" "C:\fdm" /E /XD node_modules android .expo dist
+$env:CI = "1"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot"
+cd C:\fdm\android
+.\gradlew.bat assembleRelease
+Copy-Item "C:\fdm\android\app\build\outputs\apk\release\app-release.apk" "C:\Users\marci\Desktop\Projekty\freedrive-master\mobile\dist\FreeDrive-1.0.0.apk" -Force
+```
+
+Do **not** run `expo prebuild` on every rebuild — only when `C:\fdm\android` is missing or native config changed (`app.json`, new Expo plugin).
+
+### First build or native changes only
+
+```powershell
+powershell -File mobile\scripts\build-apk.ps1 -Clean
+```
+
+APK output for install: `mobile\dist\FreeDrive-1.0.0.apk` (debug-signed unless you configure a release keystore).

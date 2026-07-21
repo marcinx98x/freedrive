@@ -284,6 +284,56 @@ func (s *FileService) ToggleStar(ctx context.Context, fileID, userID string) err
 	return s.fileRepo.Update(ctx, file)
 }
 
+// EmptyTrashResult is returned by EmptyTrash.
+type EmptyTrashResult struct {
+	RemovedFiles   int   `json:"removed_files"`
+	RemovedFolders int   `json:"removed_folders"`
+	FreedBytes     int64 `json:"freed_bytes"`
+}
+
+// EmptyTrash permanently removes all trashed files and folders for the owner.
+// Database rows are cleared first so the trash list is empty immediately; blob
+// I/O runs afterward (and does not block list freshness).
+func (s *FileService) EmptyTrash(ctx context.Context, ownerID string) (*EmptyTrashResult, error) {
+	// Snapshot blob paths (including versions) before DB purge cascades versions away.
+	files, err := s.fileRepo.PurgeAllTrashedForOwner(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+
+	blobPaths := make([]string, 0, len(files))
+	for _, f := range files {
+		blobPaths = append(blobPaths, f.BlobPath)
+	}
+
+	var foldersRemoved int
+	if s.folderRepo != nil {
+		folders, err := s.folderRepo.PurgeAllTrashedForOwner(ctx, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		foldersRemoved = len(folders)
+	}
+
+	var freed int64
+	for _, f := range files {
+		freed += f.EncryptedSize
+		_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
+	}
+
+	go func(paths []string) {
+		for _, p := range paths {
+			_ = s.storage.Delete(p)
+		}
+	}(blobPaths)
+
+	return &EmptyTrashResult{
+		RemovedFiles:   len(files),
+		RemovedFolders: foldersRemoved,
+		FreedBytes:     freed,
+	}, nil
+}
+
 // StartTrashPurge starts a background goroutine that purges old trash items.
 func (s *FileService) StartTrashPurge(ctx context.Context) {
 	go func() {
@@ -303,10 +353,6 @@ func (s *FileService) StartTrashPurge(ctx context.Context) {
 					log.Printf("trash purge error: %v", err)
 					continue
 				}
-				for _, f := range files {
-					_ = s.storage.Delete(f.BlobPath)
-					_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
-				}
 				if s.folderRepo != nil {
 					folders, err := s.folderRepo.PurgeOldTrashed(ctx, days)
 					if err != nil {
@@ -314,6 +360,10 @@ func (s *FileService) StartTrashPurge(ctx context.Context) {
 					} else if len(folders) > 0 {
 						log.Printf("purged %d old trashed folders", len(folders))
 					}
+				}
+				for _, f := range files {
+					_ = s.storage.Delete(f.BlobPath)
+					_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
 				}
 				if len(files) > 0 {
 					log.Printf("purged %d old trash items", len(files))

@@ -113,6 +113,8 @@ func NewRouter(
 				r.Delete("/links/{id}", shareHandler.DeleteLink)
 			})
 
+			r.Post("/trash/empty", fileHandler.EmptyTrash)
+
 			r.Route("/files", func(r chi.Router) {
 				r.Post("/upload", fileHandler.Upload)
 				r.Get("/", fileHandler.List)

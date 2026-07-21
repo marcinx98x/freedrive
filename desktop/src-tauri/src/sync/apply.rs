@@ -210,6 +210,20 @@ async fn apply_remote_file(
                     change.entity_id, relative
                 ));
                 return Ok(());
+            } else if Path::new(&local_root).exists() {
+                // No sync_state and file gone locally — local disk wins; trash
+                // on server instead of resurrecting the file.
+                crate::sync::journal::enqueue_file_delete(
+                    db,
+                    sync_folder_id,
+                    &relative,
+                    &change.entity_id,
+                )?;
+                sync_log(format!(
+                    "remote file {} -> {} missing locally, queued server delete",
+                    change.entity_id, relative
+                ));
+                return Ok(());
             }
         }
     }

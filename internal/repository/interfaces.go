@@ -66,6 +66,7 @@ type FileRepository interface {
 	GetTrashedFiles(ctx context.Context, ownerID string) ([]domain.File, error)
 	PurgeOldTrashed(ctx context.Context, days int) ([]domain.File, error)
 	PurgeAllTrashed(ctx context.Context) ([]domain.File, error)
+	PurgeAllTrashedForOwner(ctx context.Context, ownerID string) ([]domain.File, error)
 	ListDuplicateGroups(ctx context.Context) ([]domain.DuplicateGroup, error)
 	ListDuplicateFilesToRemove(ctx context.Context) ([]domain.File, error)
 	ListAllBlobPaths(ctx context.Context) ([]string, error)
@@ -108,6 +109,7 @@ type FolderRepository interface {
 	RestoreFromTrash(ctx context.Context, id string) error
 	GetTrashedFolders(ctx context.Context, ownerID string) ([]domain.Folder, error)
 	PurgeAllTrashed(ctx context.Context) ([]domain.Folder, error)
+	PurgeAllTrashedForOwner(ctx context.Context, ownerID string) ([]domain.Folder, error)
 	PurgeOldTrashed(ctx context.Context, days int) ([]domain.Folder, error)
 	ListSubtreeIDs(ctx context.Context, id string) ([]string, error)
 }

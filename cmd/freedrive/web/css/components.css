@@ -47,6 +47,47 @@
     margin: 5px 0;
 }
 
+/* Trash / Bin banner (Google Drive style) */
+.trash-bin-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 0 12px;
+    padding: 10px 16px;
+    background: #e8f0fe;
+    border-radius: 8px;
+    font-family: 'Google Sans', 'Roboto', Arial, sans-serif;
+    font-size: 14px;
+    color: #3c4043;
+}
+
+.trash-bin-banner.hidden {
+    display: none;
+}
+
+.trash-bin-banner-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.trash-bin-empty-btn {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: #1a73e8;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 0;
+    white-space: nowrap;
+}
+
+.trash-bin-empty-btn:hover {
+    text-decoration: underline;
+}
+
 /* ── Modal ── */
 .modal-overlay {
     position: fixed;

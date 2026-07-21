@@ -716,13 +716,10 @@ go run ./cmd/freedrive          # terminal 1 — server
 cd mobile && npm install && npm start   # terminal 2 — Expo
 ```
 
-Build a release APK (requires Android SDK + JDK 17; on Windows use a short path such as `C:\fdm` if native CMake hits MAX_PATH):
+Build a release APK on Windows (canonical: `mobile\scripts\build-apk.ps1` → `mobile\dist\FreeDrive-1.0.0.apk`; do not build from long `Desktop\…` paths):
 
 ```bash
-cd mobile
-npm install
-npx expo prebuild --platform android
-cd android && ./gradlew assembleRelease   # Windows: gradlew.bat assembleRelease
+cd mobile && powershell -File scripts\build-apk.ps1
 ```
 
 ---

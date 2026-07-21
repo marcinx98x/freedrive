@@ -115,6 +115,32 @@ func TestComputerService_HeartbeatNotFound(t *testing.T) {
 	}
 }
 
+func TestComputerService_DeleteRemovesFromList(t *testing.T) {
+	f := setupComputerTest(t)
+
+	computer, err := f.svc.Register(f.ctx, f.ownerID, "Work PC", "DESKTOP-1")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if err := f.svc.Delete(f.ctx, f.ownerID, computer.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	list, err := f.svc.List(f.ctx, f.ownerID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected 0 computers after delete, got %d", len(list))
+	}
+
+	_, err = f.svc.Get(f.ctx, f.ownerID, computer.ID)
+	if err == nil {
+		t.Fatal("expected get to fail after delete")
+	}
+}
+
 func TestComputerService_RegisterIsIdempotentByHostname(t *testing.T) {
 	f := setupComputerTest(t)
 

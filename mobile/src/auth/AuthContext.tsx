@@ -79,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const cached = await getUser();
           if (cached) {
             setUserState(cached);
-            await tryRestoreUnlock(cached.id);
+            void tryRestoreUnlock(cached.id);
           }
         }
       } finally {
@@ -92,7 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUserState(me);
           await cacheUser(me);
           if (!pendingLoginPassword) {
-            await tryRestoreUnlock(me.id);
+            void tryRestoreUnlock(me.id);
           }
         } catch {
           // Network/timeout: keep cached session. 401 is handled by request()

@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,6 +11,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { api, ApiError } from "../api/client";
 import type { FileItem, FolderItem, SortDir, SortKey, ViewMode } from "../api/types";
+import {
+  LIST_CACHE_KEYS,
+  readListCache,
+  writeListCache,
+  type FolderContentsCache,
+} from "../cache/listCache";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { FolderGridTile, FolderRow } from "../components/FolderRow";
@@ -61,29 +67,55 @@ export function FolderScreen({ route, navigation }: Props) {
     await AsyncStorage.setItem(VIEW_KEY, mode);
   };
 
-  const load = useCallback(async () => {
-    setError("");
-    try {
-      const contents = await api.folder(folderId);
-      setFolders(contents.folders);
-      setFiles(contents.files);
-      if (contents.folder?.name) {
-        navigation.setOptions({ title: contents.folder.name });
+  const load = useCallback(
+    async (opts?: { soft?: boolean }) => {
+      if (!opts?.soft) setLoading(true);
+      setError("");
+      try {
+        const contents = await api.folder(folderId);
+        setFolders(contents.folders);
+        setFiles(contents.files);
+        const folderName = contents.folder?.name;
+        if (folderName) {
+          navigation.setOptions({ title: folderName });
+        }
+        await writeListCache<FolderContentsCache>(LIST_CACHE_KEYS.folder(folderId), {
+          folders: contents.folders,
+          files: contents.files,
+          folderName,
+        });
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : String(err));
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [folderId, navigation]);
+    },
+    [folderId, navigation],
+  );
 
   useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      const cached = await readListCache<FolderContentsCache>(LIST_CACHE_KEYS.folder(folderId));
+      if (!cancelled && (cached?.folders?.length || cached?.files?.length)) {
+        setFolders(cached.folders);
+        setFiles(cached.files);
+        if (cached.folderName) {
+          navigation.setOptions({ title: cached.folderName });
+        }
+        setLoading(false);
+      }
+      if (!cancelled) {
+        await load({ soft: Boolean(cached?.folders?.length || cached?.files?.length) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [folderId, load, navigation]);
 
-  const entries: ListEntry[] = (() => {
+  const entries = useMemo((): ListEntry[] => {
     const compare = (a: string, b: string) =>
       dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
     const byDate = (a?: string, b?: string) => {
@@ -102,7 +134,7 @@ export function FolderScreen({ route, navigation }: Props) {
       )
       .map((item) => ({ kind: "file" as const, item }));
     return [...folderEntries, ...fileEntries];
-  })();
+  }, [folders, files, sort, dir]);
 
   const renderItem = ({ item }: { item: ListEntry }) => {
     if (item.kind === "folder") {
@@ -142,12 +174,14 @@ export function FolderScreen({ route, navigation }: Props) {
     );
   };
 
+  const showSpinner = loading && entries.length === 0;
+
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <ItemActionsSheet
         target={menuTarget}
         onClose={() => setMenuTarget(null)}
-        onChanged={load}
+        onChanged={() => load({ soft: true })}
       />
       <SortHeader
         sort={sort}
@@ -163,7 +197,7 @@ export function FolderScreen({ route, navigation }: Props) {
         onChangeViewMode={changeViewMode}
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      {loading ? (
+      {showSpinner ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
       ) : (
         <FlatList
@@ -179,7 +213,7 @@ export function FolderScreen({ route, navigation }: Props) {
               refreshing={refreshing}
               onRefresh={() => {
                 setRefreshing(true);
-                load();
+                void load({ soft: true });
               }}
               tintColor={colors.accent}
             />

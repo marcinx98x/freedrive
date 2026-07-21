@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -15,6 +15,13 @@ import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { api, ApiError } from "../api/client";
 import type { Computer, FileItem, FolderItem, SortDir, SortKey, ViewMode } from "../api/types";
+import {
+  LIST_CACHE_KEYS,
+  readListCache,
+  writeListCache,
+  type ComputersCache,
+  type FolderContentsCache,
+} from "../cache/listCache";
 import { AppDrawer } from "../components/AppDrawer";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
@@ -41,14 +48,42 @@ type ListEntry =
 
 const VIEW_KEY = "fd_view_mode";
 
+function sortMyDriveEntries(
+  folders: FolderItem[],
+  files: FileItem[],
+  sort: SortKey,
+  dir: SortDir,
+): ListEntry[] {
+  const compare = (a: string, b: string) =>
+    dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
+  const byDate = (a?: string, b?: string) => {
+    const av = a ? new Date(a).getTime() : 0;
+    const bv = b ? new Date(b).getTime() : 0;
+    return dir === "asc" ? av - bv : bv - av;
+  };
+  const folderEntries = folders.map((item) => ({ kind: "folder" as const, item }));
+  const fileEntries = files.map((item) => ({ kind: "file" as const, item }));
+  const sortFolders = [...folderEntries].sort((a, b) =>
+    sort === "name"
+      ? compare(a.item.name, b.item.name)
+      : byDate(a.item.updated_at, b.item.updated_at),
+  );
+  const sortFiles = [...fileEntries].sort((a, b) =>
+    sort === "name"
+      ? compare(a.item.name, b.item.name)
+      : byDate(a.item.updated_at, b.item.updated_at),
+  );
+  return [...sortFolders, ...sortFiles];
+}
+
 export function FilesScreen({ navigation }: Props) {
   const [tab, setTab] = useState<FilesTab>("my-drive");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [folders, setFolders] = useState<FolderItem[]>([]);
-  const [files, setFiles] = useState<FileItem[]>([]);
+  const [myDriveFolders, setMyDriveFolders] = useState<FolderItem[]>([]);
+  const [myDriveFiles, setMyDriveFiles] = useState<FileItem[]>([]);
   const [computers, setComputers] = useState<Computer[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [sort, setSort] = useState<SortKey>("name");
@@ -56,6 +91,8 @@ export function FilesScreen({ navigation }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
+  const myDriveLoaded = useRef(false);
+  const computersLoaded = useRef(false);
 
   useEffect(() => {
     AsyncStorage.getItem(VIEW_KEY).then((v) => {
@@ -68,65 +105,102 @@ export function FilesScreen({ navigation }: Props) {
     await AsyncStorage.setItem(VIEW_KEY, mode);
   };
 
-  const load = useCallback(async () => {
+  const loadMyDrive = useCallback(async (opts?: { soft?: boolean }) => {
+    if (!opts?.soft) setLoading(true);
     setError("");
     try {
-      if (tab === "computers") {
-        const list = await api.computers();
-        setComputers(list);
-        setFolders([]);
-        setFiles([]);
-      } else {
-        const contents = await api.folderRoot();
-        setFolders(contents.folders);
-        setFiles(contents.files);
-        setComputers([]);
-      }
+      const contents = await api.folderRoot();
+      setMyDriveFolders(contents.folders);
+      setMyDriveFiles(contents.files);
+      await writeListCache<FolderContentsCache>(LIST_CACHE_KEYS.folderRoot, {
+        folders: contents.folders,
+        files: contents.files,
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [tab]);
+  }, []);
+
+  const loadComputers = useCallback(async (opts?: { soft?: boolean }) => {
+    if (!opts?.soft) setLoading(true);
+    setError("");
+    try {
+      const list = await api.computers();
+      setComputers(list);
+      await writeListCache<ComputersCache>(LIST_CACHE_KEYS.computers, { computers: list });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  const refreshTab = useCallback(
+    (opts?: { soft?: boolean }) => {
+      if (tab === "computers") return loadComputers(opts);
+      return loadMyDrive(opts);
+    },
+    [tab, loadComputers, loadMyDrive],
+  );
 
   useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      if (tab === "computers") {
+        if (computersLoaded.current) {
+          setLoading(false);
+          await loadComputers({ soft: true });
+          return;
+        }
+        const cached = await readListCache<ComputersCache>(LIST_CACHE_KEYS.computers);
+        if (!cancelled && cached?.computers?.length) {
+          setComputers(cached.computers);
+          setLoading(false);
+        }
+        if (!cancelled) {
+          await loadComputers({ soft: Boolean(cached?.computers?.length) });
+          computersLoaded.current = true;
+        }
+      } else {
+        if (myDriveLoaded.current) {
+          setLoading(false);
+          await loadMyDrive({ soft: true });
+          return;
+        }
+        const cached = await readListCache<FolderContentsCache>(LIST_CACHE_KEYS.folderRoot);
+        if (!cancelled && (cached?.folders?.length || cached?.files?.length)) {
+          setMyDriveFolders(cached.folders);
+          setMyDriveFiles(cached.files);
+          setLoading(false);
+        }
+        if (!cancelled) {
+          await loadMyDrive({
+            soft: Boolean(cached?.folders?.length || cached?.files?.length),
+          });
+          myDriveLoaded.current = true;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, loadComputers, loadMyDrive]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    load();
+    void refreshTab({ soft: true });
   };
 
-  const sortedEntries = (): ListEntry[] => {
+  const entries = useMemo((): ListEntry[] => {
     if (tab === "computers") {
       return computers.map((item) => ({ kind: "computer" as const, item }));
     }
-    const folderEntries = folders.map((item) => ({ kind: "folder" as const, item }));
-    const fileEntries = files.map((item) => ({ kind: "file" as const, item }));
-    const compare = (a: string, b: string) =>
-      dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
-    const byDate = (a?: string, b?: string) => {
-      const av = a ? new Date(a).getTime() : 0;
-      const bv = b ? new Date(b).getTime() : 0;
-      return dir === "asc" ? av - bv : bv - av;
-    };
-    const sortFolders = [...folderEntries].sort((a, b) =>
-      sort === "name"
-        ? compare(a.item.name, b.item.name)
-        : byDate(a.item.updated_at, b.item.updated_at),
-    );
-    const sortFiles = [...fileEntries].sort((a, b) =>
-      sort === "name"
-        ? compare(a.item.name, b.item.name)
-        : byDate(a.item.updated_at, b.item.updated_at),
-    );
-    return [...sortFolders, ...sortFiles];
-  };
-
-  const entries = sortedEntries();
+    return sortMyDriveEntries(myDriveFolders, myDriveFiles, sort, dir);
+  }, [tab, computers, myDriveFolders, myDriveFiles, sort, dir]);
 
   const openFolder = (id: string, title: string) => {
     navigation.navigate("Folder", { folderId: id, title });
@@ -179,6 +253,8 @@ export function FilesScreen({ navigation }: Props) {
     );
   };
 
+  const showSpinner = loading && entries.length === 0;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <AppDrawer
@@ -191,7 +267,7 @@ export function FilesScreen({ navigation }: Props) {
       <ItemActionsSheet
         target={menuTarget}
         onClose={() => setMenuTarget(null)}
-        onChanged={load}
+        onChanged={() => refreshTab({ soft: true })}
       />
       <SearchBar
         value={search}
@@ -255,7 +331,7 @@ export function FilesScreen({ navigation }: Props) {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      {loading ? (
+      {showSpinner ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
       ) : (
         <FlatList

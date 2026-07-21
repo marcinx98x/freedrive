@@ -40,6 +40,16 @@ func (s *ComputerService) Get(ctx context.Context, ownerID, computerID string) (
 	return computer, nil
 }
 
+// Delete removes the computer registration row so it disappears from Lists
+// immediately. Caller is responsible for PermanentDelete of the root folder.
+func (s *ComputerService) Delete(ctx context.Context, ownerID, computerID string) error {
+	computer, err := s.Get(ctx, ownerID, computerID)
+	if err != nil {
+		return err
+	}
+	return s.computerRepo.Delete(ctx, computer.ID)
+}
+
 // Register creates a computer root folder and device record, or returns an existing
 // registration for the same owner and hostname.
 func (s *ComputerService) Register(ctx context.Context, ownerID, name, hostname string) (*domain.Computer, error) {

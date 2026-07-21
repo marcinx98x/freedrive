@@ -375,6 +375,33 @@ func (r *FileRepo) PurgeAllTrashed(ctx context.Context) ([]domain.File, error) {
 	return files, nil
 }
 
+func (r *FileRepo) PurgeAllTrashedForOwner(ctx context.Context, ownerID string) ([]domain.File, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, blob_path, owner_id, encrypted_size FROM files WHERE is_trashed = 1 AND owner_id = ?`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []domain.File
+	for rows.Next() {
+		var f domain.File
+		if err := rows.Scan(&f.ID, &f.BlobPath, &f.OwnerID, &f.EncryptedSize); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+
+	if len(files) > 0 {
+		_, err = r.writer.ExecContext(ctx,
+			"DELETE FROM files WHERE is_trashed = 1 AND owner_id = ?", ownerID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
 func (r *FileRepo) ListDuplicateGroups(ctx context.Context) ([]domain.DuplicateGroup, error) {
 	rows, err := r.reader.QueryContext(ctx, `
 		SELECT owner_id, name, encrypted_size, COUNT(*) AS cnt

@@ -318,3 +318,31 @@ func (r *FolderRepo) PurgeAllTrashed(ctx context.Context) ([]domain.Folder, erro
 	}
 	return folders, nil
 }
+
+// PurgeAllTrashedForOwner permanently deletes trashed folder rows for one owner.
+func (r *FolderRepo) PurgeAllTrashedForOwner(ctx context.Context, ownerID string) ([]domain.Folder, error) {
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
+		 FROM folders WHERE is_trashed = 1 AND owner_id = ?`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var folders []domain.Folder
+	for rows.Next() {
+		var f domain.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+	if len(folders) > 0 {
+		_, err = r.writer.ExecContext(ctx,
+			"DELETE FROM folders WHERE is_trashed = 1 AND owner_id = ?", ownerID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return folders, nil
+}

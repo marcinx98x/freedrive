@@ -76,6 +76,7 @@ const FileManager = (() => {
         document.getElementById('topbar-view-grid')?.addEventListener('click', () => setView('grid'));
         document.getElementById('topbar-view-list')?.addEventListener('click', () => setView('list'));
         document.getElementById('new-folder-btn')?.addEventListener('click', createFolder);
+        document.getElementById('empty-bin-btn')?.addEventListener('click', () => emptyBin());
         document.getElementById('home-warning-clean')?.addEventListener('click', () => {
             window.location.hash = '#/storage';
         });
@@ -625,6 +626,7 @@ const FileManager = (() => {
             document.getElementById('file-list-header')?.classList.remove('hidden');
         }
         if (currentPage !== 'home') hideHomeWarning();
+        updateTrashBinBanner();
     }
 
     function showActivityView() {
@@ -639,6 +641,7 @@ const FileManager = (() => {
         document.getElementById('empty-state')?.classList.add('hidden');
         document.getElementById('loading-state')?.classList.add('hidden');
         hideHomeWarning();
+        document.getElementById('trash-bin-banner')?.classList.add('hidden');
     }
 
     function showStorageView() {
@@ -653,6 +656,7 @@ const FileManager = (() => {
         document.getElementById('empty-state')?.classList.add('hidden');
         document.getElementById('loading-state')?.classList.add('hidden');
         hideHomeWarning();
+        document.getElementById('trash-bin-banner')?.classList.add('hidden');
     }
 
     function showHomeView() {
@@ -666,6 +670,7 @@ const FileManager = (() => {
         document.getElementById('shared-filter-bar')?.classList.add('hidden');
         document.getElementById('empty-state')?.classList.add('hidden');
         document.getElementById('loading-state')?.classList.add('hidden');
+        document.getElementById('trash-bin-banner')?.classList.add('hidden');
     }
 
     function hideHomeWarning() {
@@ -1639,10 +1644,40 @@ const FileManager = (() => {
             renderItems(filteredFolders, filteredFiles, { isTrash: true });
             setBreadcrumbText('Trash');
             syncTrashActionLabels();
+            updateTrashBinBanner();
         } catch {
             Components.toast('Failed to load trash', 'error');
         } finally {
             showLoading(false);
+        }
+    }
+
+    function updateTrashBinBanner() {
+        const banner = document.getElementById('trash-bin-banner');
+        if (!banner) return;
+        const inTrash = currentPage === 'trash';
+        const hasItems = inTrash && ((allFolders && allFolders.length) || (allFiles && allFiles.length));
+        banner.classList.toggle('hidden', !hasItems);
+    }
+
+    async function emptyBin() {
+        if (currentPage !== 'trash') return;
+        const hasItems = (allFolders && allFolders.length) || (allFiles && allFiles.length);
+        if (!hasItems) return;
+        const ok = await Components.confirm(
+            'Empty bin?',
+            'All items in the bin will be deleted forever. This cannot be undone.',
+            'Empty bin',
+        );
+        if (!ok) return;
+        Components.toast('Emptying bin…', 'info');
+        try {
+            await API.trash.empty();
+            Components.toast('Bin emptied', 'success');
+            clearSelection();
+            await loadTrash();
+        } catch (e) {
+            Components.toast(e?.message || 'Failed to empty bin', 'error');
         }
     }
 
@@ -2424,7 +2459,7 @@ const FileManager = (() => {
 
         const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
         if (computerEntry) {
-            ['move', 'share', 'get_link', 'request_approval', 'copy', 'rename', 'offline', 'open_with', 'star'].forEach((action) => {
+            ['move', 'share', 'get_link', 'request_approval', 'copy', 'rename', 'offline', 'open_with', 'star', 'download'].forEach((action) => {
                 if (actionMap[action]) {
                     setElementHidden(actionMap[action], true);
                     actionMap[action].style.display = 'none';
@@ -2440,12 +2475,16 @@ const FileManager = (() => {
                 divider.style.display = 'none';
             });
         } else {
+            const isVisibleItem = (el) =>
+                el?.classList?.contains('context-item')
+                && el.style.display !== 'none'
+                && !el.hasAttribute('hidden');
             const dividers = Array.from(menu.querySelectorAll('.context-divider'));
             dividers.forEach((divider) => {
                 let prev = divider.previousElementSibling;
                 let next = divider.nextElementSibling;
-                while (prev && prev.style.display === 'none') prev = prev.previousElementSibling;
-                while (next && next.style.display === 'none') next = next.nextElementSibling;
+                while (prev && !isVisibleItem(prev)) prev = prev.previousElementSibling;
+                while (next && !isVisibleItem(next)) next = next.nextElementSibling;
                 divider.style.display = prev && next ? '' : 'none';
             });
         }
@@ -2761,6 +2800,7 @@ const FileManager = (() => {
             'Remove device',
         );
         if (!ok) return;
+        Components.toast('Removing device…', 'info');
         await API.computers.delete(data.computer_id);
         Components.toast('Device removed', 'success');
         clearSelection();
@@ -6952,6 +6992,7 @@ const FileManager = (() => {
         loadSharedWithMe,
         loadOffline,
         loadTrash,
+        emptyBin,
         loadActivity,
         loadStoragePage,
         loadAdminPanel,

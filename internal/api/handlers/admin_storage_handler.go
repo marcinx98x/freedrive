@@ -74,8 +74,8 @@ func (h *AdminHandler) PurgeTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	removed, freed := h.purgeTrashedFiles(r.Context(), files)
-
+	// Clear folder rows immediately after files so trash list cannot retain empty folders
+	// while blob I/O is still running.
 	var foldersRemoved int
 	if h.folderRepo != nil {
 		var folders []domain.Folder
@@ -91,6 +91,8 @@ func (h *AdminHandler) PurgeTrash(w http.ResponseWriter, r *http.Request) {
 		}
 		foldersRemoved = len(folders)
 	}
+
+	removed, freed := h.purgeTrashedFiles(r.Context(), files)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"removed_files":   removed,

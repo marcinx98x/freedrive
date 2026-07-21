@@ -375,6 +375,17 @@ func (h *FileHandler) Trash(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"files": files})
 }
 
+// EmptyTrash handles POST /api/v1/trash/empty
+func (h *FileHandler) EmptyTrash(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	result, err := h.fileService.EmptyTrash(r.Context(), userID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func containsString(items []string, value string) bool {
 	for _, item := range items {
 		if item == value {

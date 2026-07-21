@@ -221,6 +221,10 @@ const API = (() => {
         delete: (id) => request('DELETE', `/computers/${id}`),
     };
 
+    const trash = {
+        empty: () => request('POST', '/trash/empty'),
+    };
+
     const shares = {
         sharedWithMe: () => request('GET', '/shares/with-me'),
         sharedByMe: () => request('GET', '/shares/by-me'),
@@ -330,6 +334,7 @@ const API = (() => {
         files,
         folders,
         computers,
+        trash,
         shares,
         comments,
         admin,

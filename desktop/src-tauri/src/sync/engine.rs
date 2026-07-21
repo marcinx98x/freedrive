@@ -12,7 +12,8 @@ use crate::db::{
 };
 use crate::error::{AppError, AppResult};
 use crate::sync::journal::{
-    enqueue_file_delete, enqueue_folder_create, enqueue_folder_delete, enqueue_rename,
+    drain_journal, enqueue_file_delete, enqueue_folder_create, enqueue_folder_delete,
+    enqueue_rename,
 };
 use crate::sync::log::sync_log;
 use crate::sync::reconcile::run_sync_cycle;
@@ -20,7 +21,7 @@ use crate::sync::suppress::WatcherSuppress;
 use crate::sync::{DOWNLOAD_CONCURRENCY, UPLOAD_CONCURRENCY};
 use parking_lot::{Mutex, RwLock};
 use sha2::{Digest, Sha256};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -589,6 +590,36 @@ impl SyncEngine {
         msg.contains("not found") || msg.contains("(404)")
     }
 
+    fn computer_remote_removed_flag(&self) -> bool {
+        let Ok(conn) = self.db.lock() else {
+            return false;
+        };
+        config_get(&conn, "computer_remote_removed")
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    }
+
+    fn clear_computer_remote_removed_flag(&self) -> AppResult<()> {
+        let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        config_set(&conn, "computer_remote_removed", "false")?;
+        Ok(())
+    }
+
+    /// Remote Remove device: stop sync registration without auto re-registering.
+    pub fn handle_computer_removed_remotely(&self) -> AppResult<()> {
+        let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        config_set(&conn, "computer_id", "")?;
+        config_set(&conn, "computer_root_id", "")?;
+        config_set(&conn, "computer_remote_removed", "true")?;
+        drop(conn);
+        *self.computer_id.write() = None;
+        *self.computer_root_id.write() = None;
+        sync_log("computer removed remotely — sync paused until folders are reconfigured");
+        Ok(())
+    }
+
     async fn heartbeat_existing_computer(&self, id: &str) -> AppResult<bool> {
         for attempt in 0..3u32 {
             match self.api.heartbeat(id).await {
@@ -610,6 +641,7 @@ impl SyncEngine {
         let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         config_set(&conn, "computer_id", computer_id)?;
         config_set(&conn, "computer_root_id", root_folder_id)?;
+        config_set(&conn, "computer_remote_removed", "false")?;
         *self.computer_id.write() = Some(computer_id.to_string());
         *self.computer_root_id.write() = Some(root_folder_id.to_string());
         Ok(())
@@ -633,13 +665,14 @@ impl SyncEngine {
                 *self.computer_id.write() = Some(id);
                 return Ok(());
             }
-            {
-                let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-                config_set(&conn, "computer_id", "")?;
-                config_set(&conn, "computer_root_id", "")?;
-            }
-            *self.computer_id.write() = None;
-            *self.computer_root_id.write() = None;
+            // Device was removed on the server — do not auto-register.
+            self.handle_computer_removed_remotely()?;
+            return Ok(());
+        }
+
+        if self.computer_remote_removed_flag() {
+            sync_log("setup_computer skipped — computer_remote_removed flag set");
+            return Ok(());
         }
 
         let host = hostname::get()
@@ -691,6 +724,8 @@ impl SyncEngine {
     }
 
     pub async fn configure_folders(&self, folders: Vec<(String, String)>) -> AppResult<()> {
+        // User explicitly reconfigured sync — allow register again after remote remove.
+        self.clear_computer_remote_removed_flag()?;
         self.setup_computer().await?;
         let root_id = self
             .computer_root_id
@@ -783,6 +818,8 @@ impl SyncEngine {
 
         let remote_root_id = self.prepare_sync_folder_for_scan(&sf).await?;
 
+        self.reconcile_and_flush_deletes(&sf).await;
+
         let stats = self
             .scan_folder(
                 sf.id,
@@ -792,16 +829,33 @@ impl SyncEngine {
             )
             .await?;
 
-        if let Err(e) = self.reconcile_local_deletions(&sf) {
-            sync_log(format!("reconcile deletions failed for {}: {}", sf.local_path, e));
-        }
-
         let summary = format!(
             "Up to date — {} uploaded, {} unchanged, {} skipped",
             stats.0, stats.2, stats.1
         );
         self.set_status(SyncStatusKind::UpToDate, &summary);
         Ok(())
+    }
+
+    /// Local + remote orphan reconcile, then push journal deletes immediately.
+    async fn reconcile_and_flush_deletes(self: &Arc<Self>, sf: &SyncFolderRow) {
+        if let Err(e) = self.reconcile_local_deletions(sf) {
+            sync_log(format!(
+                "reconcile deletions failed for {}: {}",
+                sf.local_path, e
+            ));
+        }
+        if let Err(e) = self.reconcile_remote_orphans(sf).await {
+            sync_log(format!(
+                "reconcile remote orphans failed for {}: {}",
+                sf.local_path, e
+            ));
+        }
+        match drain_journal(self, &self.api, &self.db).await {
+            Ok(n) if n > 0 => sync_log(format!("drained {} delete journal entries", n)),
+            Err(e) => sync_log(format!("drain_journal after reconcile failed: {}", e)),
+            _ => {}
+        }
     }
 
     /// After a scan of existing files, detect entries we synced before whose
@@ -891,6 +945,177 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Walk the remote sync-folder tree and soft-delete anything that does not
+    /// exist on disk (or duplicate same-name files beside the tracked remote id).
+    /// Local disk is the source of truth for computer sync folders.
+    async fn reconcile_remote_orphans(self: &Arc<Self>, sf: &SyncFolderRow) -> AppResult<()> {
+        let root = PathBuf::from(&sf.local_path);
+        if !root.exists() {
+            return Ok(());
+        }
+        if sf.remote_folder_id.is_empty() || is_pending_remote_folder(&sf.remote_folder_id) {
+            return Ok(());
+        }
+
+        let tracked_files: HashMap<String, String> = {
+            let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            list_sync_states_for_folder(&conn, sf.id)?
+                .into_iter()
+                .filter_map(|(rel, _, rid)| rid.filter(|id| !id.is_empty()).map(|id| (rel, id)))
+                .collect()
+        };
+
+        let mut queued = 0u32;
+        self.walk_remote_orphans(
+            sf.id,
+            &sf.remote_folder_id,
+            "",
+            &root,
+            &tracked_files,
+            &mut queued,
+        )
+        .await?;
+
+        if queued > 0 {
+            sync_log(format!(
+                "remote orphans in {} — {} server deletes queued",
+                sf.local_path, queued
+            ));
+        }
+        Ok(())
+    }
+
+    async fn walk_remote_orphans(
+        self: &Arc<Self>,
+        sync_folder_id: i64,
+        remote_folder_id: &str,
+        parent_rel: &str,
+        local_root: &Path,
+        tracked_files: &HashMap<String, String>,
+        queued: &mut u32,
+    ) -> AppResult<()> {
+        let contents = match self.api.get_folder_contents(remote_folder_id).await {
+            Ok(c) => c,
+            Err(e) => {
+                sync_log(format!(
+                    "orphan walk skip folder {} ({}): {}",
+                    remote_folder_id, parent_rel, e
+                ));
+                return Ok(());
+            }
+        };
+
+        // Group remote files by name — duplicates share a name in one folder.
+        let mut by_name: HashMap<String, Vec<crate::api::types::FileRecord>> = HashMap::new();
+        for f in contents.files {
+            by_name.entry(f.name.clone()).or_default().push(f);
+        }
+
+        for (name, files) in by_name {
+            let relative = if parent_rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", parent_rel, name)
+            };
+            let local_path = local_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+
+            if !local_path.is_file() {
+                for f in &files {
+                    if self.queue_file_delete_if_needed(sync_folder_id, &relative, &f.id)? {
+                        *queued += 1;
+                    }
+                }
+                continue;
+            }
+
+            let keep_id = tracked_files
+                .get(&relative)
+                .cloned()
+                .filter(|id| files.iter().any(|f| f.id == *id))
+                .or_else(|| {
+                    // Prefer newest by updated_at when nothing is tracked.
+                    files
+                        .iter()
+                        .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+                        .map(|f| f.id.clone())
+                });
+
+            for f in &files {
+                if keep_id.as_deref() == Some(f.id.as_str()) {
+                    continue;
+                }
+                if self.queue_file_delete_if_needed(sync_folder_id, &relative, &f.id)? {
+                    *queued += 1;
+                }
+            }
+        }
+
+        // Missing remote folders first (top-down via recursion order); skip
+        // children when parent dir is gone — folder delete covers the subtree.
+        let mut folders = contents.folders;
+        folders.sort_by(|a, b| a.name.cmp(&b.name));
+        for folder in folders {
+            let relative = if parent_rel.is_empty() {
+                folder.name.clone()
+            } else {
+                format!("{}/{}", parent_rel, folder.name)
+            };
+            let local_dir = local_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if !local_dir.is_dir() {
+                if self.queue_folder_delete_if_needed(sync_folder_id, &relative, &folder.id)? {
+                    *queued += 1;
+                }
+                continue;
+            }
+            Box::pin(self.walk_remote_orphans(
+                sync_folder_id,
+                &folder.id,
+                &relative,
+                local_root,
+                tracked_files,
+                queued,
+            ))
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    fn queue_file_delete_if_needed(
+        &self,
+        sync_folder_id: i64,
+        relative: &str,
+        remote_id: &str,
+    ) -> AppResult<bool> {
+        if remote_id.is_empty() {
+            return Ok(false);
+        }
+        // Always enqueue — same relative path can have multiple remote ids (duplicates).
+        // Extra deletes are idempotent (404 = already gone).
+        enqueue_file_delete(&self.db, sync_folder_id, relative, remote_id)?;
+        Ok(true)
+    }
+
+    fn queue_folder_delete_if_needed(
+        &self,
+        sync_folder_id: i64,
+        relative: &str,
+        remote_id: &str,
+    ) -> AppResult<bool> {
+        if remote_id.is_empty() || is_pending_remote_folder(remote_id) {
+            return Ok(false);
+        }
+        let already_pending = {
+            let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            crate::db::has_pending_journal_for_path(&conn, sync_folder_id, relative)?
+        };
+        if already_pending {
+            return Ok(false);
+        }
+        enqueue_folder_delete(&self.db, sync_folder_id, relative, remote_id)?;
+        Ok(true)
+    }
+
     pub async fn run_background_verify(self: Arc<Self>) -> AppResult<()> {
         if self.is_paused() {
             return Ok(());
@@ -930,6 +1155,7 @@ impl SyncEngine {
 
         for sf in sync_folders {
             let remote_root_id = self.prepare_sync_folder_for_scan(&sf).await?;
+            self.reconcile_and_flush_deletes(&sf).await;
             let stats = self
                 .scan_folder(
                     sf.id,
@@ -942,13 +1168,6 @@ impl SyncEngine {
             total_skipped += stats.1;
             total_unchanged += stats.2;
             total_errors += stats.3;
-
-            if let Err(e) = self.reconcile_local_deletions(&sf) {
-                sync_log(format!(
-                    "reconcile deletions failed for {}: {}",
-                    sf.local_path, e
-                ));
-            }
         }
 
         let total_processed = total_uploaded + total_skipped + total_unchanged + total_errors;
@@ -1024,6 +1243,45 @@ impl SyncEngine {
             return Ok(sf.remote_folder_id.clone());
         }
 
+        // Remote root id is gone — trash anything we still tracked, then recreate.
+        let (file_ids, mut folder_ids, old_root) = {
+            let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            let files: Vec<(String, String)> = list_sync_states_for_folder(&conn, sf.id)?
+                .into_iter()
+                .filter_map(|(rel, _, rid)| {
+                    rid.filter(|id| !id.is_empty()).map(|id| (rel, id))
+                })
+                .collect();
+            let folders: Vec<(String, String)> = list_folder_mappings(&conn, sf.id)?
+                .into_iter()
+                .filter(|m| !m.relative_path.is_empty())
+                .filter(|m| !m.remote_folder_id.is_empty())
+                .map(|m| (m.relative_path, m.remote_folder_id))
+                .collect();
+            (files, folders, sf.remote_folder_id.clone())
+        };
+
+        for (rel, id) in &file_ids {
+            let _ = enqueue_file_delete(&self.db, sf.id, rel, id);
+        }
+        folder_ids.sort_by(|a, b| a.0.len().cmp(&b.0.len()));
+        for (rel, id) in &folder_ids {
+            if !is_pending_remote_folder(id) {
+                let _ = enqueue_folder_delete(&self.db, sf.id, rel, id);
+            }
+        }
+        let _ = drain_journal(self, &self.api, &self.db).await;
+
+        if !old_root.is_empty() && !is_pending_remote_folder(&old_root) {
+            match self.api.delete_folder_with_mutation(&old_root, None).await {
+                Ok(()) => sync_log(format!("trashed stale sync root {}", old_root)),
+                Err(e) => sync_log(format!(
+                    "stale sync root {} already gone or failed: {}",
+                    old_root, e
+                )),
+            }
+        }
+
         let new_root = self.ensure_sync_folder_remote(sf).await?;
         let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         clear_folder_mappings(&conn, sf.id)?;
@@ -1048,6 +1306,7 @@ impl SyncEngine {
 
         for sf in sync_folders {
             let remote_root_id = self.prepare_sync_folder_for_scan(&sf).await?;
+            self.reconcile_and_flush_deletes(&sf).await;
             let stats = self
                 .scan_folder(
                     sf.id,
@@ -1524,6 +1783,17 @@ impl SyncEngine {
                         .map_err(|e| AppError::msg(e.to_string()))?
                         .to_string_lossy()
                         .replace('\\', "/");
+                    let old_remote = {
+                        let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                        get_sync_state(&conn, sync_folder_id, &relative_str)?
+                            .and_then(|(remote_id, _, _, _)| remote_id)
+                    };
+                    if let Some(rid) = old_remote {
+                        if !rid.is_empty() {
+                            enqueue_file_delete(&self.db, sync_folder_id, &relative_str, &rid)?;
+                            let _ = drain_journal(self, &self.api, &self.db).await;
+                        }
+                    }
                     let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
                     clear_sync_state_remote_file(&conn, sync_folder_id, &relative_str)?;
                 }
@@ -1992,7 +2262,11 @@ impl SyncEngine {
         )
         .await
         {
-            sync_log(format!("poll_remote failed: {}", e));
+            if Self::is_computer_not_found_error(&e) {
+                let _ = self.handle_computer_removed_remotely();
+            } else {
+                sync_log(format!("poll_remote failed: {}", e));
+            }
         }
         Ok(())
     }
@@ -2030,19 +2304,29 @@ impl SyncEngine {
         };
 
         if let Some((sf, relative)) = Self::find_best_sync_folder(&sync_folders, path) {
-            if path.is_dir() {
-                let remote_id = {
-                    let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            // Path may already be gone after Remove — prefer mapping / sync_state
+            // over path.is_dir() / path.is_file().
+            let folder_remote = {
+                let conn = self.db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                if relative.is_empty() {
+                    None
+                } else {
+                    get_folder_mapping(&conn, sf.id, &relative)?
+                }
+            };
+
+            if folder_remote.is_some() || path.is_dir() {
+                let remote_id = folder_remote.or_else(|| {
                     if relative.is_empty() {
                         Some(sf.remote_folder_id.clone())
                     } else {
-                        get_folder_mapping(&conn, sf.id, &relative)?
+                        None
                     }
-                };
+                });
                 if let Some(remote_id) = remote_id {
                     if !remote_id.is_empty() && !is_pending_remote_folder(&remote_id) {
                         enqueue_folder_delete(&self.db, sf.id, &relative, &remote_id)?;
-                        let _ = crate::sync::journal::drain_journal(self, &self.api, &self.db).await;
+                        let _ = drain_journal(self, &self.api, &self.db).await;
                     }
                 }
                 return Ok(());
@@ -2056,7 +2340,7 @@ impl SyncEngine {
             if let Some(remote_id) = remote_id {
                 if !remote_id.is_empty() {
                     enqueue_file_delete(&self.db, sf.id, &relative, &remote_id)?;
-                    let _ = crate::sync::journal::drain_journal(self, &self.api, &self.db).await;
+                    let _ = drain_journal(self, &self.api, &self.db).await;
                 }
             }
             return Ok(());
@@ -2070,7 +2354,15 @@ impl SyncEngine {
             guard.clone()
         };
         if let Some(id) = id {
-            let _ = self.api.heartbeat(&id).await;
+            match self.api.heartbeat(&id).await {
+                Ok(_) => {}
+                Err(e) if Self::is_computer_not_found_error(&e) => {
+                    let _ = self.handle_computer_removed_remotely();
+                }
+                Err(e) => {
+                    sync_log(format!("heartbeat failed: {}", e));
+                }
+            }
         }
         Ok(())
     }

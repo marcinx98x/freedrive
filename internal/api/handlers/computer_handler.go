@@ -108,7 +108,15 @@ func (h *ComputerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.folderService.PermanentDelete(r.Context(), computer.RootFolderID, userID); err != nil {
+	rootFolderID := computer.RootFolderID
+
+	// Drop registration first so GET /computers no longer lists this device.
+	if err := h.computerService.Delete(r.Context(), userID, computerID); err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.folderService.PermanentDelete(r.Context(), rootFolderID, userID); err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
