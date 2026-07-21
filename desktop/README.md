@@ -90,6 +90,8 @@ Outputs (monorepo path):
 - `desktop/src-tauri/target/release/freedrive-desktop.exe`
 - `desktop/src-tauri/target/release/bundle/msi/` and `bundle/nsis/` (installers)
 
+> Prefer the **NSIS** installer for uninstall cleanup: it unregisters the CfAPI sync root and removes `%USERPROFILE%\FreeDrive\My Drive`. The MSI target does not run that cleanup yet.
+
 > Use **`npm run build:exe:clean`** after changing the logo — it regenerates icons and runs `cargo clean` so Windows embeds the new `.ico` in the exe. Do not run an old copy from `freedrive-app/`.
 
 ## Releases

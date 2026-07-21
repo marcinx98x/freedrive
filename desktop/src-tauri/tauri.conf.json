@@ -50,6 +50,9 @@
     "windows": {
       "wix": {
         "language": "en-US"
+      },
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
       }
     }
   }

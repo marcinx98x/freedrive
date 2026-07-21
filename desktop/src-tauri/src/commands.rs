@@ -204,6 +204,30 @@ fn start_sync_services(
                 let _ = eng2.heartbeat_loop().await;
             }
         });
+
+        // Periodic orphan/local-delete catch-up (missed watcher events, Recycle Bin).
+        let eng3 = engine.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                if eng3.is_shutdown() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                if eng3.is_shutdown() || eng3.is_paused() {
+                    continue;
+                }
+                if eng3.is_initial_sync_running() {
+                    continue;
+                }
+                if let Err(e) = eng3.clone().run_background_verify().await {
+                    eprintln!("periodic background verify failed: {}", e);
+                    crate::sync::log::sync_log(format!(
+                        "periodic background verify failed: {}",
+                        e
+                    ));
+                }
+            }
+        });
     }
 
     let _ = app.emit("sync-status-changed", engine.get_status());
@@ -534,6 +558,8 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), String> {
     }
     #[cfg(windows)]
     crate::cfapi::stop();
+    // After CfAPI disconnect: wipe My Drive contents (folder kept for next login).
+    let _ = crate::my_drive::clear_my_drive_contents(&state.db);
     clear_auth().map_err(|e: crate::error::AppError| e.to_string())?;
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;

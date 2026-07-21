@@ -316,6 +316,25 @@ pub fn unregister(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+/// Best-effort CfAPI teardown for NSIS `--uninstall-cleanup` (tries even if DB flag is stale).
+#[cfg(windows)]
+pub fn unregister_for_uninstall(db: &crate::db::DbHandle) {
+    stop();
+    let Ok(sync_root) = crate::auth_store::sync_root_dir(false) else {
+        return;
+    };
+    if shell_register::is_shell_registered(db).unwrap_or(false) {
+        if let Err(e) = shell_register::unregister_shell(db) {
+            cfapi_log(&format!("uninstall shell unregister warning: {}", e));
+        }
+    }
+    if let Err(e) = register::unregister_sync_root(&sync_root) {
+        cfapi_log(&format!("uninstall unregister sync root: {}", e));
+    }
+    let _ = register::clear_registration_state(db);
+    cfapi_log("uninstall: sync root unregister attempted");
+}
+
 #[cfg(not(windows))]
 use crate::state::AppState;
 

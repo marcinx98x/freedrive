@@ -25,9 +25,31 @@ pub(crate) fn shutdown_cfapi() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // NSIS PREUNINSTALL invokes this before removing binaries (no UI).
+    if std::env::args().any(|a| a == "--uninstall-cleanup") {
+        match db::open_db() {
+            Ok(db) => {
+                if let Err(e) = my_drive::uninstall_remove_my_drive(&db) {
+                    eprintln!("uninstall cleanup failed: {}", e);
+                    sync::log::sync_log(format!("uninstall cleanup failed: {}", e));
+                }
+            }
+            Err(e) => {
+                eprintln!("uninstall cleanup: open db failed: {}", e);
+            }
+        }
+        return;
+    }
+
     let db = db::open_db().expect("failed to open database");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())

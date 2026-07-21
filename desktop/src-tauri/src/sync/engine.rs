@@ -275,6 +275,26 @@ impl SyncEngine {
             };
             let old_ctx = SyncEngine::find_best_sync_folder(&sync_folders, &from);
             let new_ctx = SyncEngine::find_best_sync_folder(&sync_folders, &to);
+
+            // Rename out of the sync tree (e.g. Windows Recycle Bin) or across
+            // sync folders — treat the source as a local delete.
+            match (&old_ctx, &new_ctx) {
+                (Some((sf_old, _)), Some((sf_new, _))) if sf_old.id != sf_new.id => {
+                    let _ = engine.delete_remote_file(&from).await;
+                    if to.is_file() {
+                        let _ = engine.sync_file_path(&to).await;
+                    } else if to.is_dir() {
+                        engine.enqueue_folder_created(to);
+                    }
+                    return;
+                }
+                (Some(_), None) => {
+                    let _ = engine.delete_remote_file(&from).await;
+                    return;
+                }
+                _ => {}
+            }
+
             if let (Some((sf, old_rel)), Some((sf2, new_rel))) = (old_ctx, new_ctx) {
                 if sf.id != sf2.id {
                     return;
@@ -906,14 +926,16 @@ impl SyncEngine {
             queued += 1;
         }
 
-        for (relative, local_path, remote_id) in states {
+        for (relative, _local_path, remote_id) in states {
             if delete_roots
                 .iter()
                 .any(|r| relative.starts_with(&format!("{}/", r)) || relative == *r)
             {
                 continue;
             }
-            if Path::new(&local_path).is_file() {
+            // Prefer path under the sync root; stored absolute local_path can be stale.
+            let under_root = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if under_root.is_file() {
                 continue;
             }
             match remote_id {
@@ -1094,6 +1116,44 @@ impl SyncEngine {
         // Extra deletes are idempotent (404 = already gone).
         enqueue_file_delete(&self.db, sync_folder_id, relative, remote_id)?;
         Ok(true)
+    }
+
+    /// Soft-delete live remote files that share `file_name` in `remote_folder_id`
+    /// before creating a new upload (avoids durable same-name duplicates).
+    async fn trash_same_name_remote_siblings(
+        &self,
+        sync_folder_id: i64,
+        relative: &str,
+        remote_folder_id: &str,
+        file_name: &str,
+    ) -> AppResult<()> {
+        let contents = match self.api.get_folder_contents(remote_folder_id).await {
+            Ok(c) => c,
+            Err(e) => {
+                sync_log(format!(
+                    "same-name cleanup skip folder {}: {}",
+                    remote_folder_id, e
+                ));
+                return Ok(());
+            }
+        };
+        let mut queued = 0u32;
+        for f in contents.files {
+            if f.name != file_name {
+                continue;
+            }
+            if self.queue_file_delete_if_needed(sync_folder_id, relative, &f.id)? {
+                queued += 1;
+            }
+        }
+        if queued > 0 {
+            sync_log(format!(
+                "pre-upload trashed {} same-name remote file(s) for {}",
+                queued, relative
+            ));
+            let _ = drain_journal(self, &self.api, &self.db).await;
+        }
+        Ok(())
     }
 
     fn queue_folder_delete_if_needed(
@@ -2016,6 +2076,23 @@ impl SyncEngine {
                 return Ok(SyncAttemptResult::Done(FileSyncOutcome::Failed));
             }
         };
+
+        // Soft-delete any live same-name files in the remote folder so a fresh
+        // upload does not leave duplicates beside a missed prior delete.
+        if let Err(e) = self
+            .trash_same_name_remote_siblings(
+                sync_folder_id,
+                &relative_str,
+                &remote_folder_id,
+                file_name,
+            )
+            .await
+        {
+            sync_log(format!(
+                "pre-upload same-name cleanup failed for {}: {}",
+                relative_str, e
+            ));
+        }
 
         if show_ui {
             self.emit_activity(file_name, "Uploading…", size, "uploading");

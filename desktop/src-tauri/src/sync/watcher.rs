@@ -42,6 +42,21 @@ impl WatcherHandle {
                                         continue;
                                     }
                                     engine_clone.enqueue_path_renamed(from, to);
+                                } else {
+                                    // Windows often emits a single-path Name event on
+                                    // delete/rename. Missing path → delete; present file → sync.
+                                    for path in &debounced.event.paths {
+                                        if engine_clone.watcher_suppress().is_suppressed(path) {
+                                            continue;
+                                        }
+                                        if !path.exists() {
+                                            engine_clone.enqueue_path_removed(path.clone());
+                                        } else if path.is_file() {
+                                            engine_clone.enqueue_file_path(path.clone());
+                                        } else if path.is_dir() {
+                                            engine_clone.enqueue_folder_created(path.clone());
+                                        }
+                                    }
                                 }
                             }
                             EventKind::Create(_) => {
