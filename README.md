@@ -708,7 +708,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Sign in** with server URL, email, password, and email 2FA when enabled
 - **Drive-like dark UI** — bottom tabs (Home, Starred, Shared, Files), pill search bar, list/grid toggle, sort chip
 - **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage bar
-- **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh
+- **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
@@ -732,6 +732,7 @@ Build a release APK on Windows (canonical: `mobile\scripts\build-apk.ps1` → `m
 cd mobile && powershell -File scripts\build-apk.ps1
 ```
 
+Requires a server that supports paginated `GET /folders/root` and `GET /folders/{id}` (see [API Reference](#api-reference)).
 ---
 
 ## Project Structure

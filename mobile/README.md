@@ -9,7 +9,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Sign in** — server URL, email, password, and email 2FA when enabled
 - **Secure session** — tokens in SecureStore, profile cache in AsyncStorage (supports large avatar data-URLs), auto-refresh on 401
 - **Bottom tabs** — Home, Starred, Shared, Files (with active pill indicator)
-- **Files** — My Drive | Computers, folder navigation, list/grid, sort chip
+- **Files** — My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
 - **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage
 - **Search** — search files by name from the top bar
 - **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
