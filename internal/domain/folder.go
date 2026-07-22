@@ -18,9 +18,18 @@ type Folder struct {
 
 // FolderContents represents a folder with its child items.
 type FolderContents struct {
-	Folder  *Folder  `json:"folder"`
-	Folders []Folder `json:"folders"`
-	Files   []File   `json:"files"`
+	Folder        *Folder  `json:"folder"`
+	Folders       []Folder `json:"folders"`
+	Files         []File   `json:"files"`
+	NextPageToken string   `json:"next_page_token,omitempty"`
+	TotalFiles    int      `json:"total_files,omitempty"`
+}
+
+// FolderContentsOptions controls file pagination for GetContents.
+// Child folders are always returned in full on the first page (offset 0).
+type FolderContentsOptions struct {
+	PageSize  int
+	PageToken string
 }
 
 // Breadcrumb represents one segment in a folder path.

@@ -202,8 +202,43 @@ const API = (() => {
 
     const folders = {
         create: (name, parentId, color) => request('POST', '/folders', { name, parent_id: parentId || null, color }),
-        get: (id) => request('GET', `/folders/${id}`),
-        root: () => request('GET', '/folders/root'),
+        get: (id, opts = {}) => {
+            const q = new URLSearchParams();
+            if (opts.page_size) q.set('page_size', String(opts.page_size));
+            if (opts.page_token) q.set('page_token', opts.page_token);
+            const qs = q.toString();
+            return request('GET', `/folders/${id}${qs ? `?${qs}` : ''}`);
+        },
+        root: (opts = {}) => {
+            const q = new URLSearchParams();
+            if (opts.page_size) q.set('page_size', String(opts.page_size));
+            if (opts.page_token) q.set('page_token', opts.page_token);
+            const qs = q.toString();
+            return request('GET', `/folders/root${qs ? `?${qs}` : ''}`);
+        },
+        /** Load every page of files (folders come on the first page). */
+        getAll: async (id) => {
+            const pageSize = 500;
+            let page_token = '';
+            let folder = null;
+            let childFolders = [];
+            const files = [];
+            let total_files = 0;
+            let guard = 0;
+            while (guard < 10000) {
+                guard += 1;
+                const opts = { page_size: pageSize };
+                if (page_token) opts.page_token = page_token;
+                const data = id ? await API.folders.get(id, opts) : await API.folders.root(opts);
+                if (!folder && data.folder) folder = data.folder;
+                if (Array.isArray(data.folders) && data.folders.length) childFolders = data.folders;
+                if (typeof data.total_files === 'number') total_files = data.total_files;
+                if (Array.isArray(data.files)) files.push(...data.files);
+                page_token = data.next_page_token || '';
+                if (!page_token) break;
+            }
+            return { folder, folders: childFolders, files, total_files, next_page_token: '' };
+        },
         all: (search) => request('GET', `/folders/all${search ? `?search=${encodeURIComponent(search)}` : ''}`),
         update: (id, data) => request('PATCH', `/folders/${id}`, data),
         delete: (id) => request('DELETE', `/folders/${id}`),

@@ -164,22 +164,56 @@ func (r *FileRepo) List(ctx context.Context, opts domain.FileListOptions) ([]dom
 }
 
 func (r *FileRepo) GetByFolderID(ctx context.Context, folderID *string, ownerID string) ([]domain.File, error) {
-	var rows *sql.Rows
-	var err error
+	files, _, err := r.GetByFolderIDPage(ctx, folderID, ownerID, 0, 0)
+	return files, err
+}
+
+// GetByFolderIDPage returns non-trashed files in a folder ordered by name.
+// limit <= 0 means return all remaining rows from offset.
+func (r *FileRepo) GetByFolderIDPage(ctx context.Context, folderID *string, ownerID string, limit, offset int) ([]domain.File, int, error) {
+	if offset < 0 {
+		offset = 0
+	}
+
+	var (
+		countQuery string
+		countArgs  []interface{}
+		listQuery  string
+		listArgs   []interface{}
+	)
 
 	if folderID == nil {
-		rows, err = r.reader.QueryContext(ctx,
-			`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+		countQuery = `SELECT COUNT(*) FROM files WHERE folder_id IS NULL AND owner_id = ? AND is_trashed = 0`
+		countArgs = []interface{}{ownerID}
+		listQuery = `SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
 			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
-			 FROM files WHERE folder_id IS NULL AND owner_id = ? AND is_trashed = 0 ORDER BY name`, ownerID)
+			 FROM files WHERE folder_id IS NULL AND owner_id = ? AND is_trashed = 0 ORDER BY name COLLATE NOCASE, id`
+		listArgs = []interface{}{ownerID}
 	} else {
-		rows, err = r.reader.QueryContext(ctx,
-			`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
+		countQuery = `SELECT COUNT(*) FROM files WHERE folder_id = ? AND owner_id = ? AND is_trashed = 0`
+		countArgs = []interface{}{*folderID, ownerID}
+		listQuery = `SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
 			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
-			 FROM files WHERE folder_id = ? AND owner_id = ? AND is_trashed = 0 ORDER BY name`, *folderID, ownerID)
+			 FROM files WHERE folder_id = ? AND owner_id = ? AND is_trashed = 0 ORDER BY name COLLATE NOCASE, id`
+		listArgs = []interface{}{*folderID, ownerID}
 	}
+
+	var total int
+	if err := r.reader.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	if limit > 0 {
+		listQuery += ` LIMIT ? OFFSET ?`
+		listArgs = append(listArgs, limit, offset)
+	} else if offset > 0 {
+		listQuery += ` LIMIT -1 OFFSET ?`
+		listArgs = append(listArgs, offset)
+	}
+
+	rows, err := r.reader.QueryContext(ctx, listQuery, listArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -189,11 +223,14 @@ func (r *FileRepo) GetByFolderID(ctx context.Context, folderID *string, ownerID 
 		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
 			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
 			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		files = append(files, f)
 	}
-	return files, nil
+	if files == nil {
+		files = []domain.File{}
+	}
+	return files, total, nil
 }
 
 func (r *FileRepo) MoveToTrash(ctx context.Context, id string) error {

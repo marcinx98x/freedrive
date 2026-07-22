@@ -41,6 +41,8 @@ export function FolderScreen({ route, navigation }: Props) {
   const [error, setError] = useState("");
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
+  const [nextPageToken, setNextPageToken] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [sort, setSort] = useState<SortKey>("name");
   const [dir, setDir] = useState<SortDir>("asc");
@@ -72,9 +74,10 @@ export function FolderScreen({ route, navigation }: Props) {
       if (!opts?.soft) setLoading(true);
       setError("");
       try {
-        const contents = await api.folder(folderId);
+        const contents = await api.folder(folderId, { page_size: 100 });
         setFolders(contents.folders);
         setFiles(contents.files);
+        setNextPageToken(contents.next_page_token || "");
         const folderName = contents.folder?.name;
         if (folderName) {
           navigation.setOptions({ title: folderName });
@@ -93,6 +96,27 @@ export function FolderScreen({ route, navigation }: Props) {
     },
     [folderId, navigation],
   );
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !nextPageToken) return;
+    setLoadingMore(true);
+    try {
+      const contents = await api.folder(folderId, {
+        page_size: 100,
+        page_token: nextPageToken,
+      });
+      setFiles((prev) => {
+        const seen = new Set(prev.map((f) => f.id));
+        const extra = contents.files.filter((f) => !seen.has(f.id));
+        return [...prev, ...extra];
+      });
+      setNextPageToken(contents.next_page_token || "");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [folderId, loadingMore, nextPageToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +232,15 @@ export function FolderScreen({ route, navigation }: Props) {
           numColumns={viewMode === "grid" ? 2 : 1}
           columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
           contentContainerStyle={entries.length === 0 ? styles.emptyContainer : undefined}
+          onEndReached={() => {
+            void loadMore();
+          }}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator style={{ marginVertical: 16 }} color={colors.accent} />
+            ) : null
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

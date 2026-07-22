@@ -28,6 +28,13 @@ Base URL: configured at sign-in (e.g. `http://localhost:8080`).
 | `GET` | `/api/v1/folders/root` | My Drive root contents (Windows Explorer CfAPI) |
 | `GET` | `/api/v1/folders/{id}` | List folder contents (poll / mirror) |
 
+Query params for `GET /folders/root` and `GET /folders/{id}`:
+
+- `page_size` — files per page (default **100**, max **500**)
+- `page_token` — opaque offset from previous `next_page_token`
+
+Response includes `folders` (full child-folder list on the first page only), `files` (one page), `next_page_token`, and `total_files`. The desktop client always walks every page so sync/orphan reconcile sees the complete folder.
+
 ## Files
 
 | Method | Path | Purpose |

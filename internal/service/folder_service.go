@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/abdullaabdullazade/freedrive/internal/repository"
@@ -78,8 +79,10 @@ func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error
 	return nil
 }
 
-// GetContents returns a folder's children (folders + files).
-func (s *FolderService) GetContents(ctx context.Context, folderID *string, ownerID string) (*domain.FolderContents, error) {
+// GetContents returns a folder's children (folders + paginated files).
+// Child folders are always returned in full when offset is 0; subsequent pages
+// return an empty folders slice so clients keep the first-page folder list.
+func (s *FolderService) GetContents(ctx context.Context, folderID *string, ownerID string, opts domain.FolderContentsOptions) (*domain.FolderContents, error) {
 	var folder *domain.Folder
 	listOwner := ownerID
 	if folderID != nil {
@@ -97,27 +100,55 @@ func (s *FolderService) GetContents(ctx context.Context, folderID *string, owner
 		listOwner = folder.OwnerID
 	}
 
-	folders, err := s.folderRepo.GetChildren(ctx, folderID, listOwner)
-	if err != nil {
-		return nil, err
+	pageSize := opts.PageSize
+	if pageSize < 1 {
+		pageSize = 100
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	offset := 0
+	if opts.PageToken != "" {
+		n, err := strconv.Atoi(opts.PageToken)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("invalid page_token")
+		}
+		offset = n
 	}
 
-	files, err := s.fileRepo.GetByFolderID(ctx, folderID, listOwner)
-	if err != nil {
-		return nil, err
-	}
-
-	if folders == nil {
+	var folders []domain.Folder
+	if offset == 0 {
+		var err error
+		folders, err = s.folderRepo.GetChildren(ctx, folderID, listOwner)
+		if err != nil {
+			return nil, err
+		}
+		if folders == nil {
+			folders = []domain.Folder{}
+		}
+	} else {
 		folders = []domain.Folder{}
+	}
+
+	files, total, err := s.fileRepo.GetByFolderIDPage(ctx, folderID, listOwner, pageSize, offset)
+	if err != nil {
+		return nil, err
 	}
 	if files == nil {
 		files = []domain.File{}
 	}
 
+	next := ""
+	if offset+len(files) < total {
+		next = strconv.Itoa(offset + len(files))
+	}
+
 	return &domain.FolderContents{
-		Folder:  folder,
-		Folders: folders,
-		Files:   files,
+		Folder:        folder,
+		Folders:       folders,
+		Files:         files,
+		NextPageToken: next,
+		TotalFiles:    total,
 	}, nil
 }
 

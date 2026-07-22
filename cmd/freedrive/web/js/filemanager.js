@@ -15,6 +15,9 @@ const FileManager = (() => {
     let currentComputerContext = null;
     let filteredFiles = [];
     let filteredFolders = [];
+    let folderFilesPageToken = '';
+    let folderFilesLoadingMore = false;
+    let folderFilesHasMore = false;
     let sortBy = 'modified';
     let sortDir = 'desc';
     let searchDebounce = null;
@@ -205,8 +208,16 @@ const FileManager = (() => {
             }
         });
 
-        document.getElementById('content-area')?.addEventListener('scroll', () => {
+        document.getElementById('content-area')?.addEventListener('scroll', (e) => {
             document.getElementById('context-menu')?.classList.add('hidden');
+            const el = e.target;
+            if (!el || folderFilesLoadingMore || !folderFilesHasMore) return;
+            if (currentPage !== 'files' && currentPage !== 'computers') return;
+            if (currentPage === 'computers' && !currentFolderId) return;
+            const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+            if (remaining < 240) {
+                loadMoreFolderFiles();
+            }
         });
     }
 
@@ -443,7 +454,7 @@ const FileManager = (() => {
         visited.add(folderID);
 
         const pending = (async () => {
-            const contents = await API.folders.get(folderID);
+            const contents = await API.folders.getAll(folderID);
             const files = Array.isArray(contents.files) ? contents.files : [];
             const folders = Array.isArray(contents.folders) ? contents.folders : [];
 
@@ -869,9 +880,12 @@ const FileManager = (() => {
         showFilesView();
         showLoading(true);
         syncPageActions();
+        folderFilesPageToken = '';
+        folderFilesHasMore = false;
 
         try {
-            const data = folderId ? await API.folders.get(folderId) : await API.folders.root();
+            const opts = { page_size: 100 };
+            const data = folderId ? await API.folders.get(folderId, opts) : await API.folders.root(opts);
             allFolders = Array.isArray(data.folders) ? data.folders : [];
             allFiles = Array.isArray(data.files) ? data.files : [];
             // #8 - Remove duplicate filenames, keep only first occurrence
@@ -881,6 +895,8 @@ const FileManager = (() => {
                 seenNames.add(f.name);
                 return true;
             });
+            folderFilesPageToken = data.next_page_token || '';
+            folderFilesHasMore = Boolean(folderFilesPageToken);
             filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             await refreshSharedByMeCache();
@@ -894,6 +910,35 @@ const FileManager = (() => {
             Components.toast(`Failed to load files: ${err.message}`, 'error');
         } finally {
             showLoading(false);
+        }
+    }
+
+    async function loadMoreFolderFiles() {
+        if (folderFilesLoadingMore || !folderFilesHasMore || !folderFilesPageToken) return;
+        if (currentPage !== 'files' && currentPage !== 'computers') return;
+        if (currentPage === 'computers' && !currentFolderId) return;
+        folderFilesLoadingMore = true;
+        try {
+            const opts = { page_size: 100, page_token: folderFilesPageToken };
+            const data = currentFolderId
+                ? await API.folders.get(currentFolderId, opts)
+                : await API.folders.root(opts);
+            const more = Array.isArray(data.files) ? data.files : [];
+            const seenNames = new Set(allFiles.map((f) => f.name));
+            for (const f of more) {
+                if (seenNames.has(f.name)) continue;
+                seenNames.add(f.name);
+                allFiles.push(f);
+            }
+            folderFilesPageToken = data.next_page_token || '';
+            folderFilesHasMore = Boolean(folderFilesPageToken);
+            filteredFolders = [...allFolders];
+            filteredFiles = [...allFiles];
+            renderItems(filteredFolders, filteredFiles);
+        } catch (err) {
+            Components.toast(`Failed to load more files: ${err.message}`, 'error');
+        } finally {
+            folderFilesLoadingMore = false;
         }
     }
 
@@ -961,9 +1006,13 @@ const FileManager = (() => {
 
         await ensureComputerContext(folderId);
         try {
-            const data = await API.folders.get(folderId);
+            folderFilesPageToken = '';
+            folderFilesHasMore = false;
+            const data = await API.folders.get(folderId, { page_size: 100 });
             allFolders = Array.isArray(data.folders) ? data.folders : [];
             allFiles = Array.isArray(data.files) ? data.files : [];
+            folderFilesPageToken = data.next_page_token || '';
+            folderFilesHasMore = Boolean(folderFilesPageToken);
             filteredFolders = [...allFolders];
             filteredFiles = [...allFiles];
             renderItems(filteredFolders, filteredFiles);
@@ -4577,7 +4626,7 @@ const FileManager = (() => {
     async function collectFolderEntries(folderId, basePath, out, used, visited = new Set()) {
         if (!folderId || visited.has(folderId)) return;
         visited.add(folderId);
-        const contents = await API.folders.get(folderId);
+        const contents = await API.folders.getAll(folderId);
         const folders = Array.isArray(contents.folders) ? contents.folders : [];
         const files = Array.isArray(contents.files) ? contents.files : [];
 

@@ -84,6 +84,10 @@ pub struct FolderContents {
     pub folders: Vec<Folder>,
     #[serde(default)]
     pub files: Vec<FileRecord>,
+    #[serde(default)]
+    pub next_page_token: Option<String>,
+    #[serde(default)]
+    pub total_files: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

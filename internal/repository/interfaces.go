@@ -60,6 +60,7 @@ type FileRepository interface {
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, opts domain.FileListOptions) ([]domain.File, int, error)
 	GetByFolderID(ctx context.Context, folderID *string, ownerID string) ([]domain.File, error)
+	GetByFolderIDPage(ctx context.Context, folderID *string, ownerID string, limit, offset int) ([]domain.File, int, error)
 	GetByFolderIDs(ctx context.Context, folderIDs []string) ([]domain.File, error)
 	MoveToTrash(ctx context.Context, id string) error
 	RestoreFromTrash(ctx context.Context, id string) error

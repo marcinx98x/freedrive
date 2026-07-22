@@ -259,21 +259,33 @@ export const api = {
 
   me: () => request<User>("GET", "/me"),
 
-  folderRoot: async () => {
-    const data = await request<FolderContents>("GET", "/folders/root");
+  folderRoot: async (opts?: { page_size?: number; page_token?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.page_size) q.set("page_size", String(opts.page_size));
+    if (opts?.page_token) q.set("page_token", opts.page_token);
+    const qs = q.toString();
+    const data = await request<FolderContents>("GET", `/folders/root${qs ? `?${qs}` : ""}`);
     return {
       folder: data.folder ?? null,
       folders: data.folders ?? [],
       files: data.files ?? [],
+      next_page_token: data.next_page_token || "",
+      total_files: data.total_files ?? 0,
     } satisfies FolderContents;
   },
 
-  folder: async (id: string) => {
-    const data = await request<FolderContents>("GET", `/folders/${id}`);
+  folder: async (id: string, opts?: { page_size?: number; page_token?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.page_size) q.set("page_size", String(opts.page_size));
+    if (opts?.page_token) q.set("page_token", opts.page_token);
+    const qs = q.toString();
+    const data = await request<FolderContents>("GET", `/folders/${id}${qs ? `?${qs}` : ""}`);
     return {
       folder: data.folder ?? null,
       folders: data.folders ?? [],
       files: data.files ?? [],
+      next_page_token: data.next_page_token || "",
+      total_files: data.total_files ?? 0,
     } satisfies FolderContents;
   },
 

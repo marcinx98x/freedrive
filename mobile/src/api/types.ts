@@ -72,6 +72,8 @@ export interface FolderContents {
   folder: FolderItem | null;
   folders: FolderItem[];
   files: FileItem[];
+  next_page_token?: string;
+  total_files?: number;
 }
 
 export interface Computer {

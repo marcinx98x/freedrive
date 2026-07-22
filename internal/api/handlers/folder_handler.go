@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
@@ -61,8 +62,12 @@ func (h *FolderHandler) Get(w http.ResponseWriter, r *http.Request) {
 	folderID := chi.URLParam(r, "id")
 	userID := middleware.GetUserID(r.Context())
 
-	contents, err := h.folderService.GetContents(r.Context(), &folderID, userID)
+	contents, err := h.folderService.GetContents(r.Context(), &folderID, userID, parseFolderContentsOpts(r))
 	if err != nil {
+		if err.Error() == "invalid page_token" {
+			writeError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		writeError(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -74,13 +79,27 @@ func (h *FolderHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *FolderHandler) GetRoot(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 
-	contents, err := h.folderService.GetContents(r.Context(), nil, userID)
+	contents, err := h.folderService.GetContents(r.Context(), nil, userID, parseFolderContentsOpts(r))
 	if err != nil {
+		if err.Error() == "invalid page_token" {
+			writeError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, contents)
+}
+
+func parseFolderContentsOpts(r *http.Request) domain.FolderContentsOptions {
+	opts := domain.FolderContentsOptions{
+		PageToken: r.URL.Query().Get("page_token"),
+	}
+	if n, err := strconv.Atoi(r.URL.Query().Get("page_size")); err == nil {
+		opts.PageSize = n
+	}
+	return opts
 }
 
 // ListAll handles GET /api/v1/folders/all

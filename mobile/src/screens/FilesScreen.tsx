@@ -84,6 +84,8 @@ export function FilesScreen({ navigation }: Props) {
   const [error, setError] = useState("");
   const [myDriveFolders, setMyDriveFolders] = useState<FolderItem[]>([]);
   const [myDriveFiles, setMyDriveFiles] = useState<FileItem[]>([]);
+  const [myDriveNextToken, setMyDriveNextToken] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
   const [computers, setComputers] = useState<Computer[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [sort, setSort] = useState<SortKey>("name");
@@ -109,9 +111,10 @@ export function FilesScreen({ navigation }: Props) {
     if (!opts?.soft) setLoading(true);
     setError("");
     try {
-      const contents = await api.folderRoot();
+      const contents = await api.folderRoot({ page_size: 100 });
       setMyDriveFolders(contents.folders);
       setMyDriveFiles(contents.files);
+      setMyDriveNextToken(contents.next_page_token || "");
       await writeListCache<FolderContentsCache>(LIST_CACHE_KEYS.folderRoot, {
         folders: contents.folders,
         files: contents.files,
@@ -123,6 +126,27 @@ export function FilesScreen({ navigation }: Props) {
       setRefreshing(false);
     }
   }, []);
+
+  const loadMoreMyDrive = useCallback(async () => {
+    if (tab !== "my-drive" || loadingMore || !myDriveNextToken) return;
+    setLoadingMore(true);
+    try {
+      const contents = await api.folderRoot({
+        page_size: 100,
+        page_token: myDriveNextToken,
+      });
+      setMyDriveFiles((prev) => {
+        const seen = new Set(prev.map((f) => f.id));
+        const extra = contents.files.filter((f) => !seen.has(f.id));
+        return [...prev, ...extra];
+      });
+      setMyDriveNextToken(contents.next_page_token || "");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [tab, loadingMore, myDriveNextToken]);
 
   const loadComputers = useCallback(async (opts?: { soft?: boolean }) => {
     if (!opts?.soft) setLoading(true);
@@ -344,6 +368,15 @@ export function FilesScreen({ navigation }: Props) {
             viewMode === "grid" && tab === "my-drive" ? styles.gridRow : undefined
           }
           contentContainerStyle={entries.length === 0 ? styles.emptyContainer : undefined}
+          onEndReached={() => {
+            void loadMoreMyDrive();
+          }}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore && tab === "my-drive" ? (
+              <ActivityIndicator style={{ marginVertical: 16 }} color={colors.accent} />
+            ) : null
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
           }

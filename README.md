@@ -582,10 +582,10 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 #### Folders
 
 - `POST /folders`
-- `GET /folders/root`
+- `GET /folders/root` — child folders + paginated files (`page_size`, `page_token`; response: `next_page_token`, `total_files`)
 - `GET /folders/all`
 - `GET /folders/trash`
-- `GET /folders/{id}`
+- `GET /folders/{id}` — same pagination as root
 - `PATCH /folders/{id}`
 - `DELETE /folders/{id}`
 - `POST /folders/{id}/restore`

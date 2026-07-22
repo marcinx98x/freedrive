@@ -409,8 +409,7 @@ impl ApiClient {
     }
 
     pub async fn get_my_drive_root(&self) -> AppResult<FolderContents> {
-        self.request_json(reqwest::Method::GET, "/folders/root", None, false, 2)
-            .await
+        self.fetch_all_folder_pages("/folders/root").await
     }
 
     pub async fn get_shared_with_me(&self) -> AppResult<Vec<SharedItem>> {
@@ -587,23 +586,53 @@ impl ApiClient {
 
 
     pub async fn get_folder_contents(&self, folder_id: &str) -> AppResult<FolderContents> {
+        self.fetch_all_folder_pages(&format!("/folders/{}", folder_id))
+            .await
+    }
 
-        self.request_json(
-
-            reqwest::Method::GET,
-
-            &format!("/folders/{}", folder_id),
-
-            None,
-
-            false,
-
-            2,
-
-        )
-
-        .await
-
+    /// Fetch every page of folder contents so sync/orphan walks see the full set.
+    async fn fetch_all_folder_pages(&self, base_path: &str) -> AppResult<FolderContents> {
+        const PAGE_SIZE: u32 = 500;
+        let mut page_token: Option<String> = None;
+        let mut merged = FolderContents {
+            folder: None,
+            folders: Vec::new(),
+            files: Vec::new(),
+            next_page_token: None,
+            total_files: None,
+        };
+        let mut guard = 0u32;
+        loop {
+            guard += 1;
+            if guard > 10_000 {
+                return Err(AppError::msg("folder listing exceeded page limit"));
+            }
+            let mut path = format!("{}?page_size={}", base_path, PAGE_SIZE);
+            if let Some(ref token) = page_token {
+                path.push_str("&page_token=");
+                path.push_str(&urlencoding::encode(token));
+            }
+            let page: FolderContents = self
+                .request_json(reqwest::Method::GET, &path, None, false, 2)
+                .await?;
+            if merged.folder.is_none() {
+                merged.folder = page.folder;
+            }
+            if !page.folders.is_empty() {
+                merged.folders = page.folders;
+            }
+            if let Some(total) = page.total_files {
+                merged.total_files = Some(total);
+            }
+            merged.files.extend(page.files);
+            let next = page.next_page_token.filter(|t| !t.is_empty());
+            if next.is_none() {
+                merged.next_page_token = None;
+                break;
+            }
+            page_token = next;
+        }
+        Ok(merged)
     }
 
     pub async fn delete_file(&self, file_id: &str) -> AppResult<()> {
