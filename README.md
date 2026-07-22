@@ -572,7 +572,7 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 - `POST /files/{id}/approvals` — `{ approver_id?, approver_email? }` (requires write access)
 - `GET /files/{id}/download`
 - `PATCH /files/{id}`
-- `POST /files/{id}/content`
+- `POST /files/{id}/content` — multipart replace encrypted blob (`file`, `name`, `mime_type`, `iv`, `original_size`); used by desktop sync and mobile text/image save
 - `DELETE /files/{id}`
 - `POST /files/{id}/restore`
 - `DELETE /files/{id}/permanent`
@@ -714,7 +714,9 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
 - **File actions** — open, share a decrypted copy, download, star/unstar, and move files to Bin from item menus
 - **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
-- **In-app preview** — images (swipe between photos in the same list), text/Markdown/JSON/CSV (edit + save), and PDF files; rotate images and save back to the server
+- **In-app preview** — images, plain text (Markdown/JSON/CSV), PDF (open with another app)
+- **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors
+- **Edit & save** — text Edit/Save and image Rotate/Save re-encrypt and call `POST /api/v1/files/{id}/content` (no Docs/Sheets clone)
 - **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
 - Upload and offline files are planned for later releases
 - See [`mobile/README.md`](mobile/README.md) for Expo Go setup and local APK build notes
@@ -771,9 +773,10 @@ desktop/                  # Tauri desktop sync client (React + Rust)
   README.md               # build & dev instructions
 
 mobile/                   # Expo React Native Android client (MVP)
-  src/                    # screens, navigation, API client, auth
+  src/                    # screens, navigation, API client, auth, crypto
+  plugins/                # Expo config plugins (e.g. FreeDriveDownloads / MediaStore)
   assets/                 # app icon / splash (from FreeDrive logo)
-  scripts/                # generate-assets.mjs
+  scripts/                # generate-assets.mjs, build-apk.ps1
   package.json
   README.md               # Expo Go + APK build instructions
 ```

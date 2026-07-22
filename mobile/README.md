@@ -17,11 +17,14 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Devices** — appears as `Mobile (…)` and keeps a stable installation ID, so re-login updates the same entry in the account Devices list instead of creating a duplicate
 - **File actions** — item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
 - **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
-- **In-app preview** — native image, text/Markdown/JSON/CSV, and PDF previews; swipe left/right between images in the same list; edit plain text and rotate images with save back to the server
+- **In-app preview** — images, plain text (Markdown/JSON/CSV), and PDF (open with another app)
+- **Image gallery** — swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background
+- **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via `POST /api/v1/files/{id}/content`
+- **Image rotate** — Rotate (90°) in the preview header, then Save to replace the file on the server (same content endpoint)
 - **Share a copy** — opens the Android share sheet with the decrypted file
-- **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission. Changing that plugin requires a full `expo prebuild` APK rebuild (not incremental-only).
+- **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission
 
-Upload and offline files are planned for later releases.
+Upload and offline files are planned for later releases. Docs/Sheets-style office editors and PDF annotation are out of scope for the mobile MVP.
 
 ## Requirements
 
@@ -76,12 +79,14 @@ cd C:\fdm\android
 Copy-Item "C:\fdm\android\app\build\outputs\apk\release\app-release.apk" "C:\Users\marci\Desktop\Projekty\freedrive-master\mobile\dist\FreeDrive-1.0.0.apk" -Force
 ```
 
-Do **not** run `expo prebuild` on every rebuild — only when `C:\fdm\android` is missing or native config changed (`app.json`, new Expo plugin).
+Do **not** run `expo prebuild` on every rebuild — only when `C:\fdm\android` is missing or **native** config changed (`app.json` plugins, new Expo native module such as `expo-image-manipulator`, or `plugins/with-freedrive-downloads/`).
 
 ### First build or native changes only
 
 ```powershell
 powershell -File mobile\scripts\build-apk.ps1 -Clean
 ```
+
+Or after syncing to `C:\fdm`: `npx expo prebuild --platform android`, then `gradlew assembleRelease`.
 
 APK output for install: `mobile\dist\FreeDrive-1.0.0.apk` (debug-signed unless you configure a release keystore).
