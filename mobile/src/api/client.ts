@@ -453,6 +453,58 @@ export const api = {
     return doFetch(true);
   },
 
+  /** Replace encrypted blob for an existing file (POST multipart /files/{id}/content). */
+  updateFileContent: async (
+    fileId: string,
+    opts: {
+      name: string;
+      mimeType: string;
+      iv: string;
+      originalSize: number;
+      encryptedUri: string;
+    },
+  ): Promise<FileItem> => {
+    const doFetch = async (retry: boolean): Promise<FileItem> => {
+      const url = await baseUrl();
+      const headers: Record<string, string> = { ...(await deviceHeaders()) };
+      const tokens = await getTokens();
+      if (tokens?.access_token) {
+        headers.Authorization = `Bearer ${tokens.access_token}`;
+      }
+      const form = new FormData();
+      form.append("file", {
+        uri: opts.encryptedUri,
+        name: opts.name,
+        type: "application/octet-stream",
+      } as unknown as Blob);
+      form.append("name", opts.name);
+      form.append("mime_type", opts.mimeType);
+      form.append("iv", opts.iv);
+      form.append("original_size", String(opts.originalSize));
+
+      const res = await fetchWithTimeout(
+        `${url}/api/v1/files/${fileId}/content`,
+        { method: "POST", headers, body: form },
+        DOWNLOAD_TIMEOUT_MS,
+      );
+      if (res.status === 401 && retry) {
+        const refreshed = await tryRefresh();
+        if (refreshed === "ok") return doFetch(false);
+        if (refreshed === "transient") {
+          throw new ApiError("Request timed out — check your connection", 0);
+        }
+        await clearSession();
+        onUnauthorized?.();
+        throw new ApiError("Session expired", 401);
+      }
+      if (!res.ok) {
+        throw new ApiError(await parseError(res), res.status);
+      }
+      return (await res.json()) as FileItem;
+    };
+    return doFetch(true);
+  },
+
   getCryptoAccount: () => request<CryptoAccount>("GET", "/crypto/account"),
 
   listEncryptionKeys: async (since?: string) => {

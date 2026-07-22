@@ -714,7 +714,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
 - **File actions** — open, share a decrypted copy, download, star/unstar, and move files to Bin from item menus
 - **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
-- **In-app preview** — images, text/Markdown/JSON/CSV, and PDF files
+- **In-app preview** — images (swipe between photos in the same list), text/Markdown/JSON/CSV (edit + save), and PDF files; rotate images and save back to the server
 - **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
 - Upload and offline files are planned for later releases
 - See [`mobile/README.md`](mobile/README.md) for Expo Go setup and local APK build notes

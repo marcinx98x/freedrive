@@ -263,7 +263,7 @@ export function FilesScreen({ navigation }: Props) {
       return (
         <FileGridTile
           file={item.item}
-          onPress={() => openFile(item.item, navigation)}
+          onPress={() => openFile(item.item, navigation, { gallery: myDriveFiles })}
           onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
         />
       );
@@ -271,7 +271,7 @@ export function FilesScreen({ navigation }: Props) {
     return (
       <FileRow
         file={item.item}
-        onPress={() => openFile(item.item, navigation)}
+        onPress={() => openFile(item.item, navigation, { gallery: myDriveFiles })}
         onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
       />
     );

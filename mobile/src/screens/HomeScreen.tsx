@@ -300,14 +300,14 @@ export function HomeScreen({ navigation }: Props) {
                 <FileGridTile
                   file={item}
                   subtitle={suggestionReason(item)}
-                  onPress={() => openFile(item, navigation)}
+                  onPress={() => openFile(item, navigation, { gallery: files })}
                   onMenuPress={() => setMenuTarget({ kind: "file", item })}
                 />
               ) : (
                 <FileRow
                   file={item}
                   subtitle={suggestionReason(item)}
-                  onPress={() => openFile(item, navigation)}
+                  onPress={() => openFile(item, navigation, { gallery: files })}
                   onMenuPress={() => setMenuTarget({ kind: "file", item })}
                 />
               )

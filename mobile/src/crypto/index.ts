@@ -227,6 +227,16 @@ export async function decryptFileBytes(
   return cipher.decrypt(new Uint8Array(ciphertext));
 }
 
+export async function encryptFileBytes(
+  plaintext: Uint8Array,
+  key: Uint8Array,
+): Promise<{ ciphertext: Uint8Array; ivB64: string }> {
+  const iv = randomBytes(12);
+  const cipher = gcm(key, iv);
+  const ciphertext = cipher.encrypt(plaintext);
+  return { ciphertext, ivB64: bytesToBase64(iv) };
+}
+
 export async function decryptDownloadedFile(fileId: string, ivB64: string, data: ArrayBuffer): Promise<Uint8Array> {
   if (!ivB64) {
     // Unencrypted payload (legacy)

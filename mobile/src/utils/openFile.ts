@@ -4,7 +4,11 @@ import * as Sharing from "expo-sharing";
 import { Alert, NativeModules, PermissionsAndroid, Platform } from "react-native";
 import { api } from "../api/client";
 import type { FileItem } from "../api/types";
-import { decryptDownloadedFile } from "../crypto";
+import {
+  decryptDownloadedFile,
+  encryptFileBytes,
+  ensureFileKey,
+} from "../crypto";
 import type { RootStackParamList } from "../navigation/types";
 
 type DownloadsNativeModule = {
@@ -28,6 +32,18 @@ type PreviewNav = {
   ) => void;
 };
 
+export type OpenFileOptions = {
+  /** Sibling files from the current list (images filtered for swipe gallery). */
+  gallery?: FileItem[];
+};
+
+export type GalleryItem = {
+  id: string;
+  name: string;
+  mime_type: string;
+  iv: string;
+};
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;
@@ -41,21 +57,10 @@ function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "_") || "file";
 }
 
-export async function downloadAndDecrypt(file: FileItem): Promise<{
-  uri: string;
-  mime: string;
-  bytes: Uint8Array;
-}> {
-  const downloaded = await api.downloadEncrypted(file.id);
-  const plain = await decryptDownloadedFile(file.id, downloaded.iv || file.iv, downloaded.data);
-  const mime = downloaded.mime || file.mime_type || "application/octet-stream";
-  const dir = FileSystem.cacheDirectory;
-  if (!dir) throw new Error("Cache directory unavailable");
-  const path = `${dir}fd_${file.id}_${safeFileName(file.name)}`;
-  await FileSystem.writeAsStringAsync(path, bytesToBase64(plain), {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  return { uri: path, mime, bytes: plain };
+export function isImageFile(file: Pick<FileItem, "name" | "mime_type">): boolean {
+  const mime = (file.mime_type || "").toLowerCase();
+  if (mime.startsWith("image/")) return true;
+  return /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(file.name);
 }
 
 function isImage(mime: string): boolean {
@@ -79,16 +84,109 @@ function isPdf(mime: string, name: string): boolean {
   return mime.toLowerCase().includes("pdf") || name.toLowerCase().endsWith(".pdf");
 }
 
-export async function openFile(file: FileItem, navigation?: PreviewNav): Promise<void> {
+export async function downloadAndDecrypt(file: Pick<FileItem, "id" | "name" | "iv" | "mime_type">): Promise<{
+  uri: string;
+  mime: string;
+  bytes: Uint8Array;
+}> {
+  const downloaded = await api.downloadEncrypted(file.id);
+  const plain = await decryptDownloadedFile(file.id, downloaded.iv || file.iv, downloaded.data);
+  const mime = downloaded.mime || file.mime_type || "application/octet-stream";
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) throw new Error("Cache directory unavailable");
+  const path = `${dir}fd_${file.id}_${safeFileName(file.name)}`;
+  await FileSystem.writeAsStringAsync(path, bytesToBase64(plain), {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return { uri: path, mime, bytes: plain };
+}
+
+/** Encrypt plaintext and POST as the new content for an existing file. */
+export async function saveEncryptedContent(opts: {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  plaintext: Uint8Array;
+}): Promise<FileItem> {
+  const key = await ensureFileKey(opts.fileId);
+  const { ciphertext, ivB64 } = await encryptFileBytes(opts.plaintext, key);
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) throw new Error("Cache directory unavailable");
+  const encPath = `${dir}fd_upload_${opts.fileId}_${Date.now()}.bin`;
+  await FileSystem.writeAsStringAsync(encPath, bytesToBase64(ciphertext), {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  try {
+    return await api.updateFileContent(opts.fileId, {
+      name: opts.name,
+      mimeType: opts.mimeType,
+      iv: ivB64,
+      originalSize: opts.plaintext.length,
+      encryptedUri: encPath,
+    });
+  } finally {
+    await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
+  }
+}
+
+export async function writePlainCache(
+  fileId: string,
+  name: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) throw new Error("Cache directory unavailable");
+  const path = `${dir}fd_${fileId}_${safeFileName(name)}`;
+  await FileSystem.writeAsStringAsync(path, bytesToBase64(bytes), {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return path;
+}
+
+export async function openFile(
+  file: FileItem,
+  navigation?: PreviewNav,
+  opts?: OpenFileOptions,
+): Promise<void> {
   try {
     const { uri, mime, bytes } = await downloadAndDecrypt(file);
 
-    if (navigation && isImage(mime)) {
+    if (navigation && (isImage(mime) || isImageFile(file))) {
+      const gallerySrc = (opts?.gallery ?? []).filter(isImageFile);
+      const gallery: GalleryItem[] =
+        gallerySrc.length > 0
+          ? gallerySrc.map((f) => ({
+              id: f.id,
+              name: f.name,
+              mime_type: f.mime_type,
+              iv: f.iv,
+            }))
+          : [
+              {
+                id: file.id,
+                name: file.name,
+                mime_type: file.mime_type,
+                iv: file.iv,
+              },
+            ];
+      let index = gallery.findIndex((g) => g.id === file.id);
+      if (index < 0) {
+        gallery.unshift({
+          id: file.id,
+          name: file.name,
+          mime_type: file.mime_type,
+          iv: file.iv,
+        });
+        index = 0;
+      }
       navigation.navigate("FilePreview", {
         title: file.name,
         uri,
         mime,
         mode: "image",
+        fileId: file.id,
+        gallery,
+        index,
       });
       return;
     }
@@ -101,6 +199,7 @@ export async function openFile(file: FileItem, navigation?: PreviewNav): Promise
         mime,
         mode: "text",
         text,
+        fileId: file.id,
       });
       return;
     }
@@ -111,6 +210,7 @@ export async function openFile(file: FileItem, navigation?: PreviewNav): Promise
         uri,
         mime,
         mode: "pdf",
+        fileId: file.id,
       });
       return;
     }

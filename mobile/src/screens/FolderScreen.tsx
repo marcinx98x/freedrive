@@ -186,13 +186,13 @@ export function FolderScreen({ route, navigation }: Props) {
     return viewMode === "grid" ? (
       <FileGridTile
         file={item.item}
-        onPress={() => openFile(item.item, navigation)}
+        onPress={() => openFile(item.item, navigation, { gallery: files })}
         onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
       />
     ) : (
       <FileRow
         file={item.item}
-        onPress={() => openFile(item.item, navigation)}
+        onPress={() => openFile(item.item, navigation, { gallery: files })}
         onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
       />
     );

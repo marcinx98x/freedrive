@@ -74,7 +74,7 @@ export function StarredScreen({ navigation }: Props) {
           renderItem={({ item }) => (
             <FileRow
               file={item}
-              onPress={() => openFile(item, navigation)}
+              onPress={() => openFile(item, navigation, { gallery: files })}
               onMenuPress={() => setMenuTarget({ kind: "file", item })}
             />
           )}

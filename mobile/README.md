@@ -17,7 +17,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Devices** — appears as `Mobile (…)` and keeps a stable installation ID, so re-login updates the same entry in the account Devices list instead of creating a duplicate
 - **File actions** — item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
 - **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
-- **In-app preview** — native image, text/Markdown/JSON/CSV, and PDF previews
+- **In-app preview** — native image, text/Markdown/JSON/CSV, and PDF previews; swipe left/right between images in the same list; edit plain text and rotate images with save back to the server
 - **Share a copy** — opens the Android share sheet with the decrypted file
 - **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission. Changing that plugin requires a full `expo prebuild` APK rebuild (not incremental-only).
 

@@ -1,61 +1,410 @@
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
   Image,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ViewToken,
 } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as Sharing from "expo-sharing";
-import { Pressable } from "react-native";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
+import {
+  downloadAndDecrypt,
+  saveEncryptedContent,
+  writePlainCache,
+  type GalleryItem,
+} from "../utils/openFile";
 
 type Props = NativeStackScreenProps<RootStackParamList, "FilePreview">;
 
+type UriCache = Record<string, string>;
+
 export function FilePreviewScreen({ route, navigation }: Props) {
-  const { title, uri, mime, mode, text } = route.params;
+  const {
+    title: initialTitle,
+    uri: initialUri,
+    mime: initialMime,
+    mode,
+    text: initialText,
+    fileId: initialFileId,
+    gallery: galleryParam,
+    index: initialIndex = 0,
+  } = route.params;
+
+  const gallery = useMemo(
+    () => galleryParam ?? [],
+    [galleryParam],
+  );
+  const paging = mode === "image" && gallery.length > 1;
+  const pageWidth = Dimensions.get("window").width;
+
+  const [pageIndex, setPageIndex] = useState(
+    Math.min(Math.max(initialIndex, 0), Math.max(gallery.length - 1, 0)),
+  );
+  const [uriById, setUriById] = useState<UriCache>(() => {
+    const id = initialFileId || gallery[initialIndex]?.id;
+    return id ? { [id]: initialUri } : {};
+  });
+  const [loadingIds, setLoadingIds] = useState<Record<string, boolean>>({});
+  const [errorById, setErrorById] = useState<Record<string, string>>({});
+  const [dirtyRotate, setDirtyRotate] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [savingImage, setSavingImage] = useState(false);
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(initialText ?? "");
+  const [savedText, setSavedText] = useState(initialText ?? "");
+  const [savingText, setSavingText] = useState(false);
+
+  const listRef = useRef<FlatList<GalleryItem>>(null);
+  const loadingRef = useRef<Set<string>>(new Set());
+
+  const current = paging
+    ? gallery[pageIndex]
+    : gallery[0] ||
+      (initialFileId
+        ? {
+            id: initialFileId,
+            name: initialTitle,
+            mime_type: initialMime,
+            iv: "",
+          }
+        : null);
+
+  const currentUri =
+    (current && uriById[current.id]) ||
+    (!paging ? initialUri : undefined);
+  const currentMime = current?.mime_type || initialMime;
+  const currentTitle = current?.name || initialTitle;
+  const currentFileId = current?.id || initialFileId;
+
+  const ensureLoaded = useCallback(
+    async (item: GalleryItem) => {
+      if (uriById[item.id] || loadingRef.current.has(item.id)) return;
+      loadingRef.current.add(item.id);
+      setLoadingIds((prev) => ({ ...prev, [item.id]: true }));
+      try {
+        const { uri } = await downloadAndDecrypt(item);
+        setUriById((prev) => ({ ...prev, [item.id]: uri }));
+        setErrorById((prev) => {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+      } catch (err) {
+        setErrorById((prev) => ({
+          ...prev,
+          [item.id]: err instanceof Error ? err.message : String(err),
+        }));
+      } finally {
+        loadingRef.current.delete(item.id);
+        setLoadingIds((prev) => {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+      }
+    },
+    [uriById],
+  );
+
+  const prefetchNeighbors = useCallback(
+    (index: number) => {
+      if (!paging) return;
+      for (const i of [index - 1, index, index + 1]) {
+        const item = gallery[i];
+        if (item) void ensureLoaded(item);
+      }
+    },
+    [ensureLoaded, gallery, paging],
+  );
+
+  useEffect(() => {
+    prefetchNeighbors(pageIndex);
+  }, [pageIndex, prefetchNeighbors]);
+
+  useEffect(() => {
+    setDirtyRotate(false);
+  }, [pageIndex]);
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const first = viewableItems[0];
+      if (first?.index != null) setPageIndex(first.index);
+    },
+  ).current;
+
+  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 60 }).current;
+
+  const onMomentumScrollEnd = (
+    e: NativeSyntheticEvent<NativeScrollEvent>,
+  ) => {
+    const next = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
+    if (next !== pageIndex && next >= 0 && next < gallery.length) {
+      setPageIndex(next);
+    }
+  };
+
+  const shareCurrent = async () => {
+    const uri = currentUri;
+    if (!uri) return;
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, {
+        mimeType: currentMime,
+        dialogTitle: currentTitle,
+      });
+    }
+  };
+
+  const rotateCurrent = async () => {
+    if (!currentUri || !currentFileId) return;
+    setRotating(true);
+    try {
+      const format = currentMime.toLowerCase().includes("png")
+        ? ImageManipulator.SaveFormat.PNG
+        : ImageManipulator.SaveFormat.JPEG;
+      const result = await ImageManipulator.manipulateAsync(
+        currentUri,
+        [{ rotate: 90 }],
+        { compress: 1, format },
+      );
+      setUriById((prev) => ({ ...prev, [currentFileId]: result.uri }));
+      setDirtyRotate(true);
+    } catch (err) {
+      Alert.alert("Rotate failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setRotating(false);
+    }
+  };
+
+  const saveRotated = async () => {
+    if (!currentUri || !currentFileId || !current) return;
+    setSavingImage(true);
+    try {
+      const b64 = await FileSystem.readAsStringAsync(currentUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const binary = globalThis.atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const mime = currentMime.toLowerCase().includes("png")
+        ? "image/png"
+        : currentMime.startsWith("image/")
+          ? currentMime
+          : "image/jpeg";
+      await saveEncryptedContent({
+        fileId: currentFileId,
+        name: current.name,
+        mimeType: mime,
+        plaintext: bytes,
+      });
+      const cached = await writePlainCache(currentFileId, current.name, bytes);
+      setUriById((prev) => ({ ...prev, [currentFileId]: cached }));
+      setDirtyRotate(false);
+      Alert.alert("Saved", "Image updated on FreeDrive.");
+    } catch (err) {
+      Alert.alert("Save failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingImage(false);
+    }
+  };
+
+  const saveText = async () => {
+    if (!initialFileId) return;
+    setSavingText(true);
+    try {
+      const plaintext = new TextEncoder().encode(draft);
+      await saveEncryptedContent({
+        fileId: initialFileId,
+        name: initialTitle,
+        mimeType: initialMime || "text/plain",
+        plaintext,
+      });
+      await writePlainCache(initialFileId, initialTitle, plaintext);
+      setSavedText(draft);
+      setEditing(false);
+      Alert.alert("Saved", "File updated on FreeDrive.");
+    } catch (err) {
+      Alert.alert("Save failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingText(false);
+    }
+  };
 
   React.useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: true,
-      title: title || "Preview",
+      title: mode === "image" ? currentTitle : initialTitle || "Preview",
       headerStyle: { backgroundColor: colors.bg },
       headerTintColor: colors.text,
       headerRight: () => (
-        <Pressable
-          onPress={async () => {
-            if (await Sharing.isAvailableAsync()) {
-              await Sharing.shareAsync(uri, { mimeType: mime, dialogTitle: title });
-            }
-          }}
-          style={{ paddingHorizontal: 12 }}
-        >
-          <Text style={{ color: colors.accent, fontWeight: "600" }}>Share</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          {mode === "image" && currentFileId ? (
+            <>
+              <Pressable
+                onPress={() => void rotateCurrent()}
+                disabled={rotating || !currentUri}
+                style={styles.headerBtn}
+              >
+                <Text style={styles.headerBtnText}>
+                  {rotating ? "…" : "Rotate"}
+                </Text>
+              </Pressable>
+              {dirtyRotate ? (
+                <Pressable
+                  onPress={() => void saveRotated()}
+                  disabled={savingImage}
+                  style={styles.headerBtn}
+                >
+                  <Text style={styles.headerBtnText}>
+                    {savingImage ? "…" : "Save"}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : null}
+          {mode === "text" && initialFileId ? (
+            editing ? (
+              <>
+                <Pressable
+                  onPress={() => {
+                    setDraft(savedText);
+                    setEditing(false);
+                  }}
+                  style={styles.headerBtn}
+                >
+                  <Text style={styles.headerBtnText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void saveText()}
+                  disabled={savingText}
+                  style={styles.headerBtn}
+                >
+                  <Text style={styles.headerBtnText}>
+                    {savingText ? "…" : "Save"}
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable onPress={() => setEditing(true)} style={styles.headerBtn}>
+                <Text style={styles.headerBtnText}>Edit</Text>
+              </Pressable>
+            )
+          ) : null}
+          <Pressable onPress={() => void shareCurrent()} style={styles.headerBtn}>
+            <Text style={styles.headerBtnText}>Share</Text>
+          </Pressable>
+        </View>
       ),
     });
-  }, [navigation, title, uri, mime]);
+  }, [
+    navigation,
+    mode,
+    currentTitle,
+    initialTitle,
+    currentFileId,
+    currentUri,
+    rotating,
+    dirtyRotate,
+    savingImage,
+    editing,
+    savingText,
+    savedText,
+    draft,
+    initialFileId,
+    initialMime,
+  ]);
+
+  if (mode === "image" && paging) {
+    return (
+      <View style={styles.center}>
+        <FlatList
+          ref={listRef}
+          data={gallery}
+          keyExtractor={(item) => item.id}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={Math.min(initialIndex, gallery.length - 1)}
+          getItemLayout={(_, index) => ({
+            length: pageWidth,
+            offset: pageWidth * index,
+            index,
+          })}
+          onMomentumScrollEnd={onMomentumScrollEnd}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          renderItem={({ item }) => {
+            const uri = uriById[item.id];
+            const loading = !!loadingIds[item.id];
+            const error = errorById[item.id];
+            return (
+              <View style={[styles.page, { width: pageWidth }]}>
+                {uri ? (
+                  <Image source={{ uri }} style={styles.image} resizeMode="contain" />
+                ) : loading ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : error ? (
+                  <Text style={styles.hint}>{error}</Text>
+                ) : (
+                  <ActivityIndicator color={colors.accent} />
+                )}
+              </View>
+            );
+          }}
+        />
+        <Text style={styles.counter}>
+          {pageIndex + 1} / {gallery.length}
+        </Text>
+      </View>
+    );
+  }
 
   if (mode === "image") {
     return (
       <View style={styles.center}>
-        <Image source={{ uri }} style={styles.image} resizeMode="contain" />
+        {currentUri ? (
+          <Image source={{ uri: currentUri }} style={styles.image} resizeMode="contain" />
+        ) : (
+          <ActivityIndicator color={colors.accent} />
+        )}
       </View>
     );
   }
 
   if (mode === "text") {
+    if (editing) {
+      return (
+        <TextInput
+          style={[styles.safe, styles.textPad, styles.editor]}
+          value={draft}
+          onChangeText={setDraft}
+          multiline
+          textAlignVertical="top"
+          autoFocus
+        />
+      );
+    }
     return (
       <ScrollView style={styles.safe} contentContainerStyle={styles.textPad}>
-        <Text style={styles.text}>{text ?? ""}</Text>
+        <Text style={styles.text}>{savedText}</Text>
       </ScrollView>
     );
   }
 
-  // PDF / other: offer share open
   return (
     <View style={styles.center}>
       <Text style={styles.hint}>PDF preview uses your device apps.</Text>
@@ -63,7 +412,10 @@ export function FilePreviewScreen({ route, navigation }: Props) {
         style={styles.btn}
         onPress={async () => {
           if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(uri, { mimeType: mime || "application/pdf", dialogTitle: title });
+            await Sharing.shareAsync(initialUri, {
+              mimeType: initialMime || "application/pdf",
+              dialogTitle: initialTitle,
+            });
           }
         }}
       >
@@ -81,12 +433,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.lg,
+  },
+  page: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   image: { width: "100%", height: "100%" },
-  textPad: { padding: spacing.lg },
+  textPad: { padding: spacing.lg, flexGrow: 1 },
   text: { color: colors.text, fontSize: 14, lineHeight: 20, fontFamily: "monospace" },
-  hint: { color: colors.textSecondary, marginBottom: spacing.lg, textAlign: "center" },
+  editor: {
+    color: colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: "monospace",
+  },
+  hint: { color: colors.textSecondary, marginBottom: spacing.lg, textAlign: "center", paddingHorizontal: spacing.lg },
   btn: {
     backgroundColor: colors.accentSoft,
     paddingHorizontal: spacing.xl,
@@ -94,4 +456,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   btnText: { color: "#0B1C2C", fontWeight: "600" },
+  headerActions: { flexDirection: "row", alignItems: "center" },
+  headerBtn: { paddingHorizontal: 10 },
+  headerBtnText: { color: colors.accent, fontWeight: "600" },
+  counter: {
+    position: "absolute",
+    bottom: spacing.lg,
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
 });

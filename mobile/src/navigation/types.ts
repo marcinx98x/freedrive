@@ -12,6 +12,14 @@ export type RootStackParamList = {
     mime: string;
     mode: "image" | "text" | "pdf";
     text?: string;
+    fileId?: string;
+    gallery?: Array<{
+      id: string;
+      name: string;
+      mime_type: string;
+      iv: string;
+    }>;
+    index?: number;
   };
 };
 
