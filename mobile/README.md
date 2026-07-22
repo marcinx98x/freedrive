@@ -19,7 +19,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
 - **In-app preview** — native image, text/Markdown/JSON/CSV, and PDF previews
 - **Share a copy** — opens the Android share sheet with the decrypted file
-- **Download** — saves silently to Android's shared Downloads collection and posts a tappable “Download complete” notification; Android 13+ asks for notification permission
+- **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission. Changing that plugin requires a full `expo prebuild` APK rebuild (not incremental-only).
 
 Upload and offline files are planned for later releases.
 

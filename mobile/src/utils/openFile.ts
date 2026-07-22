@@ -8,6 +8,14 @@ import { decryptDownloadedFile } from "../crypto";
 import type { RootStackParamList } from "../navigation/types";
 
 type DownloadsNativeModule = {
+  beginDownload(fileName: string): Promise<number>;
+  completeDownload(
+    notificationId: number,
+    fileName: string,
+    mimeType: string,
+    contentUri: string,
+  ): Promise<void>;
+  failDownload(notificationId: number, message: string): Promise<void>;
   saveBase64(fileName: string, mimeType: string, base64: string): Promise<string>;
 };
 
@@ -144,10 +152,10 @@ async function requestNotificationPermissionIfNeeded(): Promise<void> {
 
 /** Decrypt and save into Android's shared Downloads collection. */
 export async function downloadFileToDevice(file: FileItem): Promise<void> {
+  let notificationId: number | undefined;
   try {
-    const { uri, mime, bytes } = await downloadAndDecrypt(file);
-
     if (Platform.OS !== "android") {
+      const { uri, mime } = await downloadAndDecrypt(file);
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: mime, dialogTitle: `Save ${file.name}` });
       } else {
@@ -157,12 +165,38 @@ export async function downloadFileToDevice(file: FileItem): Promise<void> {
     }
 
     if (!downloadsModule) {
+      const { uri, mime } = await downloadAndDecrypt(file);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, {
+          mimeType: mime,
+          dialogTitle: `Save ${file.name}`,
+        });
+        return;
+      }
       throw new Error("Android download service is unavailable");
     }
+
     await requestNotificationPermissionIfNeeded();
-    await downloadsModule.saveBase64(file.name, mime, bytesToBase64(bytes));
+    notificationId = await downloadsModule.beginDownload(file.name);
+
+    const { mime, bytes } = await downloadAndDecrypt(file);
+    const savedUri = await downloadsModule.saveBase64(
+      file.name,
+      mime,
+      bytesToBase64(bytes),
+    );
+    await downloadsModule.completeDownload(notificationId, file.name, mime, savedUri);
+    notificationId = undefined;
   } catch (err) {
-    Alert.alert("Download failed", err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    if (notificationId != null && downloadsModule) {
+      try {
+        await downloadsModule.failDownload(notificationId, message);
+      } catch {
+        // Notification failure must not hide the download error.
+      }
+    }
+    Alert.alert("Download failed", message);
   }
 }
 
