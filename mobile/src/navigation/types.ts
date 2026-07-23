@@ -1,8 +1,12 @@
+export type FilesStackParamList = {
+  FilesHome: undefined;
+  Folder: { folderId: string; title?: string };
+};
+
 export type RootStackParamList = {
   Login: undefined;
   TwoFactor: { challengeId: string; emailMasked: string };
   Main: undefined;
-  Folder: { folderId: string; title?: string };
   Search: { query: string };
   Recent: undefined;
   Trash: undefined;
@@ -27,5 +31,10 @@ export type MainTabParamList = {
   Home: undefined;
   Starred: undefined;
   Shared: undefined;
-  Files: undefined;
+  Files:
+    | {
+        screen?: keyof FilesStackParamList;
+        params?: FilesStackParamList[keyof FilesStackParamList];
+      }
+    | undefined;
 };

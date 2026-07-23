@@ -9,7 +9,11 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Sign in** — server URL, email, password, and email 2FA when enabled
 - **Secure session** — tokens in SecureStore, profile cache in AsyncStorage (supports large avatar data-URLs), auto-refresh on 401
 - **Bottom tabs** — Home, Starred, Shared, Files (with active pill indicator)
+- **Files stack** — Files tab hosts My Drive home + nested Folder screens (Drive-like); Shared can deep-link into a folder under Files
 - **Files** — My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
+- **Create FAB** — Upload and New folder on Files / Folder (camera stub reserved); FAB respects safe-area insets
+- **Upload** — multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then native `FileSystem.uploadAsync` multipart (`POST /api/v1/files/upload`) — avoids Hermes Blob / FormDataPart limits
+- **New folder** — dialog → `POST /api/v1/folders` in the current folder (or My Drive root)
 - **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage
 - **Search** — search files by name from the top bar
 - **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
@@ -19,12 +23,12 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
 - **In-app preview** — images, plain text (Markdown/JSON/CSV), and PDF (open with another app)
 - **Image gallery** — swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background
-- **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via `POST /api/v1/files/{id}/content`
+- **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via the same native multipart helper (`POST /api/v1/files/{id}/content`)
 - **Image rotate** — Rotate (90°) in the preview header, then Save to replace the file on the server (same content endpoint)
 - **Share a copy** — opens the Android share sheet with the decrypted file
 - **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission
 
-Upload and offline files are planned for later releases. Docs/Sheets-style office editors and PDF annotation are out of scope for the mobile MVP.
+Offline files are planned for later releases. Docs/Sheets-style office editors and PDF annotation are out of scope for the mobile MVP.
 
 ## Requirements
 

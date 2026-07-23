@@ -3,11 +3,15 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   RefreshControl,
   StyleSheet,
   Text,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import type { CompositeScreenProps } from "@react-navigation/native";
+import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { api, ApiError } from "../api/client";
 import type { FileItem, FolderItem, SortDir, SortKey, ViewMode } from "../api/types";
@@ -17,16 +21,25 @@ import {
   writeListCache,
   type FolderContentsCache,
 } from "../cache/listCache";
+import { CreateFab } from "../components/CreateFab";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { FolderGridTile, FolderRow } from "../components/FolderRow";
 import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
+import { NewFolderDialog } from "../components/NewFolderDialog";
 import { SortHeader } from "../components/SortHeader";
-import type { RootStackParamList } from "../navigation/types";
+import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
+import { pickAndUploadFiles } from "../utils/uploadFiles";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Folder">;
+type Props = CompositeScreenProps<
+  NativeStackScreenProps<FilesStackParamList, "Folder">,
+  CompositeScreenProps<
+    BottomTabScreenProps<MainTabParamList>,
+    NativeStackScreenProps<RootStackParamList>
+  >
+>;
 
 type ListEntry =
   | { kind: "folder"; item: FolderItem }
@@ -47,6 +60,9 @@ export function FolderScreen({ route, navigation }: Props) {
   const [sort, setSort] = useState<SortKey>("name");
   const [dir, setDir] = useState<SortDir>("asc");
   const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
+  const [folderDialog, setFolderDialog] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState("");
 
   useEffect(() => {
     navigation.setOptions({
@@ -200,13 +216,44 @@ export function FolderScreen({ route, navigation }: Props) {
 
   const showSpinner = loading && entries.length === 0;
 
+  const handleUpload = async () => {
+    setUploading(true);
+    setUploadLabel("Preparing…");
+    try {
+      const uploaded = await pickAndUploadFiles(folderId, (p) => {
+        setUploadLabel(`Uploading ${p.current}/${p.total}: ${p.name}`);
+      });
+      if (uploaded.length > 0) {
+        await load({ soft: true });
+      }
+    } finally {
+      setUploading(false);
+      setUploadLabel("");
+    }
+  };
+
   return (
-    <SafeAreaView style={styles.safe} edges={["bottom"]}>
+    <SafeAreaView style={styles.safe} edges={[]}>
       <ItemActionsSheet
         target={menuTarget}
         onClose={() => setMenuTarget(null)}
         onChanged={() => load({ soft: true })}
       />
+      <NewFolderDialog
+        visible={folderDialog}
+        onCancel={() => setFolderDialog(false)}
+        onCreate={async (name) => {
+          await api.createFolder({ name, parent_id: folderId });
+          setFolderDialog(false);
+          await load({ soft: true });
+        }}
+      />
+      <Modal visible={uploading} transparent animationType="fade">
+        <View style={styles.uploadOverlay}>
+          <ActivityIndicator color={colors.accent} size="large" />
+          <Text style={styles.uploadText}>{uploadLabel || "Uploading…"}</Text>
+        </View>
+      </Modal>
       <SortHeader
         sort={sort}
         dir={dir}
@@ -256,6 +303,7 @@ export function FolderScreen({ route, navigation }: Props) {
           }
         />
       )}
+      <CreateFab onUpload={() => void handleUpload()} onFolder={() => setFolderDialog(true)} />
     </SafeAreaView>
   );
 }
@@ -272,4 +320,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   emptyContainer: { flexGrow: 1 },
+  uploadOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    gap: spacing.md,
+  },
+  uploadText: {
+    color: colors.text,
+    textAlign: "center",
+    fontSize: 14,
+  },
 });

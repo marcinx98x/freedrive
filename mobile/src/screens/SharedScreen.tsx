@@ -52,9 +52,12 @@ export function SharedScreen({ navigation }: Props) {
 
   const onPress = (item: SharedItem) => {
     if (item.item_type === "folder" || item.share?.folder_id) {
-      navigation.navigate("Folder", {
-        folderId: item.item_id || String(item.share.folder_id),
-        title: item.item_name || "Shared folder",
+      navigation.navigate("Files", {
+        screen: "Folder",
+        params: {
+          folderId: item.item_id || String(item.share.folder_id),
+          title: item.item_name || "Shared folder",
+        },
       });
       return;
     }

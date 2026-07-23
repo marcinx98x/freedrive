@@ -3,7 +3,7 @@ import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Icon, type IconName } from "../components/Icon";
-import { FilesScreen } from "../screens/FilesScreen";
+import { FilesStack } from "./FilesStack";
 import { HomeScreen } from "../screens/HomeScreen";
 import { SharedScreen } from "../screens/SharedScreen";
 import { StarredScreen } from "../screens/StarredScreen";
@@ -62,7 +62,7 @@ export function MainTabs() {
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Starred" component={StarredScreen} />
       <Tab.Screen name="Shared" component={SharedScreen} />
-      <Tab.Screen name="Files" component={FilesScreen} />
+      <Tab.Screen name="Files" component={FilesStack} options={{ headerShown: false }} />
     </Tab.Navigator>
   );
 }

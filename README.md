@@ -708,7 +708,11 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Sign in** with server URL, email, password, and email 2FA when enabled
 - **Drive-like dark UI** — bottom tabs (Home, Starred, Shared, Files), pill search bar, list/grid toggle, sort chip
 - **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage bar
+- **Files stack** — Files tab nests My Drive home and Folder screens; Shared can open a folder under that stack
 - **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast
+- **Create FAB** — Upload and New folder on Files / Folder screens
+- **Encrypted upload** — multi-file picker → AES-GCM → cache file → native `expo-file-system` `uploadAsync` multipart to `POST /api/v1/files/upload` (Hermes cannot build Blobs from ArrayBuffer); same helper for content replace
+- **New folder** — `POST /api/v1/folders` from the FAB dialog
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
@@ -716,9 +720,9 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
 - **In-app preview** — images, plain text (Markdown/JSON/CSV), PDF (open with another app)
 - **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors
-- **Edit & save** — text Edit/Save and image Rotate/Save re-encrypt and call `POST /api/v1/files/{id}/content` (no Docs/Sheets clone)
+- **Edit & save** — text Edit/Save and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content` (no Docs/Sheets clone)
 - **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
-- Upload and offline files are planned for later releases
+- Offline files are planned for later releases
 - See [`mobile/README.md`](mobile/README.md) for Expo Go setup and local APK build notes
 
 Quick start:

@@ -1,4 +1,5 @@
 import * as Device from "expo-device";
+import * as FileSystem from "expo-file-system/legacy";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   clearSession,
@@ -233,6 +234,61 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+/** Native multipart upload — avoids Hermes Blob / FormDataPart limitations. */
+async function multipartUploadFromFile(
+  path: string,
+  fileUri: string,
+  parameters: Record<string, string>,
+  retry = true,
+): Promise<FileItem> {
+  const url = await baseUrl();
+  const headers: Record<string, string> = { ...(await deviceHeaders()) };
+  const tokens = await getTokens();
+  if (tokens?.access_token) {
+    headers.Authorization = `Bearer ${tokens.access_token}`;
+  }
+
+  const result = await FileSystem.uploadAsync(`${url}/api/v1${path}`, fileUri, {
+    httpMethod: "POST",
+    uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+    fieldName: "file",
+    mimeType: "application/octet-stream",
+    parameters,
+    headers,
+    sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
+  });
+
+  if (result.status === 401 && retry) {
+    const refreshed = await tryRefresh();
+    if (refreshed === "ok") {
+      return multipartUploadFromFile(path, fileUri, parameters, false);
+    }
+    if (refreshed === "transient") {
+      throw new ApiError("Request timed out — check your connection", 0);
+    }
+    await clearSession();
+    onUnauthorized?.();
+    throw new ApiError("Session expired", 401);
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    let message = `Upload failed (${result.status})`;
+    try {
+      const data = JSON.parse(result.body) as { error?: string };
+      if (data?.error) message = String(data.error);
+    } catch {
+      if (result.body) message = result.body.slice(0, 200);
+    }
+    throw new ApiError(message, result.status);
+  }
+
+  try {
+    return JSON.parse(result.body) as FileItem;
+  } catch {
+    throw new ApiError("Invalid upload response", result.status);
+  }
+}
+
 export const api = {
   login: async (email: string, password: string) => {
     return request<LoginResult>("POST", "/auth/login", { email, password }, { auth: false });
@@ -405,6 +461,9 @@ export const api = {
 
   deleteFolder: (id: string) => request("DELETE", `/folders/${id}`),
 
+  createFolder: (body: { name: string; parent_id?: string | null; color?: string }) =>
+    request<FolderItem>("POST", "/folders", body),
+
   listAllFolders: async (search?: string) => {
     const q = search ? `?search=${encodeURIComponent(search)}` : "";
     const data = await request<{ folders?: FolderItem[] | null }>("GET", `/folders/all${q}`);
@@ -464,45 +523,33 @@ export const api = {
       encryptedUri: string;
     },
   ): Promise<FileItem> => {
-    const doFetch = async (retry: boolean): Promise<FileItem> => {
-      const url = await baseUrl();
-      const headers: Record<string, string> = { ...(await deviceHeaders()) };
-      const tokens = await getTokens();
-      if (tokens?.access_token) {
-        headers.Authorization = `Bearer ${tokens.access_token}`;
-      }
-      const form = new FormData();
-      form.append("file", {
-        uri: opts.encryptedUri,
-        name: opts.name,
-        type: "application/octet-stream",
-      } as unknown as Blob);
-      form.append("name", opts.name);
-      form.append("mime_type", opts.mimeType);
-      form.append("iv", opts.iv);
-      form.append("original_size", String(opts.originalSize));
+    return multipartUploadFromFile(`/files/${fileId}/content`, opts.encryptedUri, {
+      name: opts.name,
+      mime_type: opts.mimeType,
+      iv: opts.iv,
+      original_size: String(opts.originalSize),
+    });
+  },
 
-      const res = await fetchWithTimeout(
-        `${url}/api/v1/files/${fileId}/content`,
-        { method: "POST", headers, body: form },
-        DOWNLOAD_TIMEOUT_MS,
-      );
-      if (res.status === 401 && retry) {
-        const refreshed = await tryRefresh();
-        if (refreshed === "ok") return doFetch(false);
-        if (refreshed === "transient") {
-          throw new ApiError("Request timed out — check your connection", 0);
-        }
-        await clearSession();
-        onUnauthorized?.();
-        throw new ApiError("Session expired", 401);
-      }
-      if (!res.ok) {
-        throw new ApiError(await parseError(res), res.status);
-      }
-      return (await res.json()) as FileItem;
+  /** Create a new encrypted file (POST multipart /files/upload). */
+  uploadFile: async (opts: {
+    name: string;
+    mimeType: string;
+    iv: string;
+    originalSize: number;
+    encryptedUri: string;
+    folderId?: string | null;
+  }): Promise<FileItem> => {
+    const parameters: Record<string, string> = {
+      name: opts.name,
+      mime_type: opts.mimeType,
+      iv: opts.iv,
+      original_size: String(opts.originalSize),
     };
-    return doFetch(true);
+    if (opts.folderId) {
+      parameters.folder_id = opts.folderId;
+    }
+    return multipartUploadFromFile("/files/upload", opts.encryptedUri, parameters);
   },
 
   getCryptoAccount: () => request<CryptoAccount>("GET", "/crypto/account"),
@@ -520,5 +567,12 @@ export const api = {
     request<{ file_id: string; wrapped_file_key: string }>(
       "GET",
       `/files/${fileId}/encryption-key`,
+    ),
+
+  putFileEncryptionKey: (fileId: string, wrapped_file_key: string) =>
+    request<{ file_id: string; wrapped_file_key: string }>(
+      "PUT",
+      `/files/${fileId}/encryption-key`,
+      { wrapped_file_key },
     ),
 };

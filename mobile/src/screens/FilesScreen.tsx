@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -23,20 +24,26 @@ import {
   type FolderContentsCache,
 } from "../cache/listCache";
 import { AppDrawer } from "../components/AppDrawer";
+import { CreateFab } from "../components/CreateFab";
 import { EmptyState } from "../components/EmptyState";
 import { FileGridTile, FileRow } from "../components/FileRow";
 import { ComputerRow, FolderGridTile, FolderRow } from "../components/FolderRow";
 import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
+import { NewFolderDialog } from "../components/NewFolderDialog";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
 import { SortHeader } from "../components/SortHeader";
-import type { MainTabParamList, RootStackParamList } from "../navigation/types";
+import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
+import { pickAndUploadFiles } from "../utils/uploadFiles";
 
 type Props = CompositeScreenProps<
-  BottomTabScreenProps<MainTabParamList, "Files">,
-  NativeStackScreenProps<RootStackParamList>
+  NativeStackScreenProps<FilesStackParamList, "FilesHome">,
+  CompositeScreenProps<
+    BottomTabScreenProps<MainTabParamList, "Files">,
+    NativeStackScreenProps<RootStackParamList>
+  >
 >;
 
 type FilesTab = "my-drive" | "computers";
@@ -93,6 +100,9 @@ export function FilesScreen({ navigation }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
+  const [folderDialog, setFolderDialog] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState("");
   const myDriveLoaded = useRef(false);
   const computersLoaded = useRef(false);
 
@@ -227,7 +237,7 @@ export function FilesScreen({ navigation }: Props) {
   }, [tab, computers, myDriveFolders, myDriveFiles, sort, dir]);
 
   const openFolder = (id: string, title: string) => {
-    navigation.navigate("Folder", { folderId: id, title });
+    navigation.push("Folder", { folderId: id, title });
   };
 
   const renderItem = ({ item }: { item: ListEntry }) => {
@@ -279,6 +289,22 @@ export function FilesScreen({ navigation }: Props) {
 
   const showSpinner = loading && entries.length === 0;
 
+  const handleUpload = async () => {
+    setUploading(true);
+    setUploadLabel("Preparing…");
+    try {
+      const uploaded = await pickAndUploadFiles(null, (p) => {
+        setUploadLabel(`Uploading ${p.current}/${p.total}: ${p.name}`);
+      });
+      if (uploaded.length > 0) {
+        await refreshTab({ soft: true });
+      }
+    } finally {
+      setUploading(false);
+      setUploadLabel("");
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <AppDrawer
@@ -293,6 +319,21 @@ export function FilesScreen({ navigation }: Props) {
         onClose={() => setMenuTarget(null)}
         onChanged={() => refreshTab({ soft: true })}
       />
+      <NewFolderDialog
+        visible={folderDialog}
+        onCancel={() => setFolderDialog(false)}
+        onCreate={async (name) => {
+          await api.createFolder({ name, parent_id: null });
+          setFolderDialog(false);
+          await refreshTab({ soft: true });
+        }}
+      />
+      <Modal visible={uploading} transparent animationType="fade">
+        <View style={styles.uploadOverlay}>
+          <ActivityIndicator color={colors.accent} size="large" />
+          <Text style={styles.uploadText}>{uploadLabel || "Uploading…"}</Text>
+        </View>
+      </Modal>
       <SearchBar
         value={search}
         onChangeText={setSearch}
@@ -392,6 +433,10 @@ export function FilesScreen({ navigation }: Props) {
           }
         />
       )}
+
+      {tab === "my-drive" ? (
+        <CreateFab onUpload={() => void handleUpload()} onFolder={() => setFolderDialog(true)} />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -431,4 +476,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   emptyContainer: { flexGrow: 1 },
+  uploadOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    gap: spacing.md,
+  },
+  uploadText: {
+    color: colors.text,
+    textAlign: "center",
+    fontSize: 14,
+  },
 });

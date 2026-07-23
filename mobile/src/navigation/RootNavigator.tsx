@@ -3,7 +3,6 @@ import { ActivityIndicator, View } from "react-native";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../auth/AuthContext";
-import { FolderScreen } from "../screens/FolderScreen";
 import { FilePreviewScreen } from "../screens/FilePreviewScreen";
 import { LoginScreen } from "../screens/LoginScreen";
 import { RecentScreen } from "../screens/RecentScreen";
@@ -50,11 +49,6 @@ export function RootNavigator() {
         ) : (
           <>
             <Stack.Screen name="Main" component={MainTabs} />
-            <Stack.Screen
-              name="Folder"
-              component={FolderScreen}
-              options={{ headerShown: true }}
-            />
             <Stack.Screen
               name="Search"
               component={SearchScreen}

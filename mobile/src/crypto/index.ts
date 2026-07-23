@@ -237,6 +237,26 @@ export async function encryptFileBytes(
   return { ciphertext, ivB64: bytesToBase64(iv) };
 }
 
+/** Generate a new file key, encrypt plaintext, wrap key for the server, cache locally. */
+export async function prepareNewEncryptedFile(plaintext: Uint8Array): Promise<{
+  ciphertext: Uint8Array;
+  ivB64: string;
+  rawKey: Uint8Array;
+  wrappedFileKey: string;
+}> {
+  if (!isUnlocked() || !uekRaw) {
+    throw new Error("Sign out and sign in again with your password to upload encrypted files.");
+  }
+  const rawKey = randomBytes(32);
+  const { ciphertext, ivB64 } = await encryptFileBytes(plaintext, rawKey);
+  const wrappedFileKey = await wrapRawKey(rawKey, uekRaw);
+  return { ciphertext, ivB64, rawKey, wrappedFileKey };
+}
+
+export async function cacheFileKey(fileId: string, rawKey: Uint8Array): Promise<void> {
+  await storeFileKeyB64(fileId, arrayBufferToBase64Url(rawKey));
+}
+
 export async function decryptDownloadedFile(fileId: string, ivB64: string, data: ArrayBuffer): Promise<Uint8Array> {
   if (!ivB64) {
     // Unencrypted payload (legacy)
