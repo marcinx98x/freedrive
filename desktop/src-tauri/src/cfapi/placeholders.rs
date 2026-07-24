@@ -8,16 +8,15 @@ use std::path::{Path, PathBuf};
 use windows::core::{HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, NTSTATUS, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
-    CfConvertToPlaceholder, CfCreatePlaceholders, CfExecute, CfUpdatePlaceholder,
-    CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE, CF_CONVERT_FLAG_MARK_IN_SYNC,
-    CF_CREATE_FLAG_NONE,
+    CfConvertToPlaceholder, CfCreatePlaceholders, CfDehydratePlaceholder, CfExecute,
+    CfUpdatePlaceholder, CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE,
+    CF_CONVERT_FLAG_MARK_IN_SYNC, CF_CREATE_FLAG_NONE, CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA,
     CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
     CF_OPERATION_PARAMETERS_0_7, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
     CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
 };
-use windows::Win32::Storage::CloudFilters::CF_FS_METADATA;
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
     FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -292,6 +291,84 @@ pub fn ensure_cloud_placeholder(dir: &Path, item_type: &str, remote_id: &str) ->
                 e
             ));
             Ok(())
+        }
+    }
+}
+
+/// Free local plaintext for a hydrated cloud file (Google Drive “free up space”).
+/// `length = -1` dehydrates from `starting_offset` through EOF.
+pub fn dehydrate_placeholder_file(path: &Path) -> AppResult<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let wide = path_to_wide(path);
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        .map_err(|e| AppError::msg(format!("open file for CfDehydratePlaceholder: {}", e)))?
+    };
+
+    let result = unsafe {
+        CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAG_NONE, None)
+            .map_err(|e| AppError::msg(format!("CfDehydratePlaceholder: {}", e)))
+    };
+
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    result
+}
+
+/// Best-effort walk of My Drive: dehydrate every regular file so Stream mode reclaims disk.
+pub fn dehydrate_my_drive_tree(my_drive: &Path) -> u32 {
+    if !my_drive.is_dir() {
+        return 0;
+    }
+    let mut freed = 0u32;
+    dehydrate_tree_recursive(my_drive, &mut freed);
+    freed
+}
+
+fn dehydrate_tree_recursive(dir: &Path, freed: &mut u32) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            sync_log(format!(
+                "cfapi: dehydrate walk failed {}: {}",
+                dir.display(),
+                e
+            ));
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            dehydrate_tree_recursive(&path, freed);
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        match dehydrate_placeholder_file(&path) {
+            Ok(()) => {
+                *freed += 1;
+                sync_log(format!("cfapi: dehydrated {}", path.display()));
+            }
+            Err(e) => {
+                sync_log(format!(
+                    "cfapi: dehydrate skipped {}: {}",
+                    path.display(),
+                    e
+                ));
+            }
         }
     }
 }

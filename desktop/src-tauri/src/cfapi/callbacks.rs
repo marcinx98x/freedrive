@@ -1,17 +1,19 @@
 use crate::api::ApiClient;
 use crate::cfapi::placeholders::{
     build_placeholder_infos, complete_fetch_placeholders, count_existing_children,
-    create_named_folder_placeholder, ensure_cloud_placeholder, filter_new_entries,
-    is_duplicate_placeholder_error, mark_directory_populated, transfer_or_complete_fetch,
-    transfer_placeholders_via_callback, PlaceholderEntry, MY_DRIVE_FOLDER_NAME,
+    create_named_folder_placeholder, dehydrate_placeholder_file, ensure_cloud_placeholder,
+    filter_new_entries, is_duplicate_placeholder_error, mark_directory_populated,
+    transfer_or_complete_fetch, transfer_placeholders_via_callback, PlaceholderEntry,
+    MY_DRIVE_FOLDER_NAME,
 };
 use crate::cfapi::util::parse_file_identity;
 use crate::db::DbHandle;
 use crate::error::AppResult;
 use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_directory_updated};
 use crate::my_drive::{
-    fetch_folder_contents, hydrate_file, is_under_my_drive, relative_path_from_sync_root,
-    resolve_folder_id_for_fetch, resolve_my_drive_root_id, FolderIdSource,
+    clear_hydrate_cache_for_file, ensure_hydrated_plaintext, fetch_folder_contents,
+    is_under_my_drive, relative_path_from_sync_root, resolve_folder_id_for_fetch,
+    resolve_my_drive_root_id, FolderIdSource,
 };
 use crate::sync::log::sync_log;
 use serde::Serialize;
@@ -28,6 +30,9 @@ use windows::Win32::Storage::CloudFilters::{
 };
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
+/// Large My Drive opens (download + decrypt) can take many minutes — do not use the
+/// short placeholder timeout. Google Drive for desktop likewise waits for full hydrate.
+const HYDRATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 
 struct CallbackContext {
     sync_root: PathBuf,
@@ -444,10 +449,10 @@ fn handle_fetch_data(
     let ctx = with_context(|c| (c.db.clone(), c.api.clone()))
         .ok_or_else(|| "CfAPI context not initialized".to_string())?;
 
-    let bytes = crate::blocking::run_async_future_with_timeout(
-        CALLBACK_TIMEOUT,
+    let cache_path = crate::blocking::run_async_future_with_timeout(
+        HYDRATE_TIMEOUT,
         async move {
-            hydrate_file(&ctx.1, &ctx.0, &remote_id)
+            ensure_hydrated_plaintext(&ctx.1, &ctx.0, &remote_id)
                 .await
                 .map_err(|e| e.to_string())
         },
@@ -457,13 +462,21 @@ fn handle_fetch_data(
     let offset = fetch.RequiredFileOffset;
     let length = fetch.RequiredLength as usize;
     let offset_usize = offset as usize;
-    if offset_usize > bytes.len() {
+
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(&cache_path).map_err(|e| e.to_string())?;
+    let file_len = file.metadata().map_err(|e| e.to_string())?.len() as usize;
+    if offset_usize > file_len {
         return Err("fetch offset beyond file".into());
     }
-    let end = (offset_usize + length).min(bytes.len());
-    let chunk = &bytes[offset_usize..end];
+    let end = (offset_usize + length).min(file_len);
+    let need = end - offset_usize;
+    file.seek(SeekFrom::Start(offset as u64))
+        .map_err(|e| e.to_string())?;
+    let mut chunk = vec![0u8; need];
+    file.read_exact(&mut chunk).map_err(|e| e.to_string())?;
 
-    unsafe { transfer_data(info, offset, chunk.len() as i64, chunk, STATUS_SUCCESS)? };
+    unsafe { transfer_data(info, offset, chunk.len() as i64, &chunk, STATUS_SUCCESS)? };
     Ok(())
 }
 
@@ -528,10 +541,56 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
     if !path_is_under_my_drive(&sync_root, &full) {
         return Ok(());
     }
-    cfapi_callback_log(&format!("NOTIFY_FILE_CLOSE {}", full.display()));
+
+    let remote_id = unsafe {
+        let identity = std::slice::from_raw_parts(
+            info.FileIdentity as *const u8,
+            info.FileIdentityLength as usize,
+        );
+        parse_file_identity(identity)
+            .filter(|(ty, _)| ty == "file")
+            .map(|(_, id)| id)
+    }
+    .or_else(|| {
+        let relative = relative_path_from_sync_root(&sync_root, &full)?;
+        let conn = db.lock().ok()?;
+        crate::db::my_drive_get_placeholder(&conn, &relative)
+            .ok()
+            .flatten()
+            .filter(|(_, item_type)| item_type == "file")
+            .map(|(id, _)| id)
+    });
+
+    let stream_mode = crate::sync::engine::sync_mode_is_stream(&db);
+    cfapi_callback_log(&format!(
+        "NOTIFY_FILE_CLOSE {} stream={} remote={:?}",
+        full.display(),
+        stream_mode,
+        remote_id
+    ));
+
     tauri::async_runtime::spawn(async move {
         if let Err(e) = crate::my_drive::upload_my_drive_path(&api, &db, &full).await {
             cfapi_callback_log(&format!("NOTIFY_FILE_CLOSE upload failed: {}", e));
+        }
+        if !stream_mode {
+            return;
+        }
+        if let Some(ref id) = remote_id {
+            clear_hydrate_cache_for_file(id);
+        }
+        // Brief delay so editors release the handle before dehydrate.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        match dehydrate_placeholder_file(&full) {
+            Ok(()) => cfapi_callback_log(&format!(
+                "NOTIFY_FILE_CLOSE dehydrated {}",
+                full.display()
+            )),
+            Err(e) => cfapi_callback_log(&format!(
+                "NOTIFY_FILE_CLOSE dehydrate skipped {}: {}",
+                full.display(),
+                e
+            )),
         }
     });
     Ok(())

@@ -66,10 +66,16 @@ Rust client: [`desktop/src-tauri/src/api/client.rs`](../desktop/src-tauri/src/ap
 
 ## Windows Explorer (CfAPI)
 
-On Windows 10 1809+ the desktop app registers a **Cloud Files** sync root at `%USERPROFILE%\FreeDrive\` after sign-in. Explorer shows **FreeDrive** in the navigation pane and under **This PC**. The `My Drive\` subfolder lists server content as cloud placeholders; files hydrate on open via `GET /api/v1/files/{id}/download`.
+On Windows 10 1809+ the desktop app registers a **Cloud Files** sync root at `%USERPROFILE%\FreeDrive\` after sign-in. Explorer shows **FreeDrive** in the navigation pane and under **This PC**.
+
+**My Drive sync modes** (Preferences → FreeDrive; default **stream**):
+
+- **Stream:** `My Drive\` shows cloud placeholders only. Opening a file downloads/decrypts via `GET /api/v1/files/{id}/download` into a short-lived hydrate cache; closing uploads edits and dehydrates the placeholder so it does not keep filling the disk. Switching Mirror → Stream dehydrates existing local copies.
+- **Mirror:** poll downloads the full My Drive tree under `%USERPROFILE%\FreeDrive\My Drive\` for offline use.
 
 - Registration: `desktop/src-tauri/src/cfapi/`
 - Placeholder cache: SQLite table `my_drive_placeholders` in `sync.db`
+- Hydrate cache: `%APPDATA%\FreeDrive\hydrate_cache`
 - Requires the desktop app to be running while browsing placeholders
 
 ## Versioning

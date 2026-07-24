@@ -681,7 +681,7 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Parallel sync** — up to 6 concurrent uploads and 6 concurrent downloads (initial folder scan, pending queue, My Drive mirror polling)
 - **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider connects in the background and reconnects automatically before opening the folder
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
-- **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **stream** keeps cloud placeholders (download on open), **mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files)
+- **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **Stream (default)** keeps cloud placeholders (download on open, upload on close, then free local space); **Mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files)
 - **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder); prefer NSIS over MSI for this cleanup
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
@@ -736,6 +736,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **File actions** — open, share a decrypted copy, download, star/unstar, and move files to Bin from item menus
 - **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
 - **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON), spreadsheets (`.xlsx` / `.xls` / `.csv`), PDF (open with another app)
+- **Large media** — images/videos over **100 MiB** are not opened in-app (Save / Share / Cancel instead) to avoid OOM crashes; smaller files may decrypt via native AES-GCM on disk
 - **Spreadsheet editor** — SheetJS grid with formula bar and sheet tabs; Edit / Save uploads via `POST /api/v1/files/{id}/content`
 - **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors
 - **Video gallery** — swipe between videos in the same loaded list (active player only; safe-area padding above the system nav bar)

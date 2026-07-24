@@ -8,6 +8,7 @@ import {
   decryptDownloadedFile,
   encryptFileBytes,
   ensureFileKey,
+  rawKeyToStandardBase64,
 } from "../crypto";
 import type { RootStackParamList } from "../navigation/types";
 import { isSpreadsheetFile } from "./sheetCodec";
@@ -22,9 +23,22 @@ type DownloadsNativeModule = {
   ): Promise<void>;
   failDownload(notificationId: number, message: string): Promise<void>;
   saveBase64(fileName: string, mimeType: string, base64: string): Promise<string>;
+  saveFromPath?(fileName: string, mimeType: string, sourcePath: string): Promise<string>;
+  decryptAesGcmFile?(
+    encryptedPath: string,
+    outputPath: string,
+    keyB64: string,
+    ivB64: string,
+  ): Promise<string>;
 };
 
 const downloadsModule = NativeModules.FreeDriveDownloads as DownloadsNativeModule | undefined;
+
+/** Above this size, in-memory JS decrypt (ArrayBuffer + base64) will OOM on mobile. */
+export const JS_DECRYPT_MAX_BYTES = 48 * 1024 * 1024;
+
+/** Safe upper bound for in-app image/video preview on typical phones. Larger → Save/Share only. */
+export const IN_APP_MEDIA_PREVIEW_MAX_BYTES = 100 * 1024 * 1024;
 
 type PreviewNav = {
   navigate: (
@@ -43,6 +57,8 @@ export type GalleryItem = {
   name: string;
   mime_type: string;
   iv: string;
+  size?: number;
+  encrypted_size?: number;
 };
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -56,6 +72,37 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "_") || "file";
+}
+
+function fileSizeHint(
+  file: Pick<FileItem, "size" | "encrypted_size"> | { size?: number; encrypted_size?: number },
+): number {
+  const size = typeof file.size === "number" ? file.size : 0;
+  const enc = typeof file.encrypted_size === "number" ? file.encrypted_size : 0;
+  return Math.max(size, enc);
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (n >= 1024 * 1024) return `${Math.round(n / (1024 * 1024))} MB`;
+  return `${Math.round(n / 1024)} KB`;
+}
+
+export function canPrefetchMedia(file: { size?: number; encrypted_size?: number }): boolean {
+  const size = fileSizeHint(file);
+  if (size <= 0) return true;
+  return size <= IN_APP_MEDIA_PREVIEW_MAX_BYTES;
+}
+
+export function isTooLargeForInAppPreview(
+  file: Pick<FileItem, "size" | "encrypted_size"> | { size?: number; encrypted_size?: number },
+): boolean {
+  const size = fileSizeHint(file);
+  return size > IN_APP_MEDIA_PREVIEW_MAX_BYTES;
+}
+
+function hasNativeDecrypt(): boolean {
+  return Platform.OS === "android" && typeof downloadsModule?.decryptAesGcmFile === "function";
 }
 
 export function isImageFile(file: Pick<FileItem, "name" | "mime_type">): boolean {
@@ -95,11 +142,46 @@ function isPdf(mime: string, name: string): boolean {
   return mime.toLowerCase().includes("pdf") || name.toLowerCase().endsWith(".pdf");
 }
 
-export async function downloadAndDecrypt(file: Pick<FileItem, "id" | "name" | "iv" | "mime_type">): Promise<{
-  uri: string;
-  mime: string;
-  bytes: Uint8Array;
-}> {
+async function downloadAndDecryptViaNative(
+  file: Pick<FileItem, "id" | "name" | "iv" | "mime_type"> & {
+    size?: number;
+    encrypted_size?: number;
+  },
+): Promise<{ uri: string; mime: string; bytes: Uint8Array }> {
+  const decrypt = downloadsModule?.decryptAesGcmFile;
+  if (!decrypt) throw new Error("Native decrypt is unavailable");
+
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) throw new Error("Cache directory unavailable");
+
+  const encPath = `${dir}fd_enc_${file.id}.bin`;
+  const plainPath = `${dir}fd_${file.id}_${safeFileName(file.name)}`;
+
+  try {
+    const downloaded = await api.downloadEncryptedToFile(file.id, encPath);
+    const iv = downloaded.iv || file.iv;
+    const mime = downloaded.mime || file.mime_type || "application/octet-stream";
+
+    if (!iv) {
+      // Legacy unencrypted: move ciphertext path to plaintext path.
+      await FileSystem.deleteAsync(plainPath, { idempotent: true }).catch(() => {});
+      await FileSystem.moveAsync({ from: encPath, to: plainPath });
+      return { uri: plainPath, mime, bytes: new Uint8Array(0) };
+    }
+
+    const key = await ensureFileKey(file.id);
+    await FileSystem.deleteAsync(plainPath, { idempotent: true }).catch(() => {});
+    await decrypt(encPath, plainPath, rawKeyToStandardBase64(key), iv);
+    return { uri: plainPath, mime, bytes: new Uint8Array(0) };
+  } finally {
+    await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
+  }
+}
+
+async function downloadAndDecryptInMemory(
+  file: Pick<FileItem, "id" | "name" | "iv" | "mime_type">,
+  needBytes: boolean,
+): Promise<{ uri: string; mime: string; bytes: Uint8Array }> {
   const downloaded = await api.downloadEncrypted(file.id);
   const plain = await decryptDownloadedFile(file.id, downloaded.iv || file.iv, downloaded.data);
   const mime = downloaded.mime || file.mime_type || "application/octet-stream";
@@ -109,7 +191,47 @@ export async function downloadAndDecrypt(file: Pick<FileItem, "id" | "name" | "i
   await FileSystem.writeAsStringAsync(path, bytesToBase64(plain), {
     encoding: FileSystem.EncodingType.Base64,
   });
-  return { uri: path, mime, bytes: plain };
+  return { uri: path, mime, bytes: needBytes ? plain : new Uint8Array(0) };
+}
+
+export async function downloadAndDecrypt(
+  file: Pick<FileItem, "id" | "name" | "iv" | "mime_type"> & {
+    size?: number;
+    encrypted_size?: number;
+  },
+  opts?: { needBytes?: boolean },
+): Promise<{
+  uri: string;
+  mime: string;
+  bytes: Uint8Array;
+}> {
+  const needBytes = opts?.needBytes === true;
+  const size = fileSizeHint(file);
+  const nativeOk = hasNativeDecrypt();
+
+  if (size > JS_DECRYPT_MAX_BYTES && !nativeOk) {
+    throw new Error(
+      `This file is too large to open in the app (${formatBytes(size)}). ` +
+        "Please open it on desktop, or update FreeDrive to a build with large-file support.",
+    );
+  }
+
+  if (needBytes && size > JS_DECRYPT_MAX_BYTES) {
+    throw new Error(
+      `This file is too large to edit or preview as text (${formatBytes(size)}).`,
+    );
+  }
+
+  // Prefer disk + native AES for anything above the JS-safe limit, and for all
+  // video (even smaller) so gallery / open never spikes the Hermes heap.
+  const preferNative =
+    nativeOk && (size > JS_DECRYPT_MAX_BYTES || isVideoFile(file) || (!needBytes && size > 8 * 1024 * 1024));
+
+  if (preferNative) {
+    return downloadAndDecryptViaNative(file);
+  }
+
+  return downloadAndDecryptInMemory(file, needBytes);
 }
 
 /** Encrypt plaintext and POST as the new content for an existing file. */
@@ -154,40 +276,64 @@ export async function writePlainCache(
   return path;
 }
 
+function toGalleryItem(f: FileItem): GalleryItem {
+  return {
+    id: f.id,
+    name: f.name,
+    mime_type: f.mime_type,
+    iv: f.iv,
+    size: f.size,
+    encrypted_size: f.encrypted_size,
+  };
+}
+
 export async function openFile(
   file: FileItem,
   navigation?: PreviewNav,
   opts?: OpenFileOptions,
 ): Promise<void> {
   try {
-    const { uri, mime, bytes } = await downloadAndDecrypt(file);
+    if (
+      (isVideoFile(file) || isImageFile(file)) &&
+      isTooLargeForInAppPreview(file)
+    ) {
+      const sizeLabel = formatBytes(fileSizeHint(file));
+      Alert.alert(
+        "File too large to preview",
+        `This file is ${sizeLabel}. Save it to your device or share it instead of opening it in the app.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Share",
+            onPress: () => {
+              void downloadFileToShare(file);
+            },
+          },
+          {
+            text: "Save",
+            onPress: () => {
+              void downloadFileToDevice(file);
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    const wantsText = isText(file.mime_type, file.name);
+    const { uri, mime, bytes } = await downloadAndDecrypt(file, {
+      needBytes: wantsText,
+    });
 
     if (navigation && (isImage(mime) || isImageFile(file))) {
       const gallerySrc = (opts?.gallery ?? []).filter(isImageFile);
       const gallery: GalleryItem[] =
         gallerySrc.length > 0
-          ? gallerySrc.map((f) => ({
-              id: f.id,
-              name: f.name,
-              mime_type: f.mime_type,
-              iv: f.iv,
-            }))
-          : [
-              {
-                id: file.id,
-                name: file.name,
-                mime_type: file.mime_type,
-                iv: file.iv,
-              },
-            ];
+          ? gallerySrc.map(toGalleryItem)
+          : [toGalleryItem(file)];
       let index = gallery.findIndex((g) => g.id === file.id);
       if (index < 0) {
-        gallery.unshift({
-          id: file.id,
-          name: file.name,
-          mime_type: file.mime_type,
-          iv: file.iv,
-        });
+        gallery.unshift(toGalleryItem(file));
         index = 0;
       }
       navigation.navigate("FilePreview", {
@@ -206,28 +352,11 @@ export async function openFile(
       const gallerySrc = (opts?.gallery ?? []).filter(isVideoFile);
       const gallery: GalleryItem[] =
         gallerySrc.length > 0
-          ? gallerySrc.map((f) => ({
-              id: f.id,
-              name: f.name,
-              mime_type: f.mime_type,
-              iv: f.iv,
-            }))
-          : [
-              {
-                id: file.id,
-                name: file.name,
-                mime_type: file.mime_type,
-                iv: file.iv,
-              },
-            ];
+          ? gallerySrc.map(toGalleryItem)
+          : [toGalleryItem(file)];
       let index = gallery.findIndex((g) => g.id === file.id);
       if (index < 0) {
-        gallery.unshift({
-          id: file.id,
-          name: file.name,
-          mime_type: file.mime_type,
-          iv: file.iv,
-        });
+        gallery.unshift(toGalleryItem(file));
         index = 0;
       }
       navigation.navigate("FilePreview", {
@@ -253,7 +382,7 @@ export async function openFile(
       return;
     }
 
-    if (navigation && isText(mime, file.name)) {
+    if (navigation && wantsText) {
       const text = new TextDecoder().decode(bytes);
       navigation.navigate("FilePreview", {
         title: file.name,
@@ -341,12 +470,16 @@ export async function downloadFileToDevice(file: FileItem): Promise<void> {
     await requestNotificationPermissionIfNeeded();
     notificationId = await downloadsModule.beginDownload(file.name);
 
-    const { mime, bytes } = await downloadAndDecrypt(file);
-    const savedUri = await downloadsModule.saveBase64(
-      file.name,
-      mime,
-      bytesToBase64(bytes),
-    );
+    const { uri, mime } = await downloadAndDecrypt(file);
+    let savedUri: string;
+    if (typeof downloadsModule.saveFromPath === "function") {
+      savedUri = await downloadsModule.saveFromPath(file.name, mime, uri);
+    } else {
+      const b64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      savedUri = await downloadsModule.saveBase64(file.name, mime, b64);
+    }
     await downloadsModule.completeDownload(notificationId, file.name, mime, savedUri);
     notificationId = undefined;
   } catch (err) {

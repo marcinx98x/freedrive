@@ -1250,164 +1250,140 @@ impl ApiClient {
 
 
     pub async fn download_file(
-
         &self,
-
         file_id: &str,
-
         key_b64url: Option<&str>,
-
     ) -> AppResult<Vec<u8>> {
+        let tmp = crate::auth_store::data_dir()?
+            .join("tmp")
+            .join(format!("dl_{}.bin", uuid::Uuid::new_v4()));
+        if let Some(parent) = tmp.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.download_file_to_path(file_id, key_b64url, &tmp).await?;
+        let bytes = tokio::fs::read(&tmp).await?;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        Ok(bytes)
+    }
 
+    /// Download ciphertext to disk (streamed), decrypt, write plaintext to `dest`.
+    /// Avoids buffering the whole HTTP body as a second in-memory copy during transfer.
+    pub async fn download_file_to_path(
+        &self,
+        file_id: &str,
+        key_b64url: Option<&str>,
+        dest: &Path,
+    ) -> AppResult<()> {
         let mut auth_retry = false;
-
         let mut rl_retries = 2u32;
 
-
-
         loop {
-
-            match self.download_file_once(file_id, key_b64url).await {
-
-                Ok(bytes) => return Ok(bytes),
-
+            match self
+                .download_file_to_path_once(file_id, key_b64url, dest)
+                .await
+            {
+                Ok(()) => return Ok(()),
                 Err(e) => {
-
                     let msg = e.to_string();
-
                     if !auth_retry && msg.contains("session expired") {
-
                         if self.try_refresh().await? {
-
                             auth_retry = true;
-
                             continue;
-
                         }
-
                     }
-
                     if rl_retries > 0 && msg.contains("rate limit") {
-
                         rl_retries -= 1;
-
                         tokio::time::sleep(Duration::from_millis(400)).await;
-
                         continue;
-
                     }
-
                     return Err(e);
-
                 }
-
             }
-
         }
-
     }
 
-
-
-    async fn download_file_once(
-
+    async fn download_file_to_path_once(
         &self,
-
         file_id: &str,
-
         key_b64url: Option<&str>,
-
-    ) -> AppResult<Vec<u8>> {
+        dest: &Path,
+    ) -> AppResult<()> {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
 
         let url = self.api_url(&format!("/files/{}/download", file_id));
-
         let (access_token, http) = {
-
             let inner = self.inner.read();
-
             (inner.access_token.clone(), inner.http.clone())
-
         };
-
         let res = http
-
             .get(&url)
-
             .header("Authorization", format!("Bearer {}", access_token))
-
             .send()
-
             .await?;
 
-
-
         if res.status() == reqwest::StatusCode::UNAUTHORIZED {
-
             if self.try_refresh().await? {
-
                 return Err(AppError::msg("session expired"));
-
             }
-
             return Err(AppError::msg("session expired"));
-
         }
-
-
 
         if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-
             return Err(AppError::msg("rate limit exceeded"));
-
         }
-
-
 
         if !res.status().is_success() {
-
             return Err(AppError::msg("download failed"));
-
         }
-
-
 
         let iv_header = res
-
             .headers()
-
             .get("x-file-iv")
-
             .and_then(|v| v.to_str().ok())
-
             .unwrap_or("")
-
             .to_string();
 
-        let bytes = res.bytes().await?.to_vec();
-
-
-
-        if iv_header.is_empty() {
-
-            return Ok(bytes);
-
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
         }
 
+        let enc_path = dest.with_extension("enc.tmp");
+        let _ = tokio::fs::remove_file(&enc_path).await;
+        let _ = tokio::fs::remove_file(dest).await;
 
+        {
+            let mut file = tokio::fs::File::create(&enc_path).await?;
+            let mut stream = res.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| AppError::msg(e.to_string()))?;
+                file.write_all(&chunk).await?;
+            }
+            file.flush().await?;
+        }
 
-        let key_b64url = key_b64url
+        let result = async {
+            if iv_header.is_empty() {
+                tokio::fs::rename(&enc_path, dest).await?;
+                return Ok(());
+            }
 
-            .ok_or_else(|| AppError::msg("missing encryption key"))?;
+            let key_b64url =
+                key_b64url.ok_or_else(|| AppError::msg("missing encryption key"))?;
+            let key = crypto::key_from_b64url(key_b64url)?;
+            let iv = crypto::iv_from_base64(&iv_header)?;
+            let ciphertext = tokio::fs::read(&enc_path).await?;
+            let plaintext = crypto::decrypt_file(&ciphertext, &key, &iv)?;
+            drop(ciphertext);
+            tokio::fs::write(dest, &plaintext).await?;
+            drop(plaintext);
+            Ok::<(), AppError>(())
+        }
+        .await;
 
-        let key = crypto::key_from_b64url(key_b64url)?;
-
-        let iv = crypto::iv_from_base64(&iv_header)?;
-
-        crypto::decrypt_file(&bytes, &key, &iv)
-
+        let _ = tokio::fs::remove_file(&enc_path).await;
+        result
     }
-
-
 
     async fn resumable_stream_once(
         &self,

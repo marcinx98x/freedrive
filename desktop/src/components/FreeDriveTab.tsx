@@ -3,7 +3,7 @@ import { api } from "../api/tauri";
 import type { SyncMode } from "../types";
 
 export function FreeDriveTab() {
-  const [mode, setMode] = useState<SyncMode>("mirror");
+  const [mode, setMode] = useState<SyncMode>("stream");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -11,7 +11,7 @@ export function FreeDriveTab() {
   useEffect(() => {
     api
       .getSyncMode()
-      .then((value) => setMode(value === "stream" ? "stream" : "mirror"))
+      .then((value) => setMode(value === "mirror" ? "mirror" : "stream"))
       .catch((err) => setError(String(err)))
       .finally(() => setLoading(false));
   }, []);
@@ -68,11 +68,12 @@ export function FreeDriveTab() {
             onChange={() => handleChange("stream")}
           />
           <div className="sync-mode-card-body">
-            <span className="sync-mode-title">Stream files</span>
+            <span className="sync-mode-title">Stream files (default)</span>
             <ul className="sync-mode-features">
-              <li>Store all My Drive files in the cloud only.</li>
-              <li>Access files from My Drive in File Explorer as cloud placeholders.</li>
-              <li>Files download when you open them.</li>
+              <li>Keep My Drive in the cloud only — no full folder download.</li>
+              <li>Files appear as cloud placeholders in File Explorer.</li>
+              <li>A file downloads when you open it, then frees disk space after you close it.</li>
+              <li>Edits upload back to the server when you save/close.</li>
             </ul>
           </div>
         </label>
@@ -89,9 +90,9 @@ export function FreeDriveTab() {
           <div className="sync-mode-card-body">
             <span className="sync-mode-title">Mirror files</span>
             <ul className="sync-mode-features">
-              <li>Keep a full local copy of My Drive under FreeDrive.</li>
-              <li>Access files from the My Drive folder on your computer.</li>
-              <li>New and changed files on the server are downloaded automatically.</li>
+              <li>Keep a full local copy of My Drive under FreeDrive (uses disk space).</li>
+              <li>Access My Drive files offline from your computer.</li>
+              <li>New and changed files on the server download automatically.</li>
             </ul>
           </div>
         </label>
@@ -102,8 +103,8 @@ export function FreeDriveTab() {
           i
         </span>
         <p>
-          Streaming uses less disk space. Mirror mode keeps My Drive files offline in{" "}
-          ~/FreeDrive/My Drive.
+          Stream works like Google Drive for desktop streaming: open to download, close to free
+          space. Choose Mirror only if you want the entire My Drive folder stored locally.
         </p>
       </div>
     </div>

@@ -2734,11 +2734,15 @@ pub fn get_sync_mode(db: &DbHandle) -> String {
         .ok()
         .and_then(|c| config_get(&c, SYNC_MODE_KEY).ok().flatten())
         .filter(|v| v == "stream" || v == "mirror")
-        .unwrap_or_else(|| "mirror".to_string())
+        .unwrap_or_else(|| "stream".to_string())
 }
 
 pub fn sync_mode_is_mirror(db: &DbHandle) -> bool {
     get_sync_mode(db) == "mirror"
+}
+
+pub fn sync_mode_is_stream(db: &DbHandle) -> bool {
+    !sync_mode_is_mirror(db)
 }
 
 pub fn set_sync_mode(db: &DbHandle, mode: &str) -> AppResult<()> {

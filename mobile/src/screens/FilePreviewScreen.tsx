@@ -25,7 +25,9 @@ import type { RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { SheetEditorView, loadAndSerializeSheet } from "../components/SheetEditorView";
 import {
+  canPrefetchMedia,
   downloadAndDecrypt,
+  isTooLargeForInAppPreview,
   saveEncryptedContent,
   writePlainCache,
   type GalleryItem,
@@ -133,6 +135,13 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   const ensureLoaded = useCallback(
     async (item: GalleryItem) => {
       if (uriById[item.id] || loadingRef.current.has(item.id)) return;
+      if (isTooLargeForInAppPreview(item)) {
+        setErrorById((prev) => ({
+          ...prev,
+          [item.id]: "File too large to preview in the app. Use Save or Share from the file list.",
+        }));
+        return;
+      }
       loadingRef.current.add(item.id);
       setLoadingIds((prev) => ({ ...prev, [item.id]: true }));
       try {
@@ -163,12 +172,20 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   const prefetchNeighbors = useCallback(
     (index: number) => {
       if (!paging) return;
-      for (const i of [index - 1, index, index + 1]) {
+      // Only load the current page for large media; neighbor prefetch of multi-hundred-MB
+      // videos can OOM or saturate disk/network while the user is still watching one clip.
+      const indexes =
+        mode === "video"
+          ? [index]
+          : [index - 1, index, index + 1];
+      for (const i of indexes) {
         const item = gallery[i];
-        if (item) void ensureLoaded(item);
+        if (!item) continue;
+        if (i !== index && !canPrefetchMedia(item)) continue;
+        void ensureLoaded(item);
       }
     },
-    [ensureLoaded, gallery, paging],
+    [ensureLoaded, gallery, mode, paging],
   );
 
   useEffect(() => {

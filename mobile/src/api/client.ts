@@ -614,6 +614,66 @@ export const api = {
     return doFetch(true);
   },
 
+  /**
+   * Download ciphertext straight to a cache file (native I/O — avoids loading
+   * multi-GB bodies into the JS heap). Response headers come from the download result.
+   */
+  downloadEncryptedToFile: async (
+    fileId: string,
+    destPath: string,
+  ): Promise<{
+    uri: string;
+    iv: string;
+    mime: string;
+    originalSize: number;
+  }> => {
+    const doDownload = async (retry: boolean) => {
+      const url = await baseUrl();
+      const headers: Record<string, string> = { ...(await deviceHeaders()) };
+      const tokens = await getTokens();
+      if (tokens?.access_token) {
+        headers.Authorization = `Bearer ${tokens.access_token}`;
+      }
+      await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
+      const result = await FileSystem.downloadAsync(
+        `${url}/api/v1/files/${fileId}/download`,
+        destPath,
+        { headers },
+      );
+      const status = result.status ?? 0;
+      if (status === 401 && retry) {
+        await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
+        const refreshed = await tryRefresh();
+        if (refreshed === "ok") return doDownload(false);
+        if (refreshed === "transient") {
+          throw new ApiError("Request timed out — check your connection", 0);
+        }
+        await clearSession();
+        onUnauthorized?.();
+        throw new ApiError("Session expired", 401);
+      }
+      if (status < 200 || status >= 300) {
+        await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
+        throw new ApiError(`Download failed (${status})`, status);
+      }
+      const hdrs = result.headers || {};
+      const header = (name: string) => {
+        const lower = name.toLowerCase();
+        for (const [k, v] of Object.entries(hdrs)) {
+          if (k.toLowerCase() === lower) return String(v);
+        }
+        return "";
+      };
+      return {
+        uri: result.uri,
+        iv: header("X-File-IV"),
+        mime: header("X-File-Mime") || "application/octet-stream",
+        originalSize: Number(header("X-Original-Size") || 0),
+      };
+    };
+    return doDownload(true);
+  },
+
   /** Replace encrypted blob for an existing file (POST multipart /files/{id}/content). */
   updateFileContent: async (
     fileId: string,

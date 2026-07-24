@@ -22,6 +22,33 @@ if (-not (Test-Path $Fdm)) {
 robocopy $RepoMobile $Fdm /E /XD node_modules android .expo dist /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
 
+# Keep native Downloads module sources in sync without a full expo prebuild.
+$NativeJava = Join-Path $Fdm "android\app\src\main\java\com\freedrive\mobile"
+$PluginDir = Join-Path $RepoMobile "plugins\with-freedrive-downloads"
+if (Test-Path $NativeJava) {
+    foreach ($name in @("DownloadsModule.kt", "DownloadsPackage.kt")) {
+        $src = Join-Path $PluginDir $name
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $NativeJava $name) -Force
+        }
+    }
+}
+
+# Keep Android versionCode in sync with app.json (prebuild only runs once).
+$AppJsonPath = Join-Path $Fdm "app.json"
+$GradlePath = Join-Path $Fdm "android\app\build.gradle"
+if ((Test-Path $AppJsonPath) -and (Test-Path $GradlePath)) {
+    $appJson = Get-Content $AppJsonPath -Raw | ConvertFrom-Json
+    $vc = $appJson.expo.android.versionCode
+    if ($vc) {
+        $gradle = Get-Content $GradlePath -Raw
+        $updated = [regex]::Replace($gradle, 'versionCode\s+\d+', "versionCode $vc")
+        if ($updated -ne $gradle) {
+            Set-Content -Path $GradlePath -Value $updated -NoNewline
+        }
+    }
+}
+
 if (-not (Test-Path (Join-Path $Fdm "node_modules"))) {
     Push-Location $Fdm
     npm ci

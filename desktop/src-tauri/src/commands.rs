@@ -794,7 +794,26 @@ pub fn get_sync_mode(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn set_sync_mode(state: State<'_, AppState>, mode: String) -> Result<(), String> {
-    crate::sync::engine::set_sync_mode(&state.db, &mode).map_err(|e: AppError| e.to_string())?;
+    let normalized = if mode == "stream" { "stream" } else { "mirror" };
+    crate::sync::engine::set_sync_mode(&state.db, normalized).map_err(|e: AppError| e.to_string())?;
+
+    if normalized == "stream" {
+        // Reclaim disk from a previous Mirror: dehydrate My Drive + drop hydrate_cache.
+        tauri::async_runtime::spawn(async move {
+            crate::my_drive::clear_all_hydrate_cache();
+            #[cfg(windows)]
+            {
+                if let Ok(my_drive) = crate::auth_store::my_drive_path(false) {
+                    let freed = crate::cfapi::dehydrate_my_drive_tree(&my_drive);
+                    crate::sync::log::sync_log(format!(
+                        "switched to stream: dehydrated {} My Drive file(s)",
+                        freed
+                    ));
+                }
+            }
+        });
+    }
+
     if let Ok(engine) = state.sync_engine() {
         let eng = engine.clone();
         tauri::async_runtime::spawn(async move {

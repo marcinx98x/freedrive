@@ -8,8 +8,8 @@ use crate::db::{
 };
 use crate::error::{AppError, AppResult};
 use crate::my_drive::{
-    fetch_folder_contents, hydrate_file, is_under_my_drive, relative_path_from_sync_root,
-    resolve_my_drive_root_id,
+    ensure_hydrated_plaintext, fetch_folder_contents, is_under_my_drive,
+    relative_path_from_sync_root, resolve_my_drive_root_id,
 };
 use crate::sync::log::sync_log;
 use crate::sync::DOWNLOAD_CONCURRENCY;
@@ -135,11 +135,11 @@ async fn mirror_file_if_needed(
     if !needs {
         return Ok(());
     }
-    let bytes = hydrate_file(api, db, &file.id).await?;
+    let cached = ensure_hydrated_plaintext(api, db, &file.id).await?;
     if let Some(parent) = local_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(&local_path, &bytes)?;
+    std::fs::copy(&cached, &local_path)?;
     Ok(())
 }
 

@@ -198,6 +198,35 @@ pub async fn hydrate_file(
     db: &DbHandle,
     file_id: &str,
 ) -> AppResult<Vec<u8>> {
+    let path = ensure_hydrated_plaintext(api, db, file_id).await?;
+    Ok(tokio::fs::read(path).await?)
+}
+
+/// Google Drive for desktop–style open: download once to a local plaintext cache,
+/// then serve byte ranges from disk (Explorer / default video player).
+pub async fn ensure_hydrated_plaintext(
+    api: &ApiClient,
+    db: &DbHandle,
+    file_id: &str,
+) -> AppResult<PathBuf> {
+    let cache_path = hydrate_cache_path(file_id)?;
+    if cache_path.is_file() {
+        let meta = std::fs::metadata(&cache_path)?;
+        if meta.len() > 0 {
+            return Ok(cache_path);
+        }
+    }
+
+    let lock = hydrate_file_lock(file_id);
+    let _guard = lock.lock().await;
+
+    if cache_path.is_file() {
+        let meta = std::fs::metadata(&cache_path)?;
+        if meta.len() > 0 {
+            return Ok(cache_path);
+        }
+    }
+
     let user_id = crate::auth_store::load_auth()
         .ok()
         .flatten()
@@ -210,7 +239,55 @@ pub async fn hydrate_file(
         .ok_or_else(|| AppError::msg("not authenticated"))?;
     let key_b64url =
         crate::account_crypto::resolve_file_key(api, db, &user_id, file_id).await?;
-    api.download_file(file_id, Some(&key_b64url)).await
+
+    if let Some(parent) = cache_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    api.download_file_to_path(file_id, Some(&key_b64url), &cache_path)
+        .await?;
+    Ok(cache_path)
+}
+
+fn hydrate_cache_path(file_id: &str) -> AppResult<PathBuf> {
+    let safe: String = file_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(crate::auth_store::data_dir()?
+        .join("hydrate_cache")
+        .join(safe))
+}
+
+/// Drop cached plaintext so the next open re-downloads (and Stream mode frees disk).
+pub fn clear_hydrate_cache_for_file(file_id: &str) {
+    if let Ok(path) = hydrate_cache_path(file_id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+pub fn clear_all_hydrate_cache() {
+    let Ok(dir) = crate::auth_store::data_dir().map(|d| d.join("hydrate_cache")) else {
+        return;
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn hydrate_file_lock(file_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(file_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
 }
 
 fn resolve_encryption_key(db: &DbHandle, file_id: &str) -> AppResult<String> {

@@ -36,6 +36,8 @@ export type RootStackParamList = {
       name: string;
       mime_type: string;
       iv: string;
+      size?: number;
+      encrypted_size?: number;
     }>;
     index?: number;
   };

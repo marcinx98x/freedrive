@@ -24,15 +24,16 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Profile menu** — avatar, Sign out, storage bar (`{used} of {total} used`) from `/me/storage`, Manage storage link to the web UI
 - **Devices** — appears as `Mobile (…)` and keeps a stable installation ID, so re-login updates the same entry in the account Devices list instead of creating a duplicate
 - **File actions** — item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
-- **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
+- **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android; larger files download to disk and decrypt via native AES-GCM (avoids JS heap OOM)
 - **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON), spreadsheets (`.xlsx` / `.xls` / `.csv`), and PDF (open with another app)
+- **Large media limit** — images/videos **over 100 MiB** are not opened in the in-app player (avoids crashes); tapping shows Save / Share / Cancel instead
 - **Spreadsheet editor** — SheetJS grid with formula bar and sheet tabs; Edit / Save re-encrypts and uploads via `POST /api/v1/files/{id}/content` (same path as text)
-- **Image gallery** — swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background
+- **Image gallery** — swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background (skips files over the preview size limit)
 - **Video gallery** — same swipe between videos in the loaded list; only the active page mounts the player; bottom controls respect Android safe-area insets
 - **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via the same native multipart helper (`POST /api/v1/files/{id}/content`)
 - **Image rotate** — Rotate (90°) in the preview header, then Save to replace the file on the server (same content endpoint)
 - **Share a copy** — opens the Android share sheet with the decrypted file
-- **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission
+- **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); stream copy from decrypted path when available; ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission
 - **Status notifications** — no persistent “app is running” icon (not appropriate for a Drive client); status-bar presence only for downloads and while a video is playing (media session / native controls)
 
 Offline files are planned for later releases. Full Docs/Photos parity and PDF annotation remain out of scope for the mobile MVP (Sheets-style grid for xlsx/csv is included).

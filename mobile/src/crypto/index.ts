@@ -266,3 +266,8 @@ export async function decryptDownloadedFile(fileId: string, ivB64: string, data:
   const iv = base64ToUint8(ivB64);
   return decryptFileBytes(data, key, iv);
 }
+
+/** Standard Base64 for native AES (Android Cipher). */
+export function rawKeyToStandardBase64(key: Uint8Array): string {
+  return bytesToBase64(key);
+}

@@ -25,7 +25,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Device identity** — reports the computer hostname and keeps a stable installation ID, so signing in again updates the same entry in the server's Devices list instead of creating a duplicate
 - **Non-blocking sign-in** — crypto unlock, sync restore, and Explorer (CfAPI) start in the background so login does not block the UI
 - **System tray** — minimize to tray, pause/resume sync from the menu
-- **Windows Explorer integration** (Windows 10 1809+) — open `%USERPROFILE%\FreeDrive` in File Explorer (address bar or **Open Drive folder** in the app) while the desktop client is running; **My Drive** shows server folders/files as cloud placeholders (download on open)
+- **Windows Explorer integration** (Windows 10 1809+) — open `%USERPROFILE%\FreeDrive` in File Explorer while the desktop client is running; **My Drive** defaults to **Stream** (placeholders; download on open, free space on close). Optional **Mirror** keeps a full local copy.
 
 ## Prerequisites
 
@@ -131,9 +131,12 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 
 - Sign in and keep the desktop app running (system tray).
 - Open File Explorer and go to `%USERPROFILE%\FreeDrive` (or use **Open Drive folder** in the app).
-- Open **My Drive** inside that folder to browse cloud content. Files download when you open them.
+- Open **My Drive** inside that folder to browse cloud content.
+- **Stream (default):** placeholders only — a file downloads when you open it, uploads on save/close, then frees local disk space again (like Google Drive for desktop streaming). The whole My Drive folder is **not** kept on disk.
+- **Mirror (optional):** Preferences → FreeDrive → Mirror files keeps a full local copy under `~/FreeDrive/My Drive` (uses disk space; good for offline).
 - Requires **Windows 10 1809+**. CfAPI connects synchronously on startup / login (`connect-first` recovery if Windows already has the sync root registered).
 - Integration state lives in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_finalize_complete`). Updating or reinstalling the app does not reset a working registration.
+- Hydrate cache (temporary plaintext while a file is open): `%APPDATA%\FreeDrive\hydrate_cache` — cleared when Stream frees space after close.
 - If you previously used a build that registered Explorer sidebar entries, run **Unregister Explorer integration** in app settings (or `unregister_explorer_integration`) once to clear stale shell registry from older builds.
 
 #### CfAPI recovery (`0x80070057` / “cloud file provider is not running”)
@@ -193,8 +196,9 @@ App state uses **`%APPDATA%\FreeDrive`**, not `%APPDATA%\com.freedrive.desktop` 
 | `%APPDATA%/FreeDrive/sync.db` | Sync state database |
 | `%APPDATA%/FreeDrive/auth.json` | Session tokens |
 | `%APPDATA%/FreeDrive/sync.log` | Sync debug log |
+| `%APPDATA%/FreeDrive/hydrate_cache/` | Temporary plaintext while opening My Drive files (Stream) |
 | `%USERPROFILE%/FreeDrive/` | CfAPI sync root (Windows Explorer provider) |
-| `%USERPROFILE%/FreeDrive/My Drive/` | My Drive view — server folders/files as placeholders |
+| `%USERPROFILE%/FreeDrive/My Drive/` | My Drive view — placeholders in Stream; full copies in Mirror |
 
 ## License
 

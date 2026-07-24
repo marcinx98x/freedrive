@@ -229,13 +229,14 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
 
           {step === 4 && (
             <>
-              <h2 className="wizard-title">Make important files available for offline use</h2>
+              <h2 className="wizard-title">My Drive uses Stream by default</h2>
               <p className="wizard-subtitle">
-                Your files are otherwise only available when you have an Internet connection
+                Files stay in the cloud until you open them — they do not fill your disk
               </p>
               <p style={{ marginTop: 24, color: "var(--fd-text-secondary)", lineHeight: 1.6 }}>
-                To make Drive files available offline, right-click on the file or folder in
-                File Explorer and choose <strong>Available offline</strong>.
+                Opening a file downloads it temporarily; closing it uploads any edits and frees
+                local space again. Prefer Preferences → FreeDrive → <strong>Mirror files</strong>{" "}
+                only if you want a full offline copy of My Drive.
               </p>
             </>
           )}

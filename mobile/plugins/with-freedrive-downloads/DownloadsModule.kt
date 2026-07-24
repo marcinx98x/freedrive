@@ -17,12 +17,19 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class DownloadsModule(
   reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
+
+  private val ioExecutor = Executors.newFixedThreadPool(2)
 
   override fun getName() = "FreeDriveDownloads"
 
@@ -137,6 +144,114 @@ class DownloadsModule(
     }
   }
 
+  /** Copy an already-decrypted local file into shared Downloads (no base64 / no full RAM load). */
+  @ReactMethod
+  fun saveFromPath(fileName: String, mimeType: String, sourcePath: String, promise: Promise) {
+    ioExecutor.execute {
+      try {
+        val source = File(stripFileUri(sourcePath))
+        if (!source.isFile) {
+          promise.reject("DOWNLOAD_SAVE_FAILED", "Source file is missing", null)
+          return@execute
+        }
+        val safeName = sanitizeFileName(fileName)
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          saveWithMediaStoreStream(safeName, mimeType, source)
+        } else {
+          saveLegacyStream(safeName, source)
+        }
+        promise.resolve(result)
+      } catch (error: Exception) {
+        promise.reject("DOWNLOAD_SAVE_FAILED", error.message ?: "Could not save file", error)
+      }
+    }
+  }
+
+  /**
+   * Stream AES-256-GCM decrypt from [encryptedPath] to [outputPath].
+   * Matches @noble/ciphers GCM: 12-byte IV, 16-byte tag appended to ciphertext.
+   * Peak RAM is the I/O buffer (~256 KiB), not the file size.
+   */
+  @ReactMethod
+  fun decryptAesGcmFile(
+    encryptedPath: String,
+    outputPath: String,
+    keyB64: String,
+    ivB64: String,
+    promise: Promise
+  ) {
+    ioExecutor.execute {
+      var outFile: File? = null
+      try {
+        val keyBytes = decodeFlexibleBase64(keyB64)
+        val ivBytes = decodeFlexibleBase64(ivB64)
+        if (keyBytes.size != 16 && keyBytes.size != 24 && keyBytes.size != 32) {
+          promise.reject("DECRYPT_FAILED", "Invalid AES key length (${keyBytes.size})", null)
+          return@execute
+        }
+        if (ivBytes.isEmpty()) {
+          promise.reject("DECRYPT_FAILED", "Missing IV", null)
+          return@execute
+        }
+
+        val encFile = File(stripFileUri(encryptedPath))
+        if (!encFile.isFile) {
+          promise.reject("DECRYPT_FAILED", "Encrypted file is missing", null)
+          return@execute
+        }
+        if (encFile.length() < 16L) {
+          promise.reject("DECRYPT_FAILED", "Encrypted file is too short", null)
+          return@execute
+        }
+
+        outFile = File(stripFileUri(outputPath))
+        outFile.parentFile?.mkdirs()
+        if (outFile.exists() && !outFile.delete()) {
+          promise.reject("DECRYPT_FAILED", "Could not replace output file", null)
+          return@execute
+        }
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+          Cipher.DECRYPT_MODE,
+          SecretKeySpec(keyBytes, "AES"),
+          GCMParameterSpec(128, ivBytes)
+        )
+
+        FileInputStream(encFile).use { input ->
+          FileOutputStream(outFile).use { output ->
+            val buffer = ByteArray(256 * 1024)
+            while (true) {
+              val n = input.read(buffer)
+              if (n < 0) break
+              val chunk = cipher.update(buffer, 0, n)
+              if (chunk != null && chunk.isNotEmpty()) {
+                output.write(chunk)
+              }
+            }
+            val tail = cipher.doFinal()
+            if (tail != null && tail.isNotEmpty()) {
+              output.write(tail)
+            }
+            output.flush()
+          }
+        }
+
+        promise.resolve(outFile.absolutePath)
+      } catch (error: Exception) {
+        try {
+          outFile?.delete()
+        } catch (_: Exception) {
+        }
+        promise.reject(
+          "DECRYPT_FAILED",
+          error.message ?: "Could not decrypt file",
+          error
+        )
+      }
+    }
+  }
+
   private fun ensureChannels() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = reactApplicationContext.getSystemService(NotificationManager::class.java) ?: return
@@ -166,16 +281,7 @@ class DownloadsModule(
     bytes: ByteArray
   ): String {
     val resolver = reactApplicationContext.contentResolver
-    val values = ContentValues().apply {
-      put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-      put(
-        MediaStore.Downloads.MIME_TYPE,
-        mimeType.ifBlank { "application/octet-stream" }
-      )
-      put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-      put(MediaStore.Downloads.IS_PENDING, 1)
-    }
-
+    val values = pendingDownloadValues(fileName, mimeType)
     val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
       ?: throw IllegalStateException("Android could not create the download")
 
@@ -184,11 +290,7 @@ class DownloadsModule(
         output.write(bytes)
         output.flush()
       } ?: throw IllegalStateException("Android could not open the download")
-
-      val completed = ContentValues().apply {
-        put(MediaStore.Downloads.IS_PENDING, 0)
-      }
-      resolver.update(uri, completed, null, null)
+      markDownloadComplete(uri)
       return uri.toString()
     } catch (error: Exception) {
       resolver.delete(uri, null, null)
@@ -196,21 +298,96 @@ class DownloadsModule(
     }
   }
 
+  private fun saveWithMediaStoreStream(
+    fileName: String,
+    mimeType: String,
+    source: File
+  ): String {
+    val resolver = reactApplicationContext.contentResolver
+    val values = pendingDownloadValues(fileName, mimeType)
+    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+      ?: throw IllegalStateException("Android could not create the download")
+
+    try {
+      resolver.openOutputStream(uri, "w")?.use { output ->
+        FileInputStream(source).use { input ->
+          input.copyTo(output, 256 * 1024)
+        }
+        output.flush()
+      } ?: throw IllegalStateException("Android could not open the download")
+      markDownloadComplete(uri)
+      return uri.toString()
+    } catch (error: Exception) {
+      resolver.delete(uri, null, null)
+      throw error
+    }
+  }
+
+  private fun pendingDownloadValues(fileName: String, mimeType: String): ContentValues {
+    return ContentValues().apply {
+      put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+      put(
+        MediaStore.Downloads.MIME_TYPE,
+        mimeType.ifBlank { "application/octet-stream" }
+      )
+      put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+      put(MediaStore.Downloads.IS_PENDING, 1)
+    }
+  }
+
+  private fun markDownloadComplete(uri: Uri) {
+    val completed = ContentValues().apply {
+      put(MediaStore.Downloads.IS_PENDING, 0)
+    }
+    reactApplicationContext.contentResolver.update(uri, completed, null, null)
+  }
+
   @Suppress("DEPRECATION")
   private fun saveLegacy(fileName: String, bytes: ByteArray): String {
+    val target = prepareLegacyTarget(fileName)
+    FileOutputStream(target).use { output ->
+      output.write(bytes)
+      output.flush()
+    }
+    return target.toURI().toString()
+  }
+
+  @Suppress("DEPRECATION")
+  private fun saveLegacyStream(fileName: String, source: File): String {
+    val target = prepareLegacyTarget(fileName)
+    FileInputStream(source).use { input ->
+      FileOutputStream(target).use { output ->
+        input.copyTo(output, 256 * 1024)
+      }
+    }
+    return target.toURI().toString()
+  }
+
+  @Suppress("DEPRECATION")
+  private fun prepareLegacyTarget(fileName: String): File {
     val downloads = Environment.getExternalStoragePublicDirectory(
       Environment.DIRECTORY_DOWNLOADS
     )
     if (!downloads.exists() && !downloads.mkdirs()) {
       throw IllegalStateException("Could not create the Downloads folder")
     }
+    return uniqueFile(downloads, fileName)
+  }
 
-    val target = uniqueFile(downloads, fileName)
-    FileOutputStream(target).use { output ->
-      output.write(bytes)
-      output.flush()
-    }
-    return target.toURI().toString()
+  private fun stripFileUri(path: String): String {
+    if (!path.startsWith("file:")) return path
+    val parsed = Uri.parse(path).path
+    return parsed ?: path.removePrefix("file://")
+  }
+
+  private fun decodeFlexibleBase64(value: String): ByteArray {
+    val trimmed = value.trim()
+    val standard = trimmed
+      .replace('-', '+')
+      .replace('_', '/')
+    val pad = (4 - standard.length % 4) % 4
+    val padded = standard + "=".repeat(pad)
+    return Base64.decode(padded, Base64.DEFAULT)
   }
 
   private fun uniqueFile(directory: File, fileName: String): File {
