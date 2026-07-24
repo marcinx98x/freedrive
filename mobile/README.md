@@ -1,22 +1,44 @@
-# FreeDrive Mobile
+﻿# FreeDrive Mobile (MVP)
 
-Android-first Expo / React Native client for [FreeDrive](https://github.com/marcinx98x/freedrive). Part of the monorepo (`mobile/`); server lives in the repo root.
+React Native + Expo client for [FreeDrive](https://github.com/marcinx98x/freedrive). Android-first. Sign in to your self-hosted server and browse My Drive, Computers, Starred, Shared, Recent, and Bin.
+
+Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo root (`cmd/freedrive`, `internal/`).
 
 ## Features
 
-- Sign in (server URL, email/password, 2FA) with SecureStore session and stable device ID
-- Drive UI: Home / Starred / Shared / Files; portrait bottom tabs; landscape NavRail; drawer (Recent, Bin, Settings, Help)
-- Files: My Drive | Computers, folders, list/grid, search, paginated lists, Upload / New folder
-- Encrypted open/upload (AES-GCM); previews for images, video, text, PDF
-- Image/video galleries (swipe in the current list); text edit and image rotate + save
-- Share sheet; Android Downloads via MediaStore + status notifications (download / video playback — no persistent “app running” icon)
+- **Sign in** ÔÇö server URL, email, password, and email 2FA when enabled
+- **Secure session** ÔÇö tokens in SecureStore, profile cache in AsyncStorage (supports large avatar data-URLs), auto-refresh on 401
+- **Bottom tabs** ÔÇö Home, Starred, Shared, Files (with active pill indicator) on phone portrait (and tablet portrait)
+- **Landscape NavRail** ÔÇö when width > height: narrow left rail (menu Ôëí, Create `+`, then Home / Starred / Shared / Files vertically centered like Google Drive); bottom tabs hidden; Create FAB hidden (rail `+` Ôćĺ Upload / Folder); hamburger on the rail, not in the search bar
+- **Files stack** ÔÇö Files tab hosts My Drive home + nested Folder screens (Drive-like); Shared can deep-link into a folder under Files
+- **Files** ÔÇö My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
+- **Grid tiles** ÔÇö square previews (`aspectRatio: 1`); column count scales with content width so landscape tiles stay phone-sized
+- **Create FAB** ÔÇö Upload and New folder on Files / Folder (camera stub reserved); FAB respects safe-area insets
+- **Upload** ÔÇö multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then native `FileSystem.uploadAsync` multipart (`POST /api/v1/files/upload`) ÔÇö avoids Hermes Blob / FormDataPart limits
+- **New folder** ÔÇö dialog Ôćĺ `POST /api/v1/folders` in the current folder (or My Drive root)
+- **Drawer** ÔÇö hamburger slides in Recent, Bin, Settings, Help, and storage usage
+- **Search** ÔÇö search files by name from the top bar
+- **Branding** ÔÇö same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
+- **User avatar** ÔÇö photo from `avatar_url` on `GET /api/v1/me`, or initials fallback
+- **Devices** ÔÇö appears as `Mobile (ÔÇŽ)` and keeps a stable installation ID, so re-login updates the same entry in the account Devices list instead of creating a duplicate
+- **File actions** ÔÇö item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
+- **Client-side decryption** ÔÇö account and per-file keys sync from the server so encrypted files can be opened on Android
+- **In-app preview** ÔÇö images, plain text (Markdown/JSON/CSV), and PDF (open with another app)
+- **Image gallery** ÔÇö swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background
+- **Text edit** ÔÇö Edit / Save on text previews; content is re-encrypted and uploaded via the same native multipart helper (`POST /api/v1/files/{id}/content`)
+- **Image rotate** ÔÇö Rotate (90┬░) in the preview header, then Save to replace the file on the server (same content endpoint)
+- **Share a copy** ÔÇö opens the Android share sheet with the decrypted file
+- **Download** ÔÇö native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing ÔÇťDownloadingÔÇŽÔÇŁ status bar notification, then tappable ÔÇťDownload completeÔÇŁ; Android 13+ asks for notification permission
+
+Offline files are planned for later releases. Docs/Sheets-style office editors and PDF annotation are out of scope for the mobile MVP.
 
 ## Requirements
 
 - Node.js 20+
-- Android SDK + JDK 17 (for APK builds)
+- Expo Go on Android (same WiÔÇĹFi as the server, or a public HTTPS URL)
+- For APK builds: Android SDK + JDK 17
 
-## Development
+## Setup (Expo Go)
 
 ```bash
 cd mobile
@@ -24,19 +46,53 @@ npm install
 npm start
 ```
 
-Sign in with your FreeDrive server URL (e.g. `http://192.168.x.x:8080`).
+Scan the QR code with Expo Go.
+
+## Sign-in
+
+1. Enter your FreeDrive server URL (e.g. `https://drive.example.com` or `http://192.168.x.x:8080`)
+2. Email + password
+3. Complete email 2FA if enabled
+
+## Scripts
 
 ```bash
-npm run typecheck
-node scripts/generate-assets.mjs   # icon/splash from desktop logo
+npm start          # Expo dev server
+npm run android    # open Android
+npm run typecheck  # tsc --noEmit
+node scripts/generate-assets.mjs   # regenerate icon/splash from desktop logo
 ```
 
-## Build APK (Windows)
+## Build release APK
 
-Always build from the short path `C:\fdm` (not long `Desktop\…` paths). Output: `mobile\dist\FreeDrive-1.0.0.apk`.
+**Canonical procedure (Windows):** always build from `C:\fdm`, copy to `mobile\dist\FreeDrive-1.0.0.apk`. Do not build from `Desktop\Projekty\...` (CMake MAX_PATH).
+
+### Routine rebuild (TS/UI changes, ~1ÔÇô5 min)
 
 ```powershell
 powershell -File mobile\scripts\build-apk.ps1
 ```
 
-Use `-Clean` only for a first build or when native config changes (`app.json` plugins, new native modules). Routine TS/UI rebuilds do not need `expo prebuild`.
+Manual steps (same as the script):
+
+```powershell
+robocopy "C:\Users\marci\Desktop\Projekty\freedrive-master\mobile" "C:\fdm" /E /XD node_modules android .expo dist
+$env:CI = "1"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot"
+cd C:\fdm\android
+.\gradlew.bat assembleRelease
+Copy-Item "C:\fdm\android\app\build\outputs\apk\release\app-release.apk" "C:\Users\marci\Desktop\Projekty\freedrive-master\mobile\dist\FreeDrive-1.0.0.apk" -Force
+```
+
+Do **not** run `expo prebuild` on every rebuild ÔÇö only when `C:\fdm\android` is missing or **native** config changed (`app.json` plugins, new Expo native module such as `expo-image-manipulator`, or `plugins/with-freedrive-downloads/`).
+
+### First build or native changes only
+
+```powershell
+powershell -File mobile\scripts\build-apk.ps1 -Clean
+```
+
+Or after syncing to `C:\fdm`: `npx expo prebuild --platform android`, then `gradlew assembleRelease`.
+
+APK output for install: `mobile\dist\FreeDrive-1.0.0.apk` (debug-signed unless you configure a release keystore).
