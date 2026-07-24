@@ -9,6 +9,7 @@ interface FolderRowProps {
   folder: FolderItem;
   onPress: () => void;
   onMenuPress?: () => void;
+  columns?: number;
 }
 
 export function FolderRow({ folder, onPress, onMenuPress }: FolderRowProps) {
@@ -59,9 +60,9 @@ export function ComputerRow({ computer, onPress, onMenuPress }: ComputerRowProps
   );
 }
 
-export function FolderGridTile({ folder, onPress, onMenuPress }: FolderRowProps) {
+export function FolderGridTile({ folder, onPress, onMenuPress, columns = 2 }: FolderRowProps) {
   return (
-    <Pressable style={styles.tile} onPress={onPress}>
+    <Pressable style={[styles.tile, { width: `${100 / columns}%` }]} onPress={onPress}>
       <View style={styles.tilePreview}>
         <Icon name="folder" size={44} color={colors.folder} />
         <Pressable style={styles.tileMenu} onPress={onMenuPress} hitSlop={8}>
@@ -112,11 +113,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   tile: {
-    width: "47%",
+    paddingHorizontal: spacing.xs,
     marginBottom: spacing.md,
   },
   tilePreview: {
-    height: 110,
+    width: "100%",
+    aspectRatio: 1,
     borderRadius: radii.md,
     backgroundColor: colors.surfaceElevated,
     alignItems: "center",

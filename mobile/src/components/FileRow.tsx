@@ -10,6 +10,8 @@ interface FileRowProps {
   subtitle?: string;
   onPress?: () => void;
   onMenuPress?: () => void;
+  /** Grid column count — sets tile width so last-row items stay square-sized. */
+  columns?: number;
 }
 
 function iconFor(mime: string): { bg: string; name: IconName } {
@@ -50,10 +52,16 @@ export function FileRow({ file, subtitle, onPress, onMenuPress }: FileRowProps) 
   );
 }
 
-export function FileGridTile({ file, subtitle, onPress, onMenuPress }: FileRowProps) {
+export function FileGridTile({
+  file,
+  subtitle,
+  onPress,
+  onMenuPress,
+  columns = 2,
+}: FileRowProps) {
   const icon = iconFor(file.mime_type);
   return (
-    <Pressable style={styles.tile} onPress={onPress}>
+    <Pressable style={[styles.tile, { width: `${100 / columns}%` }]} onPress={onPress}>
       <View style={[styles.tilePreview, { backgroundColor: icon.bg }]}>
         <Icon name={icon.name} size={40} color="#FFFFFF" />
         <Pressable style={styles.tileMenu} onPress={onMenuPress} hitSlop={8}>
@@ -108,11 +116,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   tile: {
-    width: "47%",
+    paddingHorizontal: spacing.xs,
     marginBottom: spacing.md,
   },
   tilePreview: {
-    height: 110,
+    width: "100%",
+    aspectRatio: 1,
     borderRadius: radii.md,
     alignItems: "center",
     justifyContent: "center",

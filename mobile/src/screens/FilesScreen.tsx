@@ -33,6 +33,9 @@ import { NewFolderDialog } from "../components/NewFolderDialog";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
 import { SortHeader } from "../components/SortHeader";
+import { useRegisterCreateHandlers } from "../create/CreateActionsContext";
+import { useGridColumns } from "../hooks/useGridColumns";
+import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
@@ -97,6 +100,8 @@ export function FilesScreen({ navigation }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [sort, setSort] = useState<SortKey>("name");
   const [dir, setDir] = useState<SortDir>("asc");
+  const isWide = useWideLayout();
+  const gridCols = useGridColumns();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
@@ -256,6 +261,7 @@ export function FilesScreen({ navigation }: Props) {
         return (
           <FolderGridTile
             folder={item.item}
+            columns={gridCols}
             onPress={() => openFolder(item.item.id, item.item.name)}
             onMenuPress={() => setMenuTarget({ kind: "folder", item: item.item })}
           />
@@ -273,6 +279,7 @@ export function FilesScreen({ navigation }: Props) {
       return (
         <FileGridTile
           file={item.item}
+          columns={gridCols}
           onPress={() => openFile(item.item, navigation, { gallery: myDriveFiles })}
           onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
         />
@@ -289,7 +296,7 @@ export function FilesScreen({ navigation }: Props) {
 
   const showSpinner = loading && entries.length === 0;
 
-  const handleUpload = async () => {
+  const handleUpload = useCallback(async () => {
     setUploading(true);
     setUploadLabel("Preparing…");
     try {
@@ -303,16 +310,27 @@ export function FilesScreen({ navigation }: Props) {
       setUploading(false);
       setUploadLabel("");
     }
-  };
+  }, [refreshTab]);
+
+  const openFolderDialog = useCallback(() => setFolderDialog(true), []);
+
+  useRegisterCreateHandlers({
+    onUpload: () => {
+      void handleUpload();
+    },
+    onFolder: openFolderDialog,
+  });
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <AppDrawer
-        visible={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        onNavigate={(route) => navigation.navigate(route)}
-        onSettings={() => setProfileOpen(true)}
-      />
+      {!isWide ? (
+        <AppDrawer
+          visible={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onNavigate={(route) => navigation.navigate(route)}
+          onSettings={() => setProfileOpen(true)}
+        />
+      ) : null}
       <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
       <ItemActionsSheet
         target={menuTarget}
@@ -341,7 +359,7 @@ export function FilesScreen({ navigation }: Props) {
           if (search.trim()) navigation.navigate("Search", { query: search.trim() });
         }}
         onAvatarPress={() => setProfileOpen(true)}
-        onMenuPress={() => setDrawerOpen(true)}
+        onMenuPress={isWide ? undefined : () => setDrawerOpen(true)}
       />
 
       <View style={styles.tabs}>
@@ -400,11 +418,11 @@ export function FilesScreen({ navigation }: Props) {
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
       ) : (
         <FlatList
-          key={viewMode === "grid" && tab === "my-drive" ? "grid" : "list"}
+          key={viewMode === "grid" && tab === "my-drive" ? `grid-${gridCols}` : "list"}
           data={entries}
           keyExtractor={(item) => `${item.kind}-${item.item.id}`}
           renderItem={renderItem}
-          numColumns={viewMode === "grid" && tab === "my-drive" ? 2 : 1}
+          numColumns={viewMode === "grid" && tab === "my-drive" ? gridCols : 1}
           columnWrapperStyle={
             viewMode === "grid" && tab === "my-drive" ? styles.gridRow : undefined
           }
@@ -434,7 +452,7 @@ export function FilesScreen({ navigation }: Props) {
         />
       )}
 
-      {tab === "my-drive" ? (
+      {tab === "my-drive" && !isWide ? (
         <CreateFab onUpload={() => void handleUpload()} onFolder={() => setFolderDialog(true)} />
       ) : null}
     </SafeAreaView>
@@ -473,7 +491,7 @@ const styles = StyleSheet.create({
   },
   gridRow: {
     paddingHorizontal: spacing.lg,
-    justifyContent: "space-between",
+    flexDirection: "row",
   },
   emptyContainer: { flexGrow: 1 },
   uploadOverlay: {

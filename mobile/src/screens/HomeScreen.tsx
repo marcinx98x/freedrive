@@ -28,6 +28,8 @@ import { Icon } from "../components/Icon";
 import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
+import { useGridColumns } from "../hooks/useGridColumns";
+import { useWideLayout } from "../hooks/useWideLayout";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, radii, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
@@ -111,6 +113,8 @@ function activityLabel(action: string): string {
 }
 
 export function HomeScreen({ navigation }: Props) {
+  const isLandscape = useWideLayout();
+  const gridCols = useGridColumns();
   const [tab, setTab] = useState<HomeTab>("suggested");
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -243,12 +247,14 @@ export function HomeScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <AppDrawer
-        visible={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        onNavigate={(route) => navigation.navigate(route)}
-        onSettings={() => setProfileOpen(true)}
-      />
+      {!isLandscape ? (
+        <AppDrawer
+          visible={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onNavigate={(route) => navigation.navigate(route)}
+          onSettings={() => setProfileOpen(true)}
+        />
+      ) : null}
       <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
       <ItemActionsSheet
         target={menuTarget}
@@ -262,7 +268,7 @@ export function HomeScreen({ navigation }: Props) {
           if (search.trim()) navigation.navigate("Search", { query: search.trim() });
         }}
         onAvatarPress={() => setProfileOpen(true)}
-        onMenuPress={() => setDrawerOpen(true)}
+        onMenuPress={isLandscape ? undefined : () => setDrawerOpen(true)}
       />
 
       <View style={styles.tabs}>
@@ -291,7 +297,7 @@ export function HomeScreen({ navigation }: Props) {
           <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
         ) : tab === "suggested" ? (
           <FlatList
-            key={viewMode}
+            key={`grid-${viewMode}-${gridCols}`}
             data={files}
             keyExtractor={(item) => item.id}
             ListHeaderComponent={suggestedHeader}
@@ -299,6 +305,7 @@ export function HomeScreen({ navigation }: Props) {
               viewMode === "grid" ? (
                 <FileGridTile
                   file={item}
+                  columns={gridCols}
                   subtitle={suggestionReason(item)}
                   onPress={() => openFile(item, navigation, { gallery: files })}
                   onMenuPress={() => setMenuTarget({ kind: "file", item })}
@@ -312,7 +319,7 @@ export function HomeScreen({ navigation }: Props) {
                 />
               )
             }
-            numColumns={viewMode === "grid" ? 2 : 1}
+            numColumns={viewMode === "grid" ? gridCols : 1}
             columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
             contentContainerStyle={files.length === 0 ? styles.emptyContainer : styles.listBottom}
             refreshControl={refreshControl}
@@ -422,7 +429,7 @@ const styles = StyleSheet.create({
   },
   gridRow: {
     paddingHorizontal: spacing.lg,
-    justifyContent: "space-between",
+    flexDirection: "row",
   },
   listBottom: { paddingBottom: spacing.lg },
   emptyContainer: { flexGrow: 1 },

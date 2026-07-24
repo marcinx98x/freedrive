@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.freedrive.mobile",
-      "versionCode": 25,
+      "versionCode": 29,
       "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.READ_EXTERNAL_STORAGE",

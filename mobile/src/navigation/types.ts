@@ -1,12 +1,26 @@
+import type { NavigatorScreenParams } from "@react-navigation/native";
+
 export type FilesStackParamList = {
   FilesHome: undefined;
   Folder: { folderId: string; title?: string };
 };
 
+export type MainTabParamList = {
+  Home: undefined;
+  Starred: undefined;
+  Shared: undefined;
+  Files:
+    | {
+        screen?: keyof FilesStackParamList;
+        params?: FilesStackParamList[keyof FilesStackParamList];
+      }
+    | undefined;
+};
+
 export type RootStackParamList = {
   Login: undefined;
   TwoFactor: { challengeId: string; emailMasked: string };
-  Main: undefined;
+  Main: NavigatorScreenParams<MainTabParamList> | undefined;
   Search: { query: string };
   Recent: undefined;
   Trash: undefined;
@@ -25,16 +39,4 @@ export type RootStackParamList = {
     }>;
     index?: number;
   };
-};
-
-export type MainTabParamList = {
-  Home: undefined;
-  Starred: undefined;
-  Shared: undefined;
-  Files:
-    | {
-        screen?: keyof FilesStackParamList;
-        params?: FilesStackParamList[keyof FilesStackParamList];
-      }
-    | undefined;
 };

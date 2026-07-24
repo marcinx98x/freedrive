@@ -28,6 +28,9 @@ import { FolderGridTile, FolderRow } from "../components/FolderRow";
 import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsSheet";
 import { NewFolderDialog } from "../components/NewFolderDialog";
 import { SortHeader } from "../components/SortHeader";
+import { useRegisterCreateHandlers } from "../create/CreateActionsContext";
+import { useGridColumns } from "../hooks/useGridColumns";
+import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
@@ -49,6 +52,8 @@ const VIEW_KEY = "fd_view_mode";
 
 export function FolderScreen({ route, navigation }: Props) {
   const { folderId, title } = route.params;
+  const gridCols = useGridColumns();
+  const isLandscape = useWideLayout();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -182,6 +187,7 @@ export function FolderScreen({ route, navigation }: Props) {
         return (
           <FolderGridTile
             folder={item.item}
+            columns={gridCols}
             onPress={() =>
               navigation.push("Folder", { folderId: item.item.id, title: item.item.name })
             }
@@ -202,6 +208,7 @@ export function FolderScreen({ route, navigation }: Props) {
     return viewMode === "grid" ? (
       <FileGridTile
         file={item.item}
+        columns={gridCols}
         onPress={() => openFile(item.item, navigation, { gallery: files })}
         onMenuPress={() => setMenuTarget({ kind: "file", item: item.item })}
       />
@@ -216,7 +223,7 @@ export function FolderScreen({ route, navigation }: Props) {
 
   const showSpinner = loading && entries.length === 0;
 
-  const handleUpload = async () => {
+  const handleUpload = useCallback(async () => {
     setUploading(true);
     setUploadLabel("Preparing…");
     try {
@@ -230,7 +237,16 @@ export function FolderScreen({ route, navigation }: Props) {
       setUploading(false);
       setUploadLabel("");
     }
-  };
+  }, [folderId, load]);
+
+  const openFolderDialog = useCallback(() => setFolderDialog(true), []);
+
+  useRegisterCreateHandlers({
+    onUpload: () => {
+      void handleUpload();
+    },
+    onFolder: openFolderDialog,
+  });
 
   return (
     <SafeAreaView style={styles.safe} edges={[]}>
@@ -272,11 +288,11 @@ export function FolderScreen({ route, navigation }: Props) {
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
       ) : (
         <FlatList
-          key={viewMode}
+          key={`grid-${viewMode}-${gridCols}`}
           data={entries}
           keyExtractor={(item) => `${item.kind}-${item.item.id}`}
           renderItem={renderItem}
-          numColumns={viewMode === "grid" ? 2 : 1}
+          numColumns={viewMode === "grid" ? gridCols : 1}
           columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
           contentContainerStyle={entries.length === 0 ? styles.emptyContainer : undefined}
           onEndReached={() => {
@@ -303,7 +319,9 @@ export function FolderScreen({ route, navigation }: Props) {
           }
         />
       )}
-      <CreateFab onUpload={() => void handleUpload()} onFolder={() => setFolderDialog(true)} />
+      {!isLandscape ? (
+        <CreateFab onUpload={() => void handleUpload()} onFolder={() => setFolderDialog(true)} />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -317,7 +335,7 @@ const styles = StyleSheet.create({
   },
   gridRow: {
     paddingHorizontal: spacing.lg,
-    justifyContent: "space-between",
+    flexDirection: "row",
   },
   emptyContainer: { flexGrow: 1 },
   uploadOverlay: {

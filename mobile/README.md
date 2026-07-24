@@ -8,9 +8,11 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 
 - **Sign in** — server URL, email, password, and email 2FA when enabled
 - **Secure session** — tokens in SecureStore, profile cache in AsyncStorage (supports large avatar data-URLs), auto-refresh on 401
-- **Bottom tabs** — Home, Starred, Shared, Files (with active pill indicator)
+- **Bottom tabs** — Home, Starred, Shared, Files (with active pill indicator) on phone portrait (and tablet portrait)
+- **Landscape NavRail** — when width > height: narrow left rail (menu ≡, Create `+`, then Home / Starred / Shared / Files vertically centered like Google Drive); bottom tabs hidden; Create FAB hidden (rail `+` → Upload / Folder); hamburger on the rail, not in the search bar
 - **Files stack** — Files tab hosts My Drive home + nested Folder screens (Drive-like); Shared can deep-link into a folder under Files
 - **Files** — My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
+- **Grid tiles** — square previews (`aspectRatio: 1`); column count scales with content width so landscape tiles stay phone-sized
 - **Create FAB** — Upload and New folder on Files / Folder (camera stub reserved); FAB respects safe-area insets
 - **Upload** — multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then native `FileSystem.uploadAsync` multipart (`POST /api/v1/files/upload`) — avoids Hermes Blob / FormDataPart limits
 - **New folder** — dialog → `POST /api/v1/folders` in the current folder (or My Drive root)

@@ -23,9 +23,11 @@ export function SearchBar({
 }: SearchBarProps) {
   return (
     <View style={styles.row}>
-      <Pressable style={styles.iconBtn} onPress={onMenuPress} hitSlop={8}>
-        <Icon name="menu" size={22} />
-      </Pressable>
+      {onMenuPress ? (
+        <Pressable style={styles.iconBtn} onPress={onMenuPress} hitSlop={8}>
+          <Icon name="menu" size={22} />
+        </Pressable>
+      ) : null}
       <View style={styles.inputWrap}>
         <Icon name="search" size={18} color={colors.textSecondary} />
         <TextInput
