@@ -5,7 +5,7 @@ use crate::db::{my_drive_clear_placeholders, DbHandle};
 use crate::error::AppResult;
 use crate::sync::log::sync_log;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Remove all children inside `~/FreeDrive/My Drive` but keep the folder itself.
 pub fn clear_my_drive_contents(db: &DbHandle) -> AppResult<()> {
@@ -50,6 +50,34 @@ pub fn uninstall_remove_my_drive(db: &DbHandle) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+/// Delete `%APPDATA%\FreeDrive` (sync.db, auth, config). Call after My Drive / CfAPI cleanup
+/// so the DB is still available for unregister.
+pub fn uninstall_remove_app_data() {
+    for dir in app_data_dirs() {
+        if !dir.exists() {
+            continue;
+        }
+        match remove_path_recursive(&dir) {
+            Ok(()) => sync_log(format!("removed app data {}", dir.display())),
+            Err(e) => sync_log(format!("remove app data {} failed: {}", dir.display(), e)),
+        }
+    }
+}
+
+fn app_data_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(roaming) = dirs::data_dir() {
+        out.push(roaming.join("FreeDrive"));
+    }
+    if let Some(local) = dirs::data_local_dir() {
+        let local_fd = local.join("FreeDrive");
+        if out.iter().all(|d| d != &local_fd) {
+            out.push(local_fd);
+        }
+    }
+    out
 }
 
 fn clear_placeholders_best_effort(db: &DbHandle) {

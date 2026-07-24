@@ -22,6 +22,25 @@
   padding: 0;
 }
 
+/* Drive-like scrollbar: thumb only, no track chrome */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html,
 body,
 #root {

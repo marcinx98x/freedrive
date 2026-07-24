@@ -926,6 +926,15 @@ pub async fn open_server_url(
         .map_err(|e| e.to_string())
 }
 
+const PROJECT_GITHUB_URL: &str = "https://github.com/marcinx98x/freedrive";
+
+#[tauri::command]
+pub async fn open_project_url(app: AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(PROJECT_GITHUB_URL, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn open_path_in_explorer(app: AppHandle, path: String) -> Result<(), String> {
     app.opener()

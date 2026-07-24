@@ -155,7 +155,7 @@ export function PreferencesApp() {
         preferencesView={preferencesView}
         avatarButtonRef={avatarButtonRef}
         onHelp={() =>
-          api.openServerUrl().catch(() => {
+          api.openProjectUrl().catch(() => {
             /* optional */
           })
         }

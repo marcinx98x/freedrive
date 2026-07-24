@@ -652,7 +652,8 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
 - **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing
 - **Google Drive-style UI** — sidebar with SVG icons (Home, Sync activity, Notifications) and alert badge
-- **Settings menu** — the main-window gear opens **Preferences**, **Error list**, **About**, **Help**, and **Quit**
+- **Settings menu** — the main-window gear opens **Preferences**, **Error list**, **About**, **Help** (opens the GitHub repo), and **Quit**
+- **Fixed window size** — main (1100×720) and Preferences (960×640) windows are not resizable
 - **Preferences window** — separate window with **My computer** (sync folders, add/remove), **FreeDrive** (My Drive stream/mirror mode), and a single scrollable Settings page
 - **Unified Settings page** — launch on login, diagnostics, encryption and keys, File Explorer integration, and server information are expanded in one view
 - **Error list** — opens Sync activity filtered to failed items, with an All / Errors toggle
@@ -668,7 +669,7 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Windows Explorer (CfAPI)** — after sign-in, with the app running in the tray, open `%USERPROFILE%\FreeDrive\My Drive` in File Explorer (Windows 10 1809+); provider connects in the background and reconnects automatically before opening the folder
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **stream** keeps cloud placeholders (download on open), **mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files)
-- **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, and removes `%USERPROFILE%\FreeDrive\My Drive` (prefer NSIS over MSI for this cleanup)
+- **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder); prefer NSIS over MSI for this cleanup
 - Independent release tags: `desktop-v0.1.0` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
 
@@ -696,7 +697,7 @@ npm run build:exe:clean
 Build outputs:
 
 - `desktop/src-tauri/target/release/freedrive-desktop.exe`
-- `desktop/src-tauri/target/release/bundle/nsis/FreeDrive_0.1.0_x64-setup.exe` (recommended — full My Drive / CfAPI uninstall cleanup)
+- `desktop/src-tauri/target/release/bundle/nsis/FreeDrive_0.1.0_x64-setup.exe` (recommended — My Drive / CfAPI + `%APPDATA%\FreeDrive` uninstall cleanup)
 - `desktop/src-tauri/target/release/bundle/msi/FreeDrive_0.1.0_x64_en-US.msi` (no equivalent uninstall cleanup yet)
 
 ---

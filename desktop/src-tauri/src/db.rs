@@ -534,6 +534,9 @@ pub fn prepare_login_session(
     user_id: &str,
     new_server_url: &str,
 ) -> AppResult<LoginSessionReset> {
+    // Drop sync folders whose local path no longer exists (e.g. after partial uninstall).
+    prune_orphaned_sync_folders(conn)?;
+
     let old_user_id = config_get(conn, "last_user_id")?;
     let old_server_url = config_get(conn, "sync_server_url")?;
 
@@ -564,6 +567,15 @@ pub fn prepare_login_session(
     config_set(conn, "sync_server_url", new_server_url)?;
 
     Ok(LoginSessionReset { folders_to_remap })
+}
+
+fn prune_orphaned_sync_folders(conn: &Connection) -> AppResult<()> {
+    for folder in list_sync_folders(conn)? {
+        if !std::path::Path::new(&folder.local_path).exists() {
+            let _ = delete_sync_folder(conn, folder.id)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn get_folder_mapping(
@@ -1093,8 +1105,11 @@ mod tests {
     #[test]
     fn same_user_relogin_keeps_config() {
         let conn = test_conn();
+        let tmp = std::env::temp_dir().join(format!("fd-sync-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.to_string_lossy().to_string();
         config_set(&conn, "onboarding_complete", "true").unwrap();
-        insert_sync_folder(&conn, "/tmp/docs", "remote-1", "Documents").unwrap();
+        insert_sync_folder(&conn, &path, "remote-1", "Documents").unwrap();
         prepare_login_session(&conn, "user-a", "http://localhost").unwrap();
         prepare_login_session(&conn, "user-a", "http://localhost").unwrap();
         assert_eq!(
@@ -1102,14 +1117,18 @@ mod tests {
             Some("true")
         );
         assert_eq!(list_sync_folders(&conn).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn different_user_resets_onboarding_and_folders() {
         let conn = test_conn();
+        let tmp = std::env::temp_dir().join(format!("fd-sync-test-b-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.to_string_lossy().to_string();
         prepare_login_session(&conn, "user-a", "http://localhost").unwrap();
         config_set(&conn, "onboarding_complete", "true").unwrap();
-        insert_sync_folder(&conn, "/tmp/docs", "remote-1", "Documents").unwrap();
+        insert_sync_folder(&conn, &path, "remote-1", "Documents").unwrap();
 
         let reset = prepare_login_session(&conn, "user-b", "http://localhost").unwrap();
         assert!(reset.folders_to_remap.is_empty());
@@ -1118,17 +1137,31 @@ mod tests {
             Some("false")
         );
         assert!(list_sync_folders(&conn).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn same_user_server_change_remaps_folders() {
         let conn = test_conn();
+        let tmp = std::env::temp_dir().join(format!("fd-sync-test-c-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.to_string_lossy().to_string();
         prepare_login_session(&conn, "user-a", "http://localhost").unwrap();
-        insert_sync_folder(&conn, "/tmp/docs", "remote-1", "Documents").unwrap();
+        insert_sync_folder(&conn, &path, "remote-1", "Documents").unwrap();
 
         let reset = prepare_login_session(&conn, "user-a", "http://remote").unwrap();
         assert_eq!(reset.folders_to_remap.len(), 1);
-        assert_eq!(reset.folders_to_remap[0].0, "/tmp/docs");
+        assert_eq!(reset.folders_to_remap[0].0, path);
+        assert!(list_sync_folders(&conn).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn prepare_login_prunes_missing_local_paths() {
+        let conn = test_conn();
+        prepare_login_session(&conn, "user-a", "http://localhost").unwrap();
+        insert_sync_folder(&conn, "/nonexistent/fd-orphan-path", "remote-1", "Gone").unwrap();
+        prepare_login_session(&conn, "user-a", "http://localhost").unwrap();
         assert!(list_sync_folders(&conn).unwrap().is_empty());
     }
 

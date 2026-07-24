@@ -3,7 +3,7 @@ mod provider;
 #[cfg(windows)]
 mod sync;
 
-pub use cleanup::{clear_my_drive_contents, uninstall_remove_my_drive};
+pub use cleanup::{clear_my_drive_contents, uninstall_remove_app_data, uninstall_remove_my_drive};
 
 pub use provider::{
     fetch_folder_contents, hydrate_file, is_under_my_drive, relative_path_from_sync_root,

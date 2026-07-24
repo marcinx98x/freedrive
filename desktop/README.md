@@ -14,6 +14,9 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan; if initial sync was never completed, startup resumes full sync with a “Resuming sync…” status
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
 - **Google Drive-style sidebar** — SVG icons for Home, Sync activity, and Notifications with alert badge; top bar uses matching SVG icons (pause/play, settings, help, lock)
+- **Drive-like scrollbar** — transparent track, thin thumb only
+- **Fixed window size** — main 1100×720 and Preferences 960×640 are not resizable
+- **Help** — top bar, Settings menu, and Preferences header open [github.com/marcinx98x/freedrive](https://github.com/marcinx98x/freedrive)
 - **Preferences window** — dedicated window opened from the gear icon: **My computer** (manage sync folders), **FreeDrive** (Windows Explorer / CfAPI status), **Settings** (encryption, launch on login, open sync log)
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
 - **Profile menu** — server avatar, storage bar, Manage storage, Sign out
@@ -93,7 +96,7 @@ Outputs (monorepo path):
 - `desktop/src-tauri/target/release/freedrive-desktop.exe`
 - `desktop/src-tauri/target/release/bundle/msi/` and `bundle/nsis/` (installers)
 
-> Prefer the **NSIS** installer for uninstall cleanup: it unregisters the CfAPI sync root and removes `%USERPROFILE%\FreeDrive\My Drive`. The MSI target does not run that cleanup yet.
+> Prefer the **NSIS** installer for uninstall cleanup: it unregisters the CfAPI sync root, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder `com.freedrive.desktop`). Check **Delete application data** in the uninstaller as well. The MSI target does not run that cleanup yet.
 
 > Use **`npm run build:exe:clean`** after changing the logo — it regenerates icons and runs `cargo clean` so Windows embeds the new `.ico` in the exe. Do not run an old copy from `freedrive-app/`.
 
@@ -180,6 +183,8 @@ winget install Microsoft.EdgeWebView2Runtime
 See [`docs/desktop-api.md`](../docs/desktop-api.md) for the endpoint list used by this client.
 
 ## Data locations
+
+App state uses **`%APPDATA%\FreeDrive`**, not `%APPDATA%\com.freedrive.desktop` (Tauri `identifier` / BUNDLEID). NSIS uninstall hooks must clean `FreeDrive` explicitly.
 
 | Path | Purpose |
 |------|---------|

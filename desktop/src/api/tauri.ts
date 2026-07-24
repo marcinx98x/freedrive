@@ -61,6 +61,7 @@ export const api = {
   getStorageInfo: () => invoke<StorageInfo>("get_storage_info"),
   getSharedWithMe: () => invoke<SharedItem[]>("get_shared_with_me"),
   openServerUrl: (path?: string) => invoke<void>("open_server_url", { path }),
+  openProjectUrl: () => invoke<void>("open_project_url"),
   openPathInExplorer: (path: string) =>
     invoke<void>("open_path_in_explorer", { path }),
   importEncryptionKeys: () =>

@@ -241,7 +241,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         setAboutOpen(true);
         break;
       case "help":
-        api.openServerUrl().catch(console.error);
+        api.openProjectUrl().catch(console.error);
         break;
       case "quit":
         api.quitApp().catch(console.error);
@@ -321,7 +321,7 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
             setSettingsMenuOpen((open) => !open);
             setProfileOpen(false);
           }}
-          onHelp={() => api.openServerUrl().catch(console.error)}
+          onHelp={() => api.openProjectUrl().catch(console.error)}
           onProfileClick={(rect) => {
             setProfileAnchor(rect);
             setProfileOpen((open) => !open);

@@ -38,6 +38,8 @@ pub fn run() {
                 eprintln!("uninstall cleanup: open db failed: {}", e);
             }
         }
+        // Always wipe app data (sync.db, auth) — Tauri's BUNDLEID path is not used.
+        my_drive::uninstall_remove_app_data();
         return;
     }
 
@@ -87,6 +89,7 @@ pub fn run() {
             commands::get_storage_info,
             commands::get_shared_with_me,
             commands::open_server_url,
+            commands::open_project_url,
             commands::open_path_in_explorer,
             commands::import_encryption_keys,
             commands::export_encryption_keys,
