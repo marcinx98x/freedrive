@@ -22,6 +22,7 @@ import type {
   ShareLink,
   SortDir,
   SortKey,
+  StorageInfo,
   TokenPair,
   User,
   UserShare,
@@ -314,6 +315,7 @@ export const api = {
   },
 
   me: () => request<User>("GET", "/me"),
+  myStorage: () => request<StorageInfo>("GET", "/me/storage"),
 
   folderRoot: async (opts?: { page_size?: number; page_token?: string }) => {
     const q = new URLSearchParams();

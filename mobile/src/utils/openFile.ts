@@ -10,6 +10,7 @@ import {
   ensureFileKey,
 } from "../crypto";
 import type { RootStackParamList } from "../navigation/types";
+import { isSpreadsheetFile } from "./sheetCodec";
 
 type DownloadsNativeModule = {
   beginDownload(fileName: string): Promise<number>;
@@ -78,6 +79,7 @@ function isVideo(mime: string): boolean {
 }
 
 function isText(mime: string, name: string): boolean {
+  if (isSpreadsheetFile(name, mime)) return false;
   const m = mime.toLowerCase();
   const n = name.toLowerCase();
   return (
@@ -85,7 +87,6 @@ function isText(mime: string, name: string): boolean {
     m.includes("json") ||
     n.endsWith(".md") ||
     n.endsWith(".txt") ||
-    n.endsWith(".csv") ||
     n.endsWith(".json")
   );
 }
@@ -237,6 +238,17 @@ export async function openFile(
         fileId: file.id,
         gallery,
         index,
+      });
+      return;
+    }
+
+    if (navigation && isSpreadsheetFile(file.name, mime)) {
+      navigation.navigate("FilePreview", {
+        title: file.name,
+        uri,
+        mime,
+        mode: "sheet",
+        fileId: file.id,
       });
       return;
     }

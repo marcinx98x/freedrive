@@ -661,7 +661,7 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Error list** — opens Sync activity filtered to failed items, with an All / Errors toggle
 - **About dialog** — displays the desktop app version and connected server
 - **Notifications** — alerts for sync errors, paused sync, and low storage (≥80% / ≥90%)
-- **Profile menu** — server avatar from `GET /api/v1/me`, storage bar, Sign out
+- **Profile menu** — server avatar from `GET /api/v1/me`, storage bar from `GET /api/v1/me/storage` (`{used} of {total} used`), Sign out
 - **Sign out** — disconnects CfAPI and clears the contents of `%USERPROFILE%\FreeDrive\My Drive` (the folder itself remains for the next login)
 - **Device identification** — login, 2FA verification, and refresh requests report the desktop hostname so the app appears clearly in the account's logged-in-device list
 - **Non-blocking sign-in** — encryption unlock, sync restore, and Explorer (CfAPI) integration run in the background so the UI returns immediately after login
@@ -711,22 +711,24 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Sign in** with server URL, email, password, and email 2FA when enabled
 - **Drive-like dark UI** — bottom tabs (Home, Starred, Shared, Files) on portrait; pill search bar, list/grid toggle, sort chip
 - **Landscape NavRail** — when width > height (phone rotate / tablet landscape): narrow left rail with menu ≡, Create, and vertically centered primary tabs; portrait (including tablet) keeps phone chrome; Create uses rail `+` in landscape and FAB in portrait
-- **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage bar (portrait and landscape)
+- **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage from `GET /api/v1/me/storage` (portrait and landscape)
 - **Files stack** — Files tab nests My Drive home and Folder screens; Shared can open a folder under that stack
 - **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast; grid view uses square tiles and more columns on wide screens
 - **Create FAB** — Upload, New folder, Document, and Spreadsheet on Files / Folder screens
 - **Encrypted upload** — multi-file picker → AES-GCM → cache file → native `expo-file-system` `uploadAsync` multipart to `POST /api/v1/files/upload` (Hermes cannot build Blobs from ArrayBuffer); same helper for content replace
 - **New folder** — `POST /api/v1/folders` from the FAB dialog
-- **New Document / Spreadsheet** — creates encrypted `Document.txt` / `Spreadsheet.csv` and opens the in-app text editor (web has Docs/Sheets; mobile edits CSV as text)
+- **New Document / Spreadsheet** — creates encrypted `Document.txt` / `Spreadsheet.xlsx`; Document opens in the text editor; Spreadsheet opens the in-app sheet grid
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
+- **Profile menu** — storage bar (`{used} of {total} used`) from `/me/storage`, Manage storage (web), Sign out
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
 - **File actions** — open, share a decrypted copy, download, star/unstar, and move files to Bin from item menus
 - **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
-- **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON/CSV), PDF (open with another app)
+- **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON), spreadsheets (`.xlsx` / `.xls` / `.csv`), PDF (open with another app)
+- **Spreadsheet editor** — SheetJS grid with formula bar and sheet tabs; Edit / Save uploads via `POST /api/v1/files/{id}/content`
 - **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors
 - **Video gallery** — swipe between videos in the same loaded list (active player only; safe-area padding above the system nav bar)
-- **Edit & save** — text Edit/Save and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content` (no Docs/Sheets clone)
+- **Edit & save** — text Edit/Save, sheet Edit/Save, and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content`
 - **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
 - **Status notifications** — no persistent “app running” foreground notification; status-bar icons only for downloads and while video is playing
 - Offline files are planned for later releases

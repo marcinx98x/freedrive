@@ -19,7 +19,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Help** — top bar, Settings menu, and Preferences header open [github.com/marcinx98x/freedrive](https://github.com/marcinx98x/freedrive)
 - **Preferences window** — dedicated window opened from the gear icon: **My computer** (manage sync folders), **FreeDrive** (Windows Explorer / CfAPI status), **Settings** (encryption, launch on login, open sync log)
 - **Notifications** — alerts for sync errors, paused sync, and storage warnings
-- **Profile menu** — server avatar, storage bar, Manage storage, Sign out
+- **Profile menu** — server avatar, storage bar from `GET /api/v1/me/storage` (`{used} of {total} used`, same as web), Manage storage, Sign out
 - **Sign out** — stops CfAPI and clears contents of `%USERPROFILE%\FreeDrive\My Drive` (folder kept for next login)
 - **Device identity** — reports the computer hostname and keeps a stable installation ID, so signing in again updates the same entry in the server's Devices list instead of creating a duplicate
 - **Non-blocking sign-in** — crypto unlock, sync restore, and Explorer (CfAPI) start in the background so login does not block the UI

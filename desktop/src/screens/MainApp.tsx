@@ -228,6 +228,20 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     }
   }, [view, markAllSeen]);
 
+  useEffect(() => {
+    if (profileOpen) {
+      void refreshStorage();
+    }
+  }, [profileOpen, refreshStorage]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshStorage();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshStorage]);
+
   const handleSettingsAction = (action: SettingsMenuAction) => {
     switch (action) {
       case "preferences":

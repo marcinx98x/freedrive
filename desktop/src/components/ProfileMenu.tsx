@@ -84,7 +84,7 @@ export function ProfileMenu({
           <div className="profile-storage-row">
             {storageWarning && <span className="profile-storage-warn" aria-hidden>!</span>}
             <span>
-              {usedPct}% of {formatBytes(storage.total_bytes)} used
+              {formatBytes(storage.used_bytes)} of {formatBytes(storage.total_bytes)} used
             </span>
             <button
               type="button"

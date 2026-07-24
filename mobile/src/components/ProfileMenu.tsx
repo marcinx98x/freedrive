@@ -12,7 +12,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthContext";
-import type { User } from "../api/types";
+import { api } from "../api/client";
+import type { StorageInfo, User } from "../api/types";
 import { formatBytes } from "../utils/format";
 import { UserAvatar } from "./UserAvatar";
 
@@ -38,13 +39,27 @@ export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
   const [rendered, setRendered] = useState(visible);
   const progress = useRef(new Animated.Value(0)).current;
   const closingRef = useRef(false);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
 
   useEffect(() => {
     if (visible) {
       closingRef.current = false;
       progress.setValue(0);
       setRendered(true);
-    } else if (rendered && !closingRef.current) {
+      let cancelled = false;
+      api
+        .myStorage()
+        .then((s) => {
+          if (!cancelled) setStorage(s);
+        })
+        .catch(() => {
+          if (!cancelled) setStorage(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (rendered && !closingRef.current) {
       closingRef.current = true;
       Animated.timing(progress, {
         toValue: 0,
@@ -67,8 +82,8 @@ export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
     }).start();
   };
 
-  const used = user?.used_bytes ?? 0;
-  const total = user?.quota_bytes ?? 0;
+  const used = storage?.used_bytes ?? 0;
+  const total = storage?.total_bytes ?? 0;
   const usedPct = total > 0 ? Math.round((used / total) * 100) : null;
   const storageWarning = usedPct !== null && usedPct >= 80;
   const baseUrl = serverUrl?.replace(/\/$/, "") || "";
@@ -137,7 +152,7 @@ export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
             </Pressable>
           </View>
 
-          {total > 0 ? (
+          {storage && total > 0 ? (
             <View style={styles.storage}>
               <View style={styles.storageRow}>
                 {storageWarning ? (
@@ -146,7 +161,7 @@ export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
                   </View>
                 ) : null}
                 <Text style={styles.storageLabel}>
-                  {usedPct}% of {formatBytes(total)} used
+                  {formatBytes(used)} of {formatBytes(total)} used
                 </Text>
                 <Pressable onPress={() => openUrl("/#/storage")} hitSlop={6}>
                   <Text style={styles.storageLink}>Manage storage</Text>

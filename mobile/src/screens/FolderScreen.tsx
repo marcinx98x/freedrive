@@ -34,7 +34,12 @@ import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
-import { createEncryptedTextFile, pickAndUploadFiles } from "../utils/uploadFiles";
+import {
+  createEncryptedBinaryFile,
+  createEncryptedTextFile,
+  pickAndUploadFiles,
+} from "../utils/uploadFiles";
+import { emptyXlsxBytes, XLSX_MIME } from "../utils/sheetCodec";
 
 type Props = CompositeScreenProps<
   NativeStackScreenProps<FilesStackParamList, "Folder">,
@@ -265,10 +270,10 @@ export function FolderScreen({ route, navigation }: Props) {
     setUploading(true);
     setUploadLabel("Creating spreadsheet…");
     try {
-      const created = await createEncryptedTextFile({
-        name: "Spreadsheet.csv",
-        mimeType: "text/csv",
-        text: "Column 1,Column 2\n,\n",
+      const created = await createEncryptedBinaryFile({
+        name: "Spreadsheet.xlsx",
+        mimeType: XLSX_MIME,
+        bytes: emptyXlsxBytes(),
         folderId,
       });
       await load({ soft: true });

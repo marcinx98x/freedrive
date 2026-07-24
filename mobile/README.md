@@ -13,18 +13,20 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Files stack** — Files tab hosts My Drive home + nested Folder screens (Drive-like); Shared can deep-link into a folder under Files
 - **Files** — My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
 - **Grid tiles** — square previews (`aspectRatio: 1`); column count scales with content width so landscape tiles stay phone-sized
-- **Create FAB** — Upload, New folder, Document (`.txt`), and Spreadsheet (`.csv`) on Files / Folder (camera stub reserved); FAB respects safe-area insets
+- **Create FAB** — Upload, New folder, Document (`.txt`), and Spreadsheet (`.xlsx`) on Files / Folder (camera stub reserved); FAB respects safe-area insets
 - **Upload** — multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then native `FileSystem.uploadAsync` multipart (`POST /api/v1/files/upload`) — avoids Hermes Blob / FormDataPart limits
 - **New folder** — dialog → `POST /api/v1/folders` in the current folder (or My Drive root)
-- **New Document / Spreadsheet** — encrypted empty `.txt` / starter `.csv`; opens in the text preview editor (full Sheets UI is web-only)
-- **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage
+- **New Document / Spreadsheet** — encrypted empty `Document.txt` / `Spreadsheet.xlsx`; Document opens in the text editor; Spreadsheet opens in the in-app sheet grid
+- **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage from `GET /api/v1/me/storage` (reconciled used + quota)
 - **Search** — search files by name from the top bar
 - **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`
 - **User avatar** — photo from `avatar_url` on `GET /api/v1/me`, or initials fallback
+- **Profile menu** — avatar, Sign out, storage bar (`{used} of {total} used`) from `/me/storage`, Manage storage link to the web UI
 - **Devices** — appears as `Mobile (…)` and keeps a stable installation ID, so re-login updates the same entry in the account Devices list instead of creating a duplicate
 - **File actions** — item menu for opening, sharing a copy, downloading, starring, and moving files to Bin
 - **Client-side decryption** — account and per-file keys sync from the server so encrypted files can be opened on Android
-- **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON/CSV), and PDF (open with another app)
+- **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON), spreadsheets (`.xlsx` / `.xls` / `.csv`), and PDF (open with another app)
+- **Spreadsheet editor** — SheetJS grid with formula bar and sheet tabs; Edit / Save re-encrypts and uploads via `POST /api/v1/files/{id}/content` (same path as text)
 - **Image gallery** — swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background
 - **Video gallery** — same swipe between videos in the loaded list; only the active page mounts the player; bottom controls respect Android safe-area insets
 - **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via the same native multipart helper (`POST /api/v1/files/{id}/content`)
@@ -33,7 +35,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission
 - **Status notifications** — no persistent “app is running” icon (not appropriate for a Drive client); status-bar presence only for downloads and while a video is playing (media session / native controls)
 
-Offline files are planned for later releases. Docs/Sheets-style office editors and PDF annotation are out of scope for the mobile MVP.
+Offline files are planned for later releases. Full Docs/Photos parity and PDF annotation remain out of scope for the mobile MVP (Sheets-style grid for xlsx/csv is included).
 
 ## Requirements
 

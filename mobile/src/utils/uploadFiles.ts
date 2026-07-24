@@ -106,14 +106,29 @@ export async function pickAndUploadFiles(
   return uploaded;
 }
 
-/** Create a new encrypted text/csv file in folderId (null = My Drive root). */
+/** Create a new encrypted text file in folderId (null = My Drive root). */
 export async function createEncryptedTextFile(opts: {
   name: string;
   mimeType: string;
   text: string;
   folderId: string | null;
 }): Promise<FileItem> {
-  const plaintext = new TextEncoder().encode(opts.text);
+  return createEncryptedBinaryFile({
+    name: opts.name,
+    mimeType: opts.mimeType,
+    bytes: new TextEncoder().encode(opts.text),
+    folderId: opts.folderId,
+  });
+}
+
+/** Create a new encrypted binary file (e.g. empty xlsx) in folderId. */
+export async function createEncryptedBinaryFile(opts: {
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  folderId: string | null;
+}): Promise<FileItem> {
+  const plaintext = opts.bytes;
   const prepared = await prepareNewEncryptedFile(plaintext);
   const dir = FileSystem.cacheDirectory;
   if (!dir) throw new Error("Cache directory unavailable");

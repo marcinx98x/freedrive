@@ -10,7 +10,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "../auth/AuthContext";
+import { api } from "../api/client";
+import type { StorageInfo } from "../api/types";
 import { colors, radii, spacing } from "../theme";
 import { formatBytes } from "../utils/format";
 import { Icon, type IconName } from "./Icon";
@@ -47,7 +48,6 @@ function DrawerItem({
 
 export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawerProps) {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
   const { width } = useWindowDimensions();
   const panelWidth = Math.min(320, width * 0.78);
 
@@ -55,6 +55,7 @@ export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawe
   const [rendered, setRendered] = useState(visible);
   const progress = useRef(new Animated.Value(0)).current;
   const closingRef = useRef(false);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -62,7 +63,20 @@ export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawe
       // Reset to off-screen before the modal shows; open animation starts in onShow.
       progress.setValue(0);
       setRendered(true);
-    } else if (rendered && !closingRef.current) {
+      let cancelled = false;
+      api
+        .myStorage()
+        .then((s) => {
+          if (!cancelled) setStorage(s);
+        })
+        .catch(() => {
+          if (!cancelled) setStorage(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (rendered && !closingRef.current) {
       closingRef.current = true;
       Animated.timing(progress, {
         toValue: 0,
@@ -85,8 +99,8 @@ export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawe
     }).start();
   };
 
-  const used = user?.used_bytes ?? 0;
-  const total = user?.quota_bytes ?? 0;
+  const used = storage?.used_bytes ?? 0;
+  const total = storage?.total_bytes ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
 
   const go = (route: DrawerRoute) => {

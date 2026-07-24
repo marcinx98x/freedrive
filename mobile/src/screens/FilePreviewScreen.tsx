@@ -23,12 +23,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useVideoPlayer, VideoView } from "expo-video";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
+import { SheetEditorView, loadAndSerializeSheet } from "../components/SheetEditorView";
 import {
   downloadAndDecrypt,
   saveEncryptedContent,
   writePlainCache,
   type GalleryItem,
 } from "../utils/openFile";
+import type { ParsedSpreadsheet } from "../utils/sheetCodec";
 
 type Props = NativeStackScreenProps<RootStackParamList, "FilePreview">;
 
@@ -97,6 +99,14 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   const [draft, setDraft] = useState(initialText ?? "");
   const [savedText, setSavedText] = useState(initialText ?? "");
   const [savingText, setSavingText] = useState(false);
+
+  const [sheetEditing, setSheetEditing] = useState(false);
+  const [sheetEdits, setSheetEdits] = useState<Map<string, string>>(() => new Map());
+  const [sheetParsed, setSheetParsed] = useState<ParsedSpreadsheet | null>(null);
+  const [sheetActiveIdx, setSheetActiveIdx] = useState(0);
+  const [sheetLoadError, setSheetLoadError] = useState<string | null>(null);
+  const [savingSheet, setSavingSheet] = useState(false);
+  const [sheetUri, setSheetUri] = useState(initialUri);
 
   const listRef = useRef<FlatList<GalleryItem>>(null);
   const loadingRef = useRef<Set<string>>(new Set());
@@ -188,7 +198,7 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   };
 
   const shareCurrent = async () => {
-    const uri = currentUri;
+    const uri = mode === "sheet" ? sheetUri : currentUri;
     if (!uri) return;
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(uri, {
@@ -273,6 +283,36 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     }
   };
 
+  const saveSheet = async () => {
+    if (!initialFileId) return;
+    setSavingSheet(true);
+    try {
+      const { bytes, mimeType, parsed } = await loadAndSerializeSheet(
+        sheetUri,
+        initialTitle,
+        initialMime,
+        sheetEdits,
+        sheetParsed,
+      );
+      await saveEncryptedContent({
+        fileId: initialFileId,
+        name: initialTitle,
+        mimeType,
+        plaintext: bytes,
+      });
+      const cached = await writePlainCache(initialFileId, initialTitle, bytes);
+      setSheetUri(cached);
+      setSheetParsed(parsed);
+      setSheetEdits(new Map());
+      setSheetEditing(false);
+      Alert.alert("Saved", "Spreadsheet updated on FreeDrive.");
+    } catch (err) {
+      Alert.alert("Save failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingSheet(false);
+    }
+  };
+
   React.useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: true,
@@ -336,6 +376,37 @@ export function FilePreviewScreen({ route, navigation }: Props) {
               </Pressable>
             )
           ) : null}
+          {mode === "sheet" && initialFileId ? (
+            sheetEditing ? (
+              <>
+                <Pressable
+                  onPress={() => {
+                    setSheetEdits(new Map());
+                    setSheetEditing(false);
+                  }}
+                  style={styles.headerBtn}
+                >
+                  <Text style={styles.headerBtnText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void saveSheet()}
+                  disabled={savingSheet}
+                  style={styles.headerBtn}
+                >
+                  <Text style={styles.headerBtnText}>
+                    {savingSheet ? "…" : "Save"}
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                onPress={() => setSheetEditing(true)}
+                style={styles.headerBtn}
+              >
+                <Text style={styles.headerBtnText}>Edit</Text>
+              </Pressable>
+            )
+          ) : null}
           <Pressable onPress={() => void shareCurrent()} style={styles.headerBtn}>
             <Text style={styles.headerBtnText}>Share</Text>
           </Pressable>
@@ -358,6 +429,11 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     draft,
     initialFileId,
     initialMime,
+    sheetEditing,
+    savingSheet,
+    sheetEdits,
+    sheetParsed,
+    sheetUri,
   ]);
 
   if (mode === "image" && paging) {
@@ -510,6 +586,25 @@ export function FilePreviewScreen({ route, navigation }: Props) {
       <ScrollView style={styles.safe} contentContainerStyle={styles.textPad}>
         <Text style={styles.text}>{savedText}</Text>
       </ScrollView>
+    );
+  }
+
+  if (mode === "sheet") {
+    return (
+      <SheetEditorView
+        uri={sheetUri}
+        fileName={initialTitle}
+        mime={initialMime}
+        editing={sheetEditing}
+        edits={sheetEdits}
+        onEditsChange={setSheetEdits}
+        activeSheetIdx={sheetActiveIdx}
+        onActiveSheetIdxChange={setSheetActiveIdx}
+        parsed={sheetParsed}
+        onParsed={setSheetParsed}
+        loadError={sheetLoadError}
+        onLoadError={setSheetLoadError}
+      />
     );
   }
 

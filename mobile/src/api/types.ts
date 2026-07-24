@@ -20,6 +20,13 @@ export interface User {
   last_login_at?: string;
 }
 
+/** Authoritative quota/usage from GET /me/storage (reconciled from files). */
+export interface StorageInfo {
+  used_bytes: number;
+  total_bytes: number;
+  free_bytes?: number;
+}
+
 export interface LoginSuccess {
   tokens: TokenPair;
   user: User;
