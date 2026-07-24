@@ -24,7 +24,7 @@ Base URL: configured at sign-in (e.g. `http://localhost:8080`).
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/v1/folders` | Create or resolve folder under computer root |
+| `POST` | `/api/v1/folders` | Create under parent; idempotent — reuses a live same-name folder or restores a trashed one (UNIQUE-safe for desktop nested sync) |
 | `GET` | `/api/v1/folders/root` | My Drive root contents (Windows Explorer CfAPI) |
 | `GET` | `/api/v1/folders/{id}` | List folder contents (poll / mirror) |
 

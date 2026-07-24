@@ -9,7 +9,8 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Sign in** to your FreeDrive server (JWT auth + 2FA support)
 - **Single-instance** — a second launch focuses the existing main window
 - **Onboarding wizard** — choose folders to sync (Desktop, Documents, Downloads, or custom)
-- **Background sync** — uploads local changes, polls for remote changes; skips `.git`, `node_modules`, and `.svn` folders during scan; large encrypted uploads (>32 MiB) use resumable chunked API (Cloudflare-safe)
+- **Background sync** — uploads local changes, polls for remote changes; skips `.git`, `node_modules`, and `.svn` folders during scan; large encrypted uploads (>32 MiB) use resumable chunked API (Cloudflare-safe); each scan creates/restores remote folders for local subdirectories before uploading files
+- **Transient errors retry** — local `error` rows are retried on the next scan (permanent `rejected` only are skipped); Home/Sync activity show a Drive-style progress ring around ↑ during upload
 - **Local deletes → server trash** — removing a file from a sync folder (including Explorer Delete, which moves it out of the tree) soft-deletes the matching server file; periodic verify (~5 min) and pre-upload same-name cleanup catch missed events and avoid live duplicates
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan; if initial sync was never completed, startup resumes full sync with a “Resuming sync…” status
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
@@ -108,9 +109,10 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 
 ### Sync appears stuck or files do not upload
 
-- Ensure the FreeDrive **server** is running and reachable at the URL you entered during sign-in.
-- Check **Sync activity** in the app for per-file errors.
-- Check `%APPDATA%\FreeDrive\sync.log` for detailed sync steps.
+- Ensure the FreeDrive **server** is running and reachable at the URL you entered during sign-in (use a build that includes idempotent `POST /folders` restore-from-trash).
+- Check **Sync activity** in the app for per-file errors; upload rows show a progress ring while transferring.
+- Transient failures are retried automatically on the next scan/verify — you do **not** need to wipe `%APPDATA%\FreeDrive` after a server update.
+- Check `%APPDATA%\FreeDrive\sync.log` for detailed sync steps (`ensure remote folder`, `file start`, `create_folder … failed`).
 - Do not run the app as Administrator (different `%APPDATA%` profile).
 
 ### Deleted locally but still on the server

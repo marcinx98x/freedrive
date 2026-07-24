@@ -591,7 +591,7 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 
 #### Folders
 
-- `POST /folders`
+- `POST /folders` — create under `parent_id`; **idempotent** for the same `(parent, name, owner)`: returns an existing live folder, or **restores** a matching trashed folder (avoids UNIQUE conflicts that blocked desktop nested sync)
 - `GET /folders/root` — child folders + paginated files (`page_size`, `page_token`; response: `next_page_token`, `total_files`)
 - `GET /folders/all`
 - `GET /folders/trash`
@@ -657,7 +657,9 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 
 - Sign in, onboarding, folder sync, system tray, pause/resume (skips `.git`, `node_modules`, `.svn` during folder scan)
 - **Single-instance** — launching a second copy focuses the existing window instead of starting another process
-- **Computer sync folders** — folders you add (Documents, Downloads, etc.) upload copies to the cloud only; they are not shown inside FreeDrive My Drive root; deleting a local file soft-deletes it on the server (Explorer Delete / move out of the sync folder included)
+- **Computer sync folders** — folders you add (Documents, Downloads, etc.) upload copies to the cloud only; they are not shown inside FreeDrive My Drive root; deleting a local file soft-deletes it on the server (Explorer Delete / move out of the sync folder included); each scan **ensures remote subfolders** for local directories before uploads
+- **Transient sync errors retry** — failed uploads (`error` in local state) are retried on the next scan; only permanent `rejected` items (e.g. disallowed type) stay skipped
+- **Upload progress ring** — Home / Sync activity show a Drive-style circular progress around the ↑ icon while a file uploads (byte progress from chunked / multipart upload)
 - **Delete catch-up** — periodic background verify (~5 min) and same-name cleanup before fresh uploads reduce orphaned or duplicate server files after missed watcher events
 - **Cross-device decryption** — syncs password-wrapped account and file keys from the server; Explorer hydration decrypts files with the same keys as the web UI
 - **Encryption status** — lock icon in top bar (unlocked/locked); Settings shows recovery restore when server account crypto is missing

@@ -1463,6 +1463,44 @@ impl SyncEngine {
         let total = files.len() as u64;
         sync_log(format!("scan complete — {} files", total));
 
+        // Ensure remote folder tree for every local subdirectory first so nested
+        // uploads (and empty dirs) do not depend on a prior successful file sync.
+        let dir_walk_root = root.clone();
+        let local_dirs = blocking::run_blocking_with_timeout_async(
+            Duration::from_secs(60),
+            move || Ok(collect_dirs(&dir_walk_root)),
+        )
+        .await
+        .unwrap_or_default();
+        if !local_dirs.is_empty() {
+            sync_log(format!(
+                "ensuring {} remote folder path(s) under {}",
+                local_dirs.len(),
+                local_root
+            ));
+            for dir_path in &local_dirs {
+                if self.is_paused() {
+                    break;
+                }
+                let relative_dir = dir_path
+                    .strip_prefix(&root)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                if relative_dir.is_empty() {
+                    continue;
+                }
+                if let Err(e) = self
+                    .ensure_remote_folder(sync_folder_id, remote_root_id, &relative_dir)
+                    .await
+                {
+                    sync_log(format!(
+                        "ensure remote folder failed for {}: {}",
+                        relative_dir, e
+                    ));
+                }
+            }
+        }
+
         if show_progress {
             self.emit_progress(&SyncProgress {
                 phase: "scanning".into(),
@@ -2524,6 +2562,40 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Relative subdirectory paths under `root` (root itself excluded), depth-first
+/// so parents are ensured before children when iterated in sorted order.
+fn collect_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let dir_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if should_skip_dir(dir_name) {
+                continue;
+            }
+            dirs.push(path.clone());
+            stack.push(path);
+        }
+    }
+    dirs.sort_by(|a, b| {
+        let a_s = a.to_string_lossy();
+        let b_s = b.to_string_lossy();
+        a_s.cmp(&b_s).then_with(|| a_s.len().cmp(&b_s.len()))
+    });
+    dirs
+}
+
 fn walk_files_incremental(root: &Path, mut on_file: impl FnMut(PathBuf)) {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -2586,10 +2658,13 @@ fn file_looks_unchanged_from_state(
 ) -> bool {
     match existing {
         Some((remote_id, _, Some(old_mtime), status)) if *old_mtime == mtime => {
+            // Successfully synced: skip until mtime changes.
             if remote_id.as_ref().is_some_and(|id| !id.is_empty()) {
                 return true;
             }
-            status == "rejected" || status == "error"
+            // Permanent rejection only — transient `error` must retry so
+            // ensure_remote_folder / upload can recover after server fixes.
+            status == "rejected"
         }
         _ => false,
     }
