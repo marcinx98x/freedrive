@@ -34,9 +34,23 @@ if (Test-Path $NativeJava) {
     }
 }
 
+# Streaming AES-GCM decrypt requires BouncyCastle (Conscrypt buffers entire AEAD).
+$GradlePath = Join-Path $Fdm "android\app\build.gradle"
+if (Test-Path $GradlePath) {
+    $gradle = Get-Content $GradlePath -Raw
+        if ($gradle -notmatch "bcprov-jdk18on") {
+            $bcLine = '    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")'
+            if ($gradle -match "dependencies\s*\{") {
+                $gradle = $gradle -replace "dependencies\s*\{", "dependencies {`r`n$bcLine"
+            } else {
+                $gradle = $gradle + "`r`n`r`ndependencies {`r`n$bcLine`r`n}`r`n"
+            }
+            Set-Content -Path $GradlePath -Value $gradle -NoNewline
+        }
+}
+
 # Keep Android versionCode in sync with app.json (prebuild only runs once).
 $AppJsonPath = Join-Path $Fdm "app.json"
-$GradlePath = Join-Path $Fdm "android\app\build.gradle"
 if ((Test-Path $AppJsonPath) -and (Test-Path $GradlePath)) {
     $appJson = Get-Content $AppJsonPath -Raw | ConvertFrom-Json
     $vc = $appJson.expo.android.versionCode

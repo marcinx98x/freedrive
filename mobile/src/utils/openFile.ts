@@ -29,6 +29,8 @@ type DownloadsNativeModule = {
     outputPath: string,
     keyB64: string,
     ivB64: string,
+    notificationId?: number,
+    fileName?: string,
   ): Promise<string>;
   downloadToFile?(
     url: string,
@@ -194,24 +196,15 @@ async function downloadAndDecryptViaNative(
 
     const key = await ensureFileKey(file.id);
     await FileSystem.deleteAsync(plainPath, { idempotent: true }).catch(() => {});
-    if (
-      opts?.progressNotificationId != null &&
-      typeof downloadsModule?.updateDownloadProgress === "function"
-    ) {
-      // Keep the bar full while decrypting so it does not look stuck at mid-download.
-      try {
-        await downloadsModule.updateDownloadProgress(
-          opts.progressNotificationId,
-          `Decrypting · ${file.name}`,
-          1,
-          1,
-        );
-      } catch {
-        // Non-fatal.
-      }
-    }
     const encForDecrypt = downloaded.uri || encPath;
-    await decrypt(encForDecrypt, plainPath, rawKeyToStandardBase64(key), iv);
+    await decrypt(
+      encForDecrypt,
+      plainPath,
+      rawKeyToStandardBase64(key),
+      iv,
+      opts?.progressNotificationId ?? -1,
+      file.name,
+    );
     return { uri: plainPath, mime, bytes: new Uint8Array(0) };
   } finally {
     await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});

@@ -1,5 +1,26 @@
 package com.freedrive.mobile
 
+import com.facebook.react.bridge.ReadableMap
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.max
+import org.bouncycastle.crypto.engines.AESEngine
+import org.bouncycastle.crypto.modes.GCMBlockCipher
+import org.bouncycastle.crypto.params.AEADParameters
+import org.bouncycastle.crypto.params.KeyParameter
+import android.util.Base64
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReactContextBaseJavaModule
+import com.facebook.react.bridge.ReactMethod
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -9,26 +30,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Base64
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.Promise
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.ReactContextBaseJavaModule
-import com.facebook.react.bridge.ReactMethod
-import com.facebook.react.bridge.ReadableMap
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
-import kotlin.math.max
 
 class DownloadsModule(
   reactContext: ReactApplicationContext
@@ -235,7 +236,7 @@ class DownloadsModule(
             val now = System.currentTimeMillis()
             if (notifyId >= 0 && (now - lastNotifyAt >= 400 || written == contentLength)) {
               lastNotifyAt = now
-              publishDownloadProgress(notifyId, label, written, contentLength)
+              publishDownloadProgress(notifyId, "Downloading", label, written, contentLength)
             }
           }
           output.flush()
@@ -243,7 +244,7 @@ class DownloadsModule(
         input.close()
 
         if (notifyId >= 0) {
-          publishDownloadProgress(notifyId, label, written, max(contentLength, written))
+          publishDownloadProgress(notifyId, "Downloading", label, written, max(contentLength, written))
         }
 
         val map = Arguments.createMap().apply {
@@ -284,6 +285,7 @@ class DownloadsModule(
     try {
       publishDownloadProgress(
         notificationId.toInt(),
+        "Downloading",
         sanitizeFileName(fileName),
         bytesWritten.toLong(),
         bytesTotal.toLong()
@@ -296,6 +298,7 @@ class DownloadsModule(
 
   private fun publishDownloadProgress(
     notificationId: Int,
+    title: String,
     fileName: String,
     written: Long,
     total: Long
@@ -315,7 +318,7 @@ class DownloadsModule(
       "${formatBytes(written)} / ${formatBytes(total)} · $fileName"
     }
     val notification = NotificationCompat.Builder(reactApplicationContext, CHANNEL_PROGRESS)
-      .setContentTitle("Downloading")
+      .setContentTitle(title)
       .setContentText(text)
       .setSmallIcon(android.R.drawable.stat_sys_download)
       .setOngoing(true)
@@ -360,9 +363,9 @@ class DownloadsModule(
   }
 
   /**
-   * Stream AES-256-GCM decrypt from [encryptedPath] to [outputPath].
-   * Matches @noble/ciphers GCM: 12-byte IV, 16-byte tag appended to ciphertext.
-   * Peak RAM is the I/O buffer (~256 KiB), not the file size.
+   * Stream AES-GCM decrypt with BouncyCastle (Conscrypt Cipher.update buffers the entire
+   * file in RAM and hangs/OOM on 100MB+ videos). Format matches @noble/ciphers:
+   * 12-byte IV, 16-byte tag appended to ciphertext.
    */
   @ReactMethod
   fun decryptAesGcmFile(
@@ -370,10 +373,14 @@ class DownloadsModule(
     outputPath: String,
     keyB64: String,
     ivB64: String,
+    notificationId: Double,
+    fileName: String,
     promise: Promise
   ) {
     ioExecutor.execute {
       var outFile: File? = null
+      val notifyId = notificationId.toInt()
+      val label = sanitizeFileName(fileName.ifBlank { "file" })
       try {
         val keyBytes = decodeFlexibleBase64(keyB64)
         val ivBytes = decodeFlexibleBase64(ivB64)
@@ -391,7 +398,8 @@ class DownloadsModule(
           promise.reject("DECRYPT_FAILED", "Encrypted file is missing", null)
           return@execute
         }
-        if (encFile.length() < 16L) {
+        val total = encFile.length()
+        if (total < 16L) {
           promise.reject("DECRYPT_FAILED", "Encrypted file is too short", null)
           return@execute
         }
@@ -403,32 +411,48 @@ class DownloadsModule(
           return@execute
         }
 
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(
-          Cipher.DECRYPT_MODE,
-          SecretKeySpec(keyBytes, "AES"),
-          GCMParameterSpec(128, ivBytes)
-        )
+        // Lightweight API streams; JCE Conscrypt AES/GCM does not.
+        val gcm = GCMBlockCipher.newInstance(AESEngine.newInstance())
+        gcm.init(false, AEADParameters(KeyParameter(keyBytes), 128, ivBytes))
+
+        var processed = 0L
+        var lastNotifyAt = 0L
+        if (notifyId >= 0) {
+          publishDownloadProgress(notifyId, "Decrypting", label, 0L, total)
+        }
 
         FileInputStream(encFile).use { input ->
           FileOutputStream(outFile).use { output ->
-            val buffer = ByteArray(256 * 1024)
+            val inBuf = ByteArray(256 * 1024)
+            val outBuf = ByteArray(
+              gcm.getUpdateOutputSize(inBuf.size).coerceAtLeast(inBuf.size + 32)
+            )
             while (true) {
-              val n = input.read(buffer)
+              val n = input.read(inBuf)
               if (n < 0) break
-              val chunk = cipher.update(buffer, 0, n)
-              if (chunk != null && chunk.isNotEmpty()) {
-                output.write(chunk)
+              val outLen = gcm.processBytes(inBuf, 0, n, outBuf, 0)
+              if (outLen > 0) {
+                output.write(outBuf, 0, outLen)
+              }
+              processed += n
+              val now = System.currentTimeMillis()
+              if (notifyId >= 0 && (now - lastNotifyAt >= 400 || processed >= total)) {
+                lastNotifyAt = now
+                publishDownloadProgress(notifyId, "Decrypting", label, processed, total)
               }
             }
-            val tail = cipher.doFinal()
-            if (tail != null && tail.isNotEmpty()) {
-              output.write(tail)
+            val finalOut = ByteArray(gcm.getOutputSize(0).coerceAtLeast(32))
+            val finalLen = gcm.doFinal(finalOut, 0)
+            if (finalLen > 0) {
+              output.write(finalOut, 0, finalLen)
             }
             output.flush()
           }
         }
 
+        if (notifyId >= 0) {
+          publishDownloadProgress(notifyId, "Decrypting", label, total, total)
+        }
         promise.resolve(outFile.absolutePath)
       } catch (error: Exception) {
         try {

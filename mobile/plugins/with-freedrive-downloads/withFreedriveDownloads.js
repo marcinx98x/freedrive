@@ -7,6 +7,8 @@ const path = require("path");
 
 const PLUGIN_NAME = "with-freedrive-downloads";
 const PACKAGE_DIR = "app/src/main/java/com/freedrive/mobile";
+const BCPROV_DEP =
+  '    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")';
 
 function copyKotlinSources(androidProjectRoot) {
   const destDir = path.join(androidProjectRoot, PACKAGE_DIR);
@@ -47,6 +49,24 @@ function ensurePackageRegistered(mainAppPath) {
   fs.writeFileSync(mainAppPath, contents);
 }
 
+/** Streaming AES-GCM decrypt needs BouncyCastle (Conscrypt buffers entire AEAD). */
+function ensureBcprovDependency(androidProjectRoot) {
+  const gradlePath = path.join(androidProjectRoot, "app", "build.gradle");
+  if (!fs.existsSync(gradlePath)) return;
+  let contents = fs.readFileSync(gradlePath, "utf8");
+  if (contents.includes("bcprov-jdk18on")) return;
+
+  if (/dependencies\s*\{/.test(contents)) {
+    contents = contents.replace(
+      /dependencies\s*\{/,
+      (match) => `${match}\n${BCPROV_DEP}`,
+    );
+  } else {
+    contents += `\n\ndependencies {\n${BCPROV_DEP}\n}\n`;
+  }
+  fs.writeFileSync(gradlePath, contents);
+}
+
 function withFreedriveDownloads(config) {
   return withDangerousMod(config, [
     "android",
@@ -56,6 +76,7 @@ function withFreedriveDownloads(config) {
       ensurePackageRegistered(
         path.join(androidRoot, PACKAGE_DIR, "MainApplication.kt"),
       );
+      ensureBcprovDependency(androidRoot);
       return cfg;
     },
   ]);
@@ -64,5 +85,5 @@ function withFreedriveDownloads(config) {
 module.exports = createRunOncePlugin(
   withFreedriveDownloads,
   PLUGIN_NAME,
-  "1.0.0",
+  "1.1.0",
 );
