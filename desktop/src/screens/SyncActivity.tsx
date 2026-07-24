@@ -1,4 +1,5 @@
 import { formatBytes, formatRelativeTime } from "../api/tauri";
+import { UploadProgressRing } from "../components/UploadProgressRing";
 import type { ActivityItem, SyncStatus } from "../types";
 
 interface SyncActivityProps {
@@ -129,6 +130,12 @@ export function SyncActivity({
                   <td>{formatBytes(item.file_size)}</td>
                   <td>
                     <span className={`status-badge ${st.className}`}>
+                      {item.status === "uploading" && (
+                        <UploadProgressRing
+                          progress={item.progress}
+                          className="status-upload-ring-inline"
+                        />
+                      )}
                       {st.text === "Synced" && "✓ "}
                       {st.text}
                     </span>

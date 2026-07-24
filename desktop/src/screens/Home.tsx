@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatRelativeTime } from "../api/tauri";
 import { NotificationMiniCard } from "../components/NotificationMiniCard";
+import { UploadProgressRing } from "../components/UploadProgressRing";
 import type {
   ActivityItem,
   AppNotification,
@@ -169,9 +170,7 @@ export function Home({
                     </span>
                   )}
                   {item.status === "uploading" && (
-                    <span className="status-uploading" aria-hidden>
-                      ↑
-                    </span>
+                    <UploadProgressRing progress={item.progress} />
                   )}
                   {item.status === "error" && <span className="status-error-mark">✕</span>}
                 </div>

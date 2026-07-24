@@ -497,6 +497,21 @@ impl SyncEngine {
         self.emit_activity_public(name, detail, size, status);
     }
 
+    fn upload_progress_cb(&self, file_name: &str) -> crate::api::UploadProgressCb {
+        let app = self.app.clone();
+        let name = file_name.to_string();
+        Arc::new(move |bytes_sent, bytes_total| {
+            let _ = app.emit(
+                "upload-progress",
+                serde_json::json!({
+                    "name": name,
+                    "bytes_sent": bytes_sent,
+                    "bytes_total": bytes_total,
+                }),
+            );
+        })
+    }
+
     pub fn emit_activity_public(&self, name: &str, detail: &str, size: i64, status: &str) {
         if let Ok(conn) = self.db.lock() {
             self.emit_activity_with_conn(&conn, name, detail, size, status);
@@ -705,12 +720,7 @@ impl SyncEngine {
     }
 
     async fn ensure_sync_folder_remote(&self, sf: &SyncFolderRow) -> AppResult<String> {
-        if self
-            .api
-            .get_folder_contents(&sf.remote_folder_id)
-            .await
-            .is_ok()
-        {
+        if self.remote_folder_exists(&sf.remote_folder_id).await {
             return Ok(sf.remote_folder_id.clone());
         }
 
@@ -1350,7 +1360,10 @@ impl SyncEngine {
     }
 
     async fn remote_folder_exists(&self, folder_id: &str) -> bool {
-        self.api.get_folder_contents(folder_id).await.is_ok()
+        match self.api.get_folder_contents(folder_id).await {
+            Ok(contents) => !contents.folder.as_ref().is_some_and(|f| f.is_trashed),
+            Err(_) => false,
+        }
     }
 
     async fn run_initial_sync_inner(self: &Arc<Self>) -> AppResult<()> {
@@ -1979,7 +1992,15 @@ impl SyncEngine {
                             message: format!("Uploading {} ({})…", file_name, format_size(size)),
                             ..base_progress.clone()
                         },
-                        || self.api.update_file_content(&rid, file_path, file_name, existing_key),
+                        || {
+                            self.api.update_file_content(
+                                &rid,
+                                file_path,
+                                file_name,
+                                existing_key,
+                                Some(self.upload_progress_cb(file_name)),
+                            )
+                        },
                     )
                     .await;
 
@@ -2115,8 +2136,13 @@ impl SyncEngine {
                     ..base_progress
                 },
                 || {
-                    self.api
-                        .upload_file(&self.db, file_path, file_name, &remote_folder_id)
+                    self.api.upload_file(
+                        &self.db,
+                        file_path,
+                        file_name,
+                        &remote_folder_id,
+                        Some(self.upload_progress_cb(file_name)),
+                    )
                 },
             )
             .await;

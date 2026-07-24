@@ -20,6 +20,7 @@ import type {
   CryptoSyncStats,
   RotateCryptoKeyResult,
   HydrateFailedEvent,
+  UploadProgressEvent,
 } from "../types";
 
 export const api = {
@@ -89,6 +90,10 @@ export function onSyncActivity(cb: (item: Partial<ActivityItem>) => void) {
 
 export function onSyncProgress(cb: (progress: SyncProgress) => void) {
   return listen<SyncProgress>("sync-progress", (e) => cb(e.payload));
+}
+
+export function onUploadProgress(cb: (progress: UploadProgressEvent) => void) {
+  return listen<UploadProgressEvent>("upload-progress", (e) => cb(e.payload));
 }
 
 export function onMyDriveHydrateFailed(cb: (event: HydrateFailedEvent) => void) {

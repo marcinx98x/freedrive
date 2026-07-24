@@ -62,6 +62,8 @@ pub struct Folder {
     pub name: String,
     #[serde(default)]
     pub parent_id: Option<String>,
+    #[serde(default)]
+    pub is_trashed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

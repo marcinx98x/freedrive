@@ -113,6 +113,14 @@ export interface ActivityItem {
   file_size: number;
   status: ActivityStatus | string;
   created_at: string;
+  /** 0–1 upload fraction while status is uploading; undefined = indeterminate. */
+  progress?: number;
+}
+
+export interface UploadProgressEvent {
+  name: string;
+  bytes_sent: number;
+  bytes_total: number;
 }
 
 export type SyncMode = "stream" | "mirror";

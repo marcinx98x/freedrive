@@ -101,6 +101,8 @@ type ComputerRepository interface {
 type FolderRepository interface {
 	Create(ctx context.Context, folder *domain.Folder) error
 	GetByID(ctx context.Context, id string) (*domain.Folder, error)
+	// GetByParentName returns a folder by parent + name + owner, including trashed rows.
+	GetByParentName(ctx context.Context, parentID *string, name, ownerID string) (*domain.Folder, error)
 	Update(ctx context.Context, folder *domain.Folder) error
 	Delete(ctx context.Context, id string) error
 	GetChildren(ctx context.Context, parentID *string, ownerID string) ([]domain.Folder, error)

@@ -85,6 +85,15 @@ const SMALL_UPLOAD_BYTES: u64 = 1_048_576;
 const RESUMABLE_THRESHOLD: u64 = 32 * 1024 * 1024;
 const RESUMABLE_CHUNK: usize = 8 * 1024 * 1024;
 
+/// `(bytes_sent, bytes_total)` for UI progress rings.
+pub type UploadProgressCb = Arc<dyn Fn(u64, u64) + Send + Sync>;
+
+fn report_progress(on_progress: Option<&UploadProgressCb>, sent: u64, total: u64) {
+    if let Some(cb) = on_progress {
+        cb(sent, total);
+    }
+}
+
 
 
 impl ApiClient {
@@ -568,7 +577,12 @@ impl ApiClient {
 
             Ok(folder) => Ok(folder),
 
-            Err(_) => {
+            Err(e) => {
+
+                crate::sync::log::sync_log(format!(
+                    "create_folder '{}' failed ({}), resolving by name",
+                    name, e
+                ));
 
                 let parent = parent_id
 
@@ -905,6 +919,8 @@ impl ApiClient {
 
         folder_id: &str,
 
+        on_progress: Option<UploadProgressCb>,
+
     ) -> AppResult<(FileRecord, [u8; 32])> {
 
         self.upload_multipart_with_retry(
@@ -920,6 +936,8 @@ impl ApiClient {
             Some(folder_id),
 
             None,
+
+            on_progress,
 
         )
 
@@ -941,6 +959,8 @@ impl ApiClient {
 
         existing_key: Option<[u8; 32]>,
 
+        on_progress: Option<UploadProgressCb>,
+
     ) -> AppResult<(FileRecord, [u8; 32])> {
 
         self.upload_multipart_with_retry(
@@ -956,6 +976,8 @@ impl ApiClient {
             None,
 
             existing_key,
+
+            on_progress,
 
         )
 
@@ -980,6 +1002,8 @@ impl ApiClient {
         folder_id: Option<&str>,
 
         existing_key: Option<[u8; 32]>,
+
+        on_progress: Option<UploadProgressCb>,
 
     ) -> AppResult<(FileRecord, [u8; 32])> {
 
@@ -1095,10 +1119,16 @@ impl ApiClient {
                     .strip_prefix("/files/")
                     .and_then(|rest| rest.strip_suffix("/content"))
                     .map(|s| s.to_string());
-                self.resumable_stream_once(&prepared, replace_id.as_deref(), http_timeout)
-                    .await
+                self.resumable_stream_once(
+                    &prepared,
+                    replace_id.as_deref(),
+                    http_timeout,
+                    on_progress.as_ref(),
+                )
+                .await
             } else {
-                self.multipart_stream_once(path, &prepared, http_timeout).await
+                self.multipart_stream_once(path, &prepared, http_timeout, on_progress.as_ref())
+                    .await
             };
 
 
@@ -1384,6 +1414,7 @@ impl ApiClient {
         prepared: &PreparedUpload,
         replace_file_id: Option<&str>,
         timeout: Duration,
+        on_progress: Option<&UploadProgressCb>,
     ) -> AppResult<crate::api::types::FileRecord> {
         use std::io::{Read, Seek, SeekFrom};
 
@@ -1391,6 +1422,8 @@ impl ApiClient {
             UploadBody::Memory(v) => v.len() as u64,
             UploadBody::TempFile(p) => std::fs::metadata(p)?.len(),
         };
+
+        report_progress(on_progress, 0, cipher_len);
 
         let mut session_body = serde_json::json!({
             "name": prepared.name,
@@ -1465,6 +1498,7 @@ impl ApiClient {
             }
 
             offset = end + 1;
+            report_progress(on_progress, offset, cipher_len);
             if offset >= cipher_len {
                 return serde_json::from_str(&text)
                     .map_err(|e| AppError::msg(format!("parse file response: {e}")));
@@ -1483,7 +1517,15 @@ impl ApiClient {
 
         timeout: Duration,
 
+        on_progress: Option<&UploadProgressCb>,
+
     ) -> AppResult<T> {
+
+        let cipher_len = match &prepared.body {
+            UploadBody::Memory(v) => v.len() as u64,
+            UploadBody::TempFile(p) => std::fs::metadata(p).map(|m| m.len()).unwrap_or(0),
+        };
+        report_progress(on_progress, 0, cipher_len);
 
         let url = self.api_url(path);
 
@@ -1584,6 +1626,8 @@ impl ApiClient {
             return Err(AppError::msg(format!("upload failed ({})", status)));
 
         }
+
+        report_progress(on_progress, cipher_len, cipher_len);
 
         serde_json::from_str(&text).map_err(Into::into)
 

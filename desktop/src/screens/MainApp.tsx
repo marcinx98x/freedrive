@@ -10,6 +10,7 @@ import {
   onSyncActivity,
   onSyncProgress,
   onSyncStatusChanged,
+  onUploadProgress,
 } from "../api/tauri";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { AboutDialog } from "../components/AboutDialog";
@@ -167,21 +168,37 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
     onSyncActivity((item) => {
       setActivity((prev) => {
         const name = item.name || "File";
+        const status = item.status || "uploading";
+        const idx = prev.findIndex((a) => a.name === name);
+        const prevProgress = idx >= 0 ? prev[idx].progress : undefined;
         const row: ActivityItem = {
           id: typeof item.id === "number" ? item.id : Date.now(),
           name,
           detail: item.detail || "",
           file_size: item.file_size || 0,
-          status: item.status || "uploading",
+          status,
           created_at: new Date().toISOString(),
+          progress: status === "uploading" ? prevProgress : undefined,
         };
-        const idx = prev.findIndex((a) => a.name === name);
         if (idx >= 0) {
           const next = [...prev];
           next[idx] = { ...row, id: prev[idx].id };
           return next;
         }
         return [row, ...prev].slice(0, 50);
+      });
+    }).then((u) => unsubs.push(u));
+    onUploadProgress((prog) => {
+      const total = prog.bytes_total > 0 ? prog.bytes_total : 0;
+      const fraction = total > 0 ? Math.min(1, prog.bytes_sent / total) : 0;
+      setActivity((prev) => {
+        const idx = prev.findIndex((a) => a.name === prog.name);
+        if (idx < 0) return prev;
+        if (prev[idx].status !== "uploading") return prev;
+        if (prev[idx].progress === fraction) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], progress: fraction };
+        return next;
       });
     }).then((u) => unsubs.push(u));
     onMyDriveHydrateFailed((event) => {

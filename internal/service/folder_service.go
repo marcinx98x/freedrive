@@ -45,7 +45,10 @@ func NewFolderService(
 	}
 }
 
-// Create creates a new folder.
+// Create creates a new folder. If a live folder with the same parent+name already
+// exists, it is returned (idempotent). If a trashed folder with that name exists,
+// it is restored and returned — this avoids UNIQUE(parent_id,name,owner_id)
+// collisions that leave desktop sync stuck on "folder not found".
 func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error {
 	if folder.ParentID != nil && *folder.ParentID != "" {
 		if err := s.access.CanWriteFolder(ctx, *folder.ParentID, folder.OwnerID); err != nil {
@@ -62,6 +65,30 @@ func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error
 			return fmt.Errorf("cannot create folder inside a trashed folder")
 		}
 	}
+
+	existing, err := s.folderRepo.GetByParentName(ctx, folder.ParentID, folder.Name, folder.OwnerID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		if existing.IsTrashed {
+			if err := s.Restore(ctx, existing.ID, folder.OwnerID); err != nil {
+				return err
+			}
+			restored, err := s.folderRepo.GetByID(ctx, existing.ID)
+			if err != nil {
+				return err
+			}
+			if restored == nil {
+				return fmt.Errorf("folder not found")
+			}
+			*folder = *restored
+			return nil
+		}
+		*folder = *existing
+		return nil
+	}
+
 	if err := s.folderRepo.Create(ctx, folder); err != nil {
 		return err
 	}

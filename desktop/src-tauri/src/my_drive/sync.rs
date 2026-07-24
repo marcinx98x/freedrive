@@ -174,7 +174,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
                 .and_then(|k| crate::crypto::key_from_b64url(&k).ok())
         };
         let (rec, key) = api
-            .update_file_content(&remote_id, path, &file_name, existing_key)
+            .update_file_content(&remote_id, path, &file_name, existing_key, None)
             .await?;
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
@@ -185,7 +185,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
 
     let parent_folder_id = ensure_my_drive_parent_folder(api, db, &relative).await?;
     let (rec, key) = api
-        .upload_file(db, path, &file_name, &parent_folder_id)
+        .upload_file(db, path, &file_name, &parent_folder_id, None)
         .await?;
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
