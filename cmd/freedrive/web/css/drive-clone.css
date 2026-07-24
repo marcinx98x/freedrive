@@ -2421,8 +2421,8 @@ body {
   flex-direction: row !important;
   align-items: center !important;
   height: 48px;
-  padding: 0 6px 0 14px !important;
-  gap: 10px;
+  padding: 0 8px 0 14px !important;
+  gap: 12px;
   background: #f0f4f9 !important;
   border: 1px solid transparent !important;
   border-radius: 10px !important;
@@ -2447,9 +2447,12 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-right: 4px;
+  margin-right: 2px;
 }
 
-.app:not(.admin-mode) .folder-card .card-more-btn {
+/* Higher specificity than .file-card .card-more-btn absolute rule below */
+.app:not(.admin-mode) .file-grid.grid-view .file-card.folder-card .card-more-btn {
   position: static !important;
   top: auto !important;
   right: auto !important;
