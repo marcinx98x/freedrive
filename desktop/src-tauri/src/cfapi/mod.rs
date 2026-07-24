@@ -178,6 +178,17 @@ fn complete_connect_finalize(
     } else {
         register::mark_finalize_complete(db).map_err(|e| e.to_string())?;
     }
+
+    // Branded Explorer navigation pane entry (Google Drive–style). Best-effort only —
+    // must not break CfAPI connect / 0x80070057 recovery.
+    match shell_register::ensure_shell_registered(db, sync_root) {
+        Ok(()) => {
+            util::notify_shell_updated();
+            cfapi_log("shell SyncRootManager registered / refreshed");
+        }
+        Err(e) => cfapi_log(&format!("shell register warning: {}", e)),
+    }
+
     cfapi_log("explorer integration started");
 
     spawn_prefetch_my_drive(db.clone(), sync_root.to_path_buf(), api);
@@ -302,6 +313,8 @@ pub fn unregister(state: &AppState) -> Result<(), String> {
             cfapi_log(&format!("shell unregister warning: {}", e));
         }
     }
+    shell_register::purge_all_freedrive_shell_entries();
+    util::notify_shell_updated();
 
     register::unregister_sync_root(&sync_root).map_err(|e| {
         let msg = format!(
@@ -321,17 +334,22 @@ pub fn unregister(state: &AppState) -> Result<(), String> {
 pub fn unregister_for_uninstall(db: &crate::db::DbHandle) {
     stop();
     let Ok(sync_root) = crate::auth_store::sync_root_dir(false) else {
+        // Still purge shell keys so the Explorer nav entry disappears.
+        shell_register::purge_all_freedrive_shell_entries();
+        util::notify_shell_updated();
         return;
     };
-    if shell_register::is_shell_registered(db).unwrap_or(false) {
-        if let Err(e) = shell_register::unregister_shell(db) {
-            cfapi_log(&format!("uninstall shell unregister warning: {}", e));
-        }
+    if let Err(e) = shell_register::unregister_shell(db) {
+        cfapi_log(&format!("uninstall shell unregister warning: {}", e));
     }
+    // Always wipe any leftover FreeDrive!* SyncRootManager keys (stale DB flags).
+    shell_register::purge_all_freedrive_shell_entries();
+    util::notify_shell_updated();
     if let Err(e) = register::unregister_sync_root(&sync_root) {
         cfapi_log(&format!("uninstall unregister sync root: {}", e));
     }
     let _ = register::clear_registration_state(db);
+    let _ = shell_register::clear_shell_registration_state(db);
     cfapi_log("uninstall: sync root unregister attempted");
 }
 

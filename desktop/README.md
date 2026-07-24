@@ -25,7 +25,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Device identity** — reports the computer hostname and keeps a stable installation ID, so signing in again updates the same entry in the server's Devices list instead of creating a duplicate
 - **Non-blocking sign-in** — crypto unlock, sync restore, and Explorer (CfAPI) start in the background so login does not block the UI
 - **System tray** — minimize to tray, pause/resume sync from the menu
-- **Windows Explorer integration** (Windows 10 1809+) — open `%USERPROFILE%\FreeDrive` in File Explorer while the desktop client is running; **My Drive** defaults to **Stream** (placeholders; download on open, free space on close). Optional **Mirror** keeps a full local copy.
+- **Windows Explorer integration** (Windows 10 1809+) — open `%USERPROFILE%\FreeDrive` in File Explorer while the desktop client is running; **My Drive** defaults to **Stream** (placeholders; download on open, free space on close). Optional **Mirror** keeps a full local copy. After sign-in, **FreeDrive** is pinned in Explorer’s left navigation pane (CLSID NameSpace + SyncRootManager, app icon). Logout leaves that entry pinned; uninstall removes it.
 
 ## Prerequisites
 
@@ -134,10 +134,10 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 - Open **My Drive** inside that folder to browse cloud content.
 - **Stream (default):** placeholders only — a file downloads when you open it, uploads on save/close, then frees local disk space again (like Google Drive for desktop streaming). The whole My Drive folder is **not** kept on disk.
 - **Mirror (optional):** Preferences → FreeDrive → Mirror files keeps a full local copy under `~/FreeDrive/My Drive` (uses disk space; good for offline).
+- **Explorer nav pane:** after a successful provider connect, Windows shows a pinned **FreeDrive** entry (branded icon) in the left sidebar via CLSID `Desktop\NameSpace` + SyncRootManager. Connect always refreshes `IconResource` / `DefaultIcon` (so NSIS updates pick up the new exe). **Sign out** disconnects the provider but **keeps** the sidebar pin; **uninstall** (NSIS) removes NameSpace + SyncRootManager keys. Prefer **Unregister Explorer integration** in settings only when recovering a broken registration.
 - Requires **Windows 10 1809+**. CfAPI connects synchronously on startup / login (`connect-first` recovery if Windows already has the sync root registered).
-- Integration state lives in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_finalize_complete`). Updating or reinstalling the app does not reset a working registration.
+- Integration state lives in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_finalize_complete`, `cf_shell_registered`). Updating or reinstalling the app does not reset a working registration.
 - Hydrate cache (temporary plaintext while a file is open): `%APPDATA%\FreeDrive\hydrate_cache` — cleared when Stream frees space after close.
-- If you previously used a build that registered Explorer sidebar entries, run **Unregister Explorer integration** in app settings (or `unregister_explorer_integration`) once to clear stale shell registry from older builds.
 
 #### CfAPI recovery (`0x80070057` / “cloud file provider is not running”)
 

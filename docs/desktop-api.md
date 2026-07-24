@@ -66,14 +66,21 @@ Rust client: [`desktop/src-tauri/src/api/client.rs`](../desktop/src-tauri/src/ap
 
 ## Windows Explorer (CfAPI)
 
-On Windows 10 1809+ the desktop app registers a **Cloud Files** sync root at `%USERPROFILE%\FreeDrive\` after sign-in. Explorer shows **FreeDrive** in the navigation pane and under **This PC**.
+On Windows 10 1809+ the desktop app registers a **Cloud Files** sync root at `%USERPROFILE%\FreeDrive\` after sign-in. Explorer shows **FreeDrive** in the navigation pane (pinned CLSID NameSpace + SyncRootManager branded icon) and under **This PC**.
+
+**Explorer sidebar lifecycle**
+
+- **Sign-in / connect:** `ensure_shell_registered` writes SyncRootManager (`DisplayNameResource=FreeDrive`, `IconResource={exe},0`), pins `HKCU\…\Desktop\NameSpace\{FD9A2B3C-…EE01}` with `System.IsPinnedToNameSpaceTree=1` / `DefaultIcon` / `TargetFolderPath`, and notifies the shell. Re-run on every connect so updates refresh the icon path.
+- **Sign-out:** disconnects CfAPI only — the sidebar pin stays.
+- **Uninstall:** NSIS calls `unregister_for_uninstall`, which purges FreeDrive SyncRootManager keys and the NameSpace CLSID so the entry disappears.
+- **Manual recovery:** Preferences → Unregister Explorer integration (also used for broken registrations).
 
 **My Drive sync modes** (Preferences → FreeDrive; default **stream**):
 
 - **Stream:** `My Drive\` shows cloud placeholders only. Opening a file downloads/decrypts via `GET /api/v1/files/{id}/download` into a short-lived hydrate cache; closing uploads edits and dehydrates the placeholder so it does not keep filling the disk. Switching Mirror → Stream dehydrates existing local copies.
 - **Mirror:** poll downloads the full My Drive tree under `%USERPROFILE%\FreeDrive\My Drive\` for offline use.
 
-- Registration: `desktop/src-tauri/src/cfapi/`
+- Registration: `desktop/src-tauri/src/cfapi/` (shell: `shell_register.rs`)
 - Placeholder cache: SQLite table `my_drive_placeholders` in `sync.db`
 - Hydrate cache: `%APPDATA%\FreeDrive\hydrate_cache`
 - Requires the desktop app to be running while browsing placeholders
