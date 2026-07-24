@@ -13,9 +13,10 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Files stack** — Files tab hosts My Drive home + nested Folder screens (Drive-like); Shared can deep-link into a folder under Files
 - **Files** — My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
 - **Grid tiles** — square previews (`aspectRatio: 1`); column count scales with content width so landscape tiles stay phone-sized
-- **Create FAB** — Upload and New folder on Files / Folder (camera stub reserved); FAB respects safe-area insets
+- **Create FAB** — Upload, New folder, Document (`.txt`), and Spreadsheet (`.csv`) on Files / Folder (camera stub reserved); FAB respects safe-area insets
 - **Upload** — multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then native `FileSystem.uploadAsync` multipart (`POST /api/v1/files/upload`) — avoids Hermes Blob / FormDataPart limits
 - **New folder** — dialog → `POST /api/v1/folders` in the current folder (or My Drive root)
+- **New Document / Spreadsheet** — encrypted empty `.txt` / starter `.csv`; opens in the text preview editor (full Sheets UI is web-only)
 - **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage
 - **Search** — search files by name from the top bar
 - **Branding** — same FreeDrive logo as desktop (`scripts/generate-assets.mjs`); SVG icons aligned with desktop `NavIcons`

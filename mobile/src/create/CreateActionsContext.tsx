@@ -15,6 +15,8 @@ import { colors, radii, spacing } from "../theme";
 export type CreateHandlers = {
   onUpload: () => void;
   onFolder: () => void;
+  onDocument: () => void;
+  onSpreadsheet: () => void;
 };
 
 type CreateActionsContextValue = {
@@ -32,21 +34,23 @@ export function useCreateActions(): CreateActionsContextValue {
   return ctx;
 }
 
-/** Register upload/folder handlers only while this screen is focused. */
+/** Register create handlers only while this screen is focused. */
 export function useRegisterCreateHandlers(handlers: CreateHandlers | null) {
   const { registerCreateHandlers } = useCreateActions();
   const onUpload = handlers?.onUpload;
   const onFolder = handlers?.onFolder;
+  const onDocument = handlers?.onDocument;
+  const onSpreadsheet = handlers?.onSpreadsheet;
 
   useFocusEffect(
     useCallback(() => {
-      if (!onUpload || !onFolder) {
+      if (!onUpload || !onFolder || !onDocument || !onSpreadsheet) {
         registerCreateHandlers(null);
         return () => registerCreateHandlers(null);
       }
-      registerCreateHandlers({ onUpload, onFolder });
+      registerCreateHandlers({ onUpload, onFolder, onDocument, onSpreadsheet });
       return () => registerCreateHandlers(null);
-    }, [registerCreateHandlers, onUpload, onFolder]),
+    }, [registerCreateHandlers, onUpload, onFolder, onDocument, onSpreadsheet]),
   );
 }
 
@@ -121,6 +125,26 @@ export function CreateActionsProvider({ children, onNeedFilesTab }: ProviderProp
             >
               <Icon name="folder" size={20} color={colors.text} />
               <Text style={styles.pillText}>Folder</Text>
+            </Pressable>
+            <Pressable
+              style={styles.pill}
+              onPress={() => {
+                close();
+                handlersRef.current?.onDocument();
+              }}
+            >
+              <Icon name="doc" size={20} color={colors.text} />
+              <Text style={styles.pillText}>Document</Text>
+            </Pressable>
+            <Pressable
+              style={styles.pill}
+              onPress={() => {
+                close();
+                handlersRef.current?.onSpreadsheet();
+              }}
+            >
+              <Icon name="sheet" size={20} color={colors.text} />
+              <Text style={styles.pillText}>Spreadsheet</Text>
             </Pressable>
           </View>
         </View>

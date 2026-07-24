@@ -102,6 +102,7 @@ FreeDrive is ideal for:
 ### 3. File Lifecycle
 
 - Upload files via web UI
+- **New** menu — folder, file/folder upload, Document (`.txt`), Spreadsheet (`.csv`), Presentation (`.md` stub); Document/Spreadsheet/Presentation open in Docs or Sheets after create
 - Download encrypted blob payloads with metadata headers
 - Rename and move files between folders
 - Soft delete to Trash (files and folders, including folder subtrees)
@@ -713,9 +714,10 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage bar (portrait and landscape)
 - **Files stack** — Files tab nests My Drive home and Folder screens; Shared can open a folder under that stack
 - **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast; grid view uses square tiles and more columns on wide screens
-- **Create FAB** — Upload and New folder on Files / Folder screens
+- **Create FAB** — Upload, New folder, Document, and Spreadsheet on Files / Folder screens
 - **Encrypted upload** — multi-file picker → AES-GCM → cache file → native `expo-file-system` `uploadAsync` multipart to `POST /api/v1/files/upload` (Hermes cannot build Blobs from ArrayBuffer); same helper for content replace
 - **New folder** — `POST /api/v1/folders` from the FAB dialog
+- **New Document / Spreadsheet** — creates encrypted `Document.txt` / `Spreadsheet.csv` and opens the in-app text editor (web has Docs/Sheets; mobile edits CSV as text)
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list

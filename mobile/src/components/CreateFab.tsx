@@ -12,9 +12,16 @@ import { colors, radii, spacing } from "../theme";
 type Props = {
   onUpload: () => void;
   onFolder: () => void;
+  onDocument: () => void;
+  onSpreadsheet: () => void;
 };
 
-export function CreateFab({ onUpload, onFolder }: Props) {
+export function CreateFab({
+  onUpload,
+  onFolder,
+  onDocument,
+  onSpreadsheet,
+}: Props) {
   const [open, setOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
@@ -61,6 +68,26 @@ export function CreateFab({ onUpload, onFolder }: Props) {
             >
               <Icon name="folder" size={20} color={colors.text} />
               <Text style={styles.pillText}>Folder</Text>
+            </Pressable>
+            <Pressable
+              style={styles.pill}
+              onPress={() => {
+                close();
+                onDocument();
+              }}
+            >
+              <Icon name="doc" size={20} color={colors.text} />
+              <Text style={styles.pillText}>Document</Text>
+            </Pressable>
+            <Pressable
+              style={styles.pill}
+              onPress={() => {
+                close();
+                onSpreadsheet();
+              }}
+            >
+              <Icon name="sheet" size={20} color={colors.text} />
+              <Text style={styles.pillText}>Spreadsheet</Text>
             </Pressable>
           </>
         ) : null}

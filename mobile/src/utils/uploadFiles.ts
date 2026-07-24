@@ -105,3 +105,35 @@ export async function pickAndUploadFiles(
 
   return uploaded;
 }
+
+/** Create a new encrypted text/csv file in folderId (null = My Drive root). */
+export async function createEncryptedTextFile(opts: {
+  name: string;
+  mimeType: string;
+  text: string;
+  folderId: string | null;
+}): Promise<FileItem> {
+  const plaintext = new TextEncoder().encode(opts.text);
+  const prepared = await prepareNewEncryptedFile(plaintext);
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) throw new Error("Cache directory unavailable");
+  const encPath = `${dir}fd_new_${Date.now()}_${safeName(opts.name)}.bin`;
+  await FileSystem.writeAsStringAsync(encPath, bytesToBase64(prepared.ciphertext), {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  try {
+    const created = await api.uploadFile({
+      name: opts.name,
+      mimeType: opts.mimeType,
+      iv: prepared.ivB64,
+      originalSize: plaintext.length,
+      encryptedUri: encPath,
+      folderId: opts.folderId,
+    });
+    await api.putFileEncryptionKey(created.id, prepared.wrappedFileKey);
+    await cacheFileKey(created.id, prepared.rawKey);
+    return created;
+  } finally {
+    await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
+  }
+}

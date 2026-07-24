@@ -39,7 +39,7 @@ import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { openFile } from "../utils/openFile";
-import { pickAndUploadFiles } from "../utils/uploadFiles";
+import { createEncryptedTextFile, pickAndUploadFiles } from "../utils/uploadFiles";
 
 type Props = CompositeScreenProps<
   NativeStackScreenProps<FilesStackParamList, "FilesHome">,
@@ -314,11 +314,57 @@ export function FilesScreen({ navigation }: Props) {
 
   const openFolderDialog = useCallback(() => setFolderDialog(true), []);
 
+  const handleCreateDocument = useCallback(async () => {
+    setUploading(true);
+    setUploadLabel("Creating document…");
+    try {
+      const created = await createEncryptedTextFile({
+        name: "Document.txt",
+        mimeType: "text/plain",
+        text: "",
+        folderId: null,
+      });
+      await refreshTab({ soft: true });
+      await openFile(created, navigation, { gallery: [created] });
+    } catch (err) {
+      console.error("create document failed:", err);
+    } finally {
+      setUploading(false);
+      setUploadLabel("");
+    }
+  }, [navigation, refreshTab]);
+
+  const handleCreateSpreadsheet = useCallback(async () => {
+    setUploading(true);
+    setUploadLabel("Creating spreadsheet…");
+    try {
+      const created = await createEncryptedTextFile({
+        name: "Spreadsheet.csv",
+        mimeType: "text/csv",
+        text: "Column 1,Column 2\n,\n",
+        folderId: null,
+      });
+      await refreshTab({ soft: true });
+      await openFile(created, navigation, { gallery: [created] });
+    } catch (err) {
+      console.error("create spreadsheet failed:", err);
+    } finally {
+      setUploading(false);
+      setUploadLabel("");
+    }
+  }, [navigation, refreshTab]);
+
   useRegisterCreateHandlers({
     onUpload: () => {
       void handleUpload();
     },
     onFolder: openFolderDialog,
+    onDocument: () => {
+      void handleCreateDocument();
+    },
+    onSpreadsheet: () => {
+      void handleCreateSpreadsheet();
+    },
   });
 
   return (
@@ -453,7 +499,12 @@ export function FilesScreen({ navigation }: Props) {
       )}
 
       {tab === "my-drive" && !isWide ? (
-        <CreateFab onUpload={() => void handleUpload()} onFolder={() => setFolderDialog(true)} />
+        <CreateFab
+          onUpload={() => void handleUpload()}
+          onFolder={() => setFolderDialog(true)}
+          onDocument={() => void handleCreateDocument()}
+          onSpreadsheet={() => void handleCreateSpreadsheet()}
+        />
       ) : null}
     </SafeAreaView>
   );

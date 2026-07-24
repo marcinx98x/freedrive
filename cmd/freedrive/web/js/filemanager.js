@@ -4754,9 +4754,22 @@ const FileManager = (() => {
             }
             refresh();
             if (created?.id) {
-                setTimeout(() => {
+                setTimeout(async () => {
                     const row = document.querySelector(`[data-item-id="${created.id}"]`);
                     if (row && row.scrollIntoView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const mime = (mimeType || created.mime_type || '').toLowerCase();
+                    const fileName = (name || created.name || '').toLowerCase();
+                    const isSheet = mime.includes('csv')
+                        || mime.includes('spreadsheet')
+                        || fileName.endsWith('.csv')
+                        || fileName.endsWith('.xlsx')
+                        || fileName.endsWith('.xls');
+                    try {
+                        if (isSheet) await openSheetViewer(created);
+                        else await openTextEditor(created);
+                    } catch (err) {
+                        Components.toast(`Open failed: ${err.message || err}`, 'error');
+                    }
                 }, 120);
             }
         } catch (err) {

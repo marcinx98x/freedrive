@@ -1551,9 +1551,14 @@ body {
   height: 48px !important;
   border-radius: 0 !important;
   border: none !important;
+  border-bottom: 1px solid #e8eaed !important;
   background: #fff !important;
   padding: 0 14px !important;
   margin: 0 !important;
+}
+
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:last-child {
+  border-bottom: none !important;
 }
 
 .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover {
