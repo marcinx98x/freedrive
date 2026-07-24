@@ -1,6 +1,7 @@
 import * as Device from "expo-device";
 import * as FileSystem from "expo-file-system/legacy";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { NativeModules, Platform } from "react-native";
 import {
   clearSession,
   getServerUrl,
@@ -27,6 +28,29 @@ import type {
   User,
   UserShare,
 } from "./types";
+
+type NativeDownloadModule = {
+  downloadToFile(
+    url: string,
+    destPath: string,
+    headers: Record<string, string> | null,
+    notificationId: number,
+    fileName: string,
+  ): Promise<{
+    status: number;
+    path: string;
+    iv: string;
+    mime: string;
+    originalSize: number;
+  }>;
+};
+
+function nativeDownloads(): NativeDownloadModule | undefined {
+  if (Platform.OS !== "android") return undefined;
+  const mod = NativeModules.FreeDriveDownloads as NativeDownloadModule | undefined;
+  if (!mod || typeof mod.downloadToFile !== "function") return undefined;
+  return mod;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -617,10 +641,16 @@ export const api = {
   /**
    * Download ciphertext straight to a cache file (native I/O — avoids loading
    * multi-GB bodies into the JS heap). Response headers come from the download result.
+   * On Android prefers FreeDriveDownloads.downloadToFile (no Expo 60s hang) with optional
+   * progress notification updates.
    */
   downloadEncryptedToFile: async (
     fileId: string,
     destPath: string,
+    opts?: {
+      progressNotificationId?: number;
+      fileName?: string;
+    },
   ): Promise<{
     uri: string;
     iv: string;
@@ -635,12 +665,50 @@ export const api = {
         headers.Authorization = `Bearer ${tokens.access_token}`;
       }
       await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
-      const result = await FileSystem.downloadAsync(
-        `${url}/api/v1/files/${fileId}/download`,
-        destPath,
-        { headers },
-      );
-      const status = result.status ?? 0;
+
+      const downloadUrl = `${url}/api/v1/files/${fileId}/download`;
+      const native = nativeDownloads();
+      let status = 0;
+      let uri = destPath;
+      let iv = "";
+      let mime = "application/octet-stream";
+      let originalSize = 0;
+
+      if (native) {
+        const result = await native.downloadToFile(
+          downloadUrl,
+          destPath,
+          headers,
+          opts?.progressNotificationId ?? -1,
+          opts?.fileName || "file",
+        );
+        status = result.status ?? 0;
+        const path = result.path || "";
+        uri = path
+          ? path.startsWith("file:")
+            ? path
+            : `file://${path}`
+          : destPath;
+        iv = result.iv || "";
+        mime = result.mime || "application/octet-stream";
+        originalSize = Number(result.originalSize || 0);
+      } else {
+        const result = await FileSystem.downloadAsync(downloadUrl, destPath, { headers });
+        status = result.status ?? 0;
+        uri = result.uri;
+        const hdrs = result.headers || {};
+        const header = (name: string) => {
+          const lower = name.toLowerCase();
+          for (const [k, v] of Object.entries(hdrs)) {
+            if (k.toLowerCase() === lower) return String(v);
+          }
+          return "";
+        };
+        iv = header("X-File-IV");
+        mime = header("X-File-Mime") || "application/octet-stream";
+        originalSize = Number(header("X-Original-Size") || 0);
+      }
+
       if (status === 401 && retry) {
         await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
         const refreshed = await tryRefresh();
@@ -656,20 +724,7 @@ export const api = {
         await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
         throw new ApiError(`Download failed (${status})`, status);
       }
-      const hdrs = result.headers || {};
-      const header = (name: string) => {
-        const lower = name.toLowerCase();
-        for (const [k, v] of Object.entries(hdrs)) {
-          if (k.toLowerCase() === lower) return String(v);
-        }
-        return "";
-      };
-      return {
-        uri: result.uri,
-        iv: header("X-File-IV"),
-        mime: header("X-File-Mime") || "application/octet-stream",
-        originalSize: Number(header("X-Original-Size") || 0),
-      };
+      return { uri, iv, mime, originalSize };
     };
     return doDownload(true);
   },

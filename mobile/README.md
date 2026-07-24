@@ -33,7 +33,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via the same native multipart helper (`POST /api/v1/files/{id}/content`)
 - **Image rotate** — Rotate (90°) in the preview header, then Save to replace the file on the server (same content endpoint)
 - **Share a copy** — opens the Android share sheet with the decrypted file
-- **Download** — native MediaStore save via `FreeDriveDownloads` (config plugin in `plugins/with-freedrive-downloads/`); stream copy from decrypted path when available; ongoing “Downloading…” status bar notification, then tappable “Download complete”; Android 13+ asks for notification permission
+- **Download** — native HTTP stream + MediaStore save via `FreeDriveDownloads` (progress shows MB/total for large files); stream decrypt + copy from decrypted path; ongoing download notification then tappable “Download complete”; Android 13+ asks for notification permission
 - **Status notifications** — no persistent “app is running” icon (not appropriate for a Drive client); status-bar presence only for downloads and while a video is playing (media session / native controls)
 
 Offline files are planned for later releases. Full Docs/Photos parity and PDF annotation remain out of scope for the mobile MVP (Sheets-style grid for xlsx/csv is included).

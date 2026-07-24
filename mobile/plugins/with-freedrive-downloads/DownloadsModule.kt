@@ -12,18 +12,23 @@ import android.provider.MediaStore
 import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableMap
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import kotlin.math.max
 
 class DownloadsModule(
   reactContext: ReactApplicationContext
@@ -142,6 +147,193 @@ class DownloadsModule(
     } catch (error: Exception) {
       promise.reject("DOWNLOAD_SAVE_FAILED", error.message ?: "Could not save file", error)
     }
+  }
+
+  /**
+   * Stream HTTP GET to [destPath] (avoids Expo downloadAsync hangs on large files).
+   * When [notificationId] >= 0, updates the ongoing download notification with real progress.
+   * Resolves with { path, status, iv, mime, originalSize }.
+   */
+  @ReactMethod
+  fun downloadToFile(
+    url: String,
+    destPath: String,
+    headers: ReadableMap?,
+    notificationId: Double,
+    fileName: String,
+    promise: Promise
+  ) {
+    ioExecutor.execute {
+      var connection: HttpURLConnection? = null
+      val outFile = File(stripFileUri(destPath))
+      val notifyId = notificationId.toInt()
+      val label = sanitizeFileName(fileName)
+      try {
+        outFile.parentFile?.mkdirs()
+        if (outFile.exists() && !outFile.delete()) {
+          promise.reject("DOWNLOAD_FAILED", "Could not replace destination file", null)
+          return@execute
+        }
+
+        connection = (URL(url).openConnection() as HttpURLConnection).apply {
+          requestMethod = "GET"
+          connectTimeout = 30_000
+          // No short read timeout — large encrypted videos can take many minutes.
+          readTimeout = 0
+          instanceFollowRedirects = true
+          doInput = true
+          if (headers != null) {
+            val iterator = headers.keySetIterator()
+            while (iterator.hasNextKey()) {
+              val key = iterator.nextKey()
+              val value = headers.getString(key) ?: continue
+              setRequestProperty(key, value)
+            }
+          }
+        }
+
+        val status = connection.responseCode
+        val headerIv = connection.getHeaderField("X-File-IV") ?: ""
+        val headerMime = connection.getHeaderField("X-File-Mime")
+          ?: "application/octet-stream"
+        val headerOriginal = connection.getHeaderField("X-Original-Size")?.toLongOrNull() ?: 0L
+        val contentLength = connection.contentLengthLong.let { if (it < 0) 0L else it }
+
+        if (status < 200 || status >= 300) {
+          // Drain error body lightly then reject (keep status for JS 401 retry).
+          try {
+            connection.errorStream?.use { it.readBytes() }
+          } catch (_: Exception) {
+          }
+          outFile.delete()
+          val map = Arguments.createMap().apply {
+            putInt("status", status)
+            putString("path", "")
+            putString("iv", headerIv)
+            putString("mime", headerMime)
+            putDouble("originalSize", headerOriginal.toDouble())
+          }
+          // Resolve with status so JS can refresh+retry on 401 without treating as crash.
+          if (status == 401) {
+            promise.resolve(map)
+          } else {
+            promise.reject("DOWNLOAD_FAILED", "Download failed ($status)", null)
+          }
+          return@execute
+        }
+
+        val input = connection.inputStream
+        var written = 0L
+        var lastNotifyAt = 0L
+        FileOutputStream(outFile).use { output ->
+          val buffer = ByteArray(256 * 1024)
+          while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            output.write(buffer, 0, n)
+            written += n
+            val now = System.currentTimeMillis()
+            if (notifyId >= 0 && (now - lastNotifyAt >= 400 || written == contentLength)) {
+              lastNotifyAt = now
+              publishDownloadProgress(notifyId, label, written, contentLength)
+            }
+          }
+          output.flush()
+        }
+        input.close()
+
+        if (notifyId >= 0) {
+          publishDownloadProgress(notifyId, label, written, max(contentLength, written))
+        }
+
+        val map = Arguments.createMap().apply {
+          putInt("status", status)
+          putString("path", outFile.absolutePath)
+          putString("iv", headerIv)
+          putString("mime", headerMime)
+          putDouble("originalSize", headerOriginal.toDouble())
+        }
+        promise.resolve(map)
+      } catch (error: Exception) {
+        try {
+          outFile.delete()
+        } catch (_: Exception) {
+        }
+        promise.reject(
+          "DOWNLOAD_FAILED",
+          error.message ?: "Could not download file",
+          error
+        )
+      } finally {
+        try {
+          connection?.disconnect()
+        } catch (_: Exception) {
+        }
+      }
+    }
+  }
+
+  @ReactMethod
+  fun updateDownloadProgress(
+    notificationId: Double,
+    fileName: String,
+    bytesWritten: Double,
+    bytesTotal: Double,
+    promise: Promise
+  ) {
+    try {
+      publishDownloadProgress(
+        notificationId.toInt(),
+        sanitizeFileName(fileName),
+        bytesWritten.toLong(),
+        bytesTotal.toLong()
+      )
+      promise.resolve(null)
+    } catch (error: Exception) {
+      promise.reject("DOWNLOAD_NOTIFY_FAILED", error.message ?: "Could not update progress", error)
+    }
+  }
+
+  private fun publishDownloadProgress(
+    notificationId: Int,
+    fileName: String,
+    written: Long,
+    total: Long
+  ) {
+    if (notificationId < 0) return
+    ensureChannels()
+    val indeterminate = total <= 0L
+    val max = if (indeterminate) 0 else total.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val progress = if (indeterminate) {
+      0
+    } else {
+      written.coerceAtMost(total).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+    val text = if (indeterminate) {
+      "${formatBytes(written)} · $fileName"
+    } else {
+      "${formatBytes(written)} / ${formatBytes(total)} · $fileName"
+    }
+    val notification = NotificationCompat.Builder(reactApplicationContext, CHANNEL_PROGRESS)
+      .setContentTitle("Downloading")
+      .setContentText(text)
+      .setSmallIcon(android.R.drawable.stat_sys_download)
+      .setOngoing(true)
+      .setOnlyAlertOnce(true)
+      .setProgress(max, progress, indeterminate)
+      .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+      .build()
+    NotificationManagerCompat.from(reactApplicationContext).notify(notificationId, notification)
+  }
+
+  private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.0f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format("%.2f GB", gb)
   }
 
   /** Copy an already-decrypted local file into shared Downloads (no base64 / no full RAM load). */

@@ -30,6 +30,25 @@ type DownloadsNativeModule = {
     keyB64: string,
     ivB64: string,
   ): Promise<string>;
+  downloadToFile?(
+    url: string,
+    destPath: string,
+    headers: Record<string, string> | null,
+    notificationId: number,
+    fileName: string,
+  ): Promise<{
+    status: number;
+    path: string;
+    iv: string;
+    mime: string;
+    originalSize: number;
+  }>;
+  updateDownloadProgress?(
+    notificationId: number,
+    fileName: string,
+    bytesWritten: number,
+    bytesTotal: number,
+    ): Promise<void>;
 };
 
 const downloadsModule = NativeModules.FreeDriveDownloads as DownloadsNativeModule | undefined;
@@ -147,6 +166,7 @@ async function downloadAndDecryptViaNative(
     size?: number;
     encrypted_size?: number;
   },
+  opts?: { progressNotificationId?: number },
 ): Promise<{ uri: string; mime: string; bytes: Uint8Array }> {
   const decrypt = downloadsModule?.decryptAesGcmFile;
   if (!decrypt) throw new Error("Native decrypt is unavailable");
@@ -158,20 +178,40 @@ async function downloadAndDecryptViaNative(
   const plainPath = `${dir}fd_${file.id}_${safeFileName(file.name)}`;
 
   try {
-    const downloaded = await api.downloadEncryptedToFile(file.id, encPath);
+    const downloaded = await api.downloadEncryptedToFile(file.id, encPath, {
+      progressNotificationId: opts?.progressNotificationId,
+      fileName: file.name,
+    });
     const iv = downloaded.iv || file.iv;
     const mime = downloaded.mime || file.mime_type || "application/octet-stream";
 
     if (!iv) {
       // Legacy unencrypted: move ciphertext path to plaintext path.
       await FileSystem.deleteAsync(plainPath, { idempotent: true }).catch(() => {});
-      await FileSystem.moveAsync({ from: encPath, to: plainPath });
+      await FileSystem.moveAsync({ from: downloaded.uri || encPath, to: plainPath });
       return { uri: plainPath, mime, bytes: new Uint8Array(0) };
     }
 
     const key = await ensureFileKey(file.id);
     await FileSystem.deleteAsync(plainPath, { idempotent: true }).catch(() => {});
-    await decrypt(encPath, plainPath, rawKeyToStandardBase64(key), iv);
+    if (
+      opts?.progressNotificationId != null &&
+      typeof downloadsModule?.updateDownloadProgress === "function"
+    ) {
+      // Keep the bar full while decrypting so it does not look stuck at mid-download.
+      try {
+        await downloadsModule.updateDownloadProgress(
+          opts.progressNotificationId,
+          `Decrypting · ${file.name}`,
+          1,
+          1,
+        );
+      } catch {
+        // Non-fatal.
+      }
+    }
+    const encForDecrypt = downloaded.uri || encPath;
+    await decrypt(encForDecrypt, plainPath, rawKeyToStandardBase64(key), iv);
     return { uri: plainPath, mime, bytes: new Uint8Array(0) };
   } finally {
     await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
@@ -199,7 +239,7 @@ export async function downloadAndDecrypt(
     size?: number;
     encrypted_size?: number;
   },
-  opts?: { needBytes?: boolean },
+  opts?: { needBytes?: boolean; progressNotificationId?: number },
 ): Promise<{
   uri: string;
   mime: string;
@@ -228,7 +268,9 @@ export async function downloadAndDecrypt(
     nativeOk && (size > JS_DECRYPT_MAX_BYTES || isVideoFile(file) || (!needBytes && size > 8 * 1024 * 1024));
 
   if (preferNative) {
-    return downloadAndDecryptViaNative(file);
+    return downloadAndDecryptViaNative(file, {
+      progressNotificationId: opts?.progressNotificationId,
+    });
   }
 
   return downloadAndDecryptInMemory(file, needBytes);
@@ -470,7 +512,9 @@ export async function downloadFileToDevice(file: FileItem): Promise<void> {
     await requestNotificationPermissionIfNeeded();
     notificationId = await downloadsModule.beginDownload(file.name);
 
-    const { uri, mime } = await downloadAndDecrypt(file);
+    const { uri, mime } = await downloadAndDecrypt(file, {
+      progressNotificationId: notificationId,
+    });
     let savedUri: string;
     if (typeof downloadsModule.saveFromPath === "function") {
       savedUri = await downloadsModule.saveFromPath(file.name, mime, uri);
