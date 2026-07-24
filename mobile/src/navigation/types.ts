@@ -28,7 +28,7 @@ export type RootStackParamList = {
     title: string;
     uri: string;
     mime: string;
-    mode: "image" | "text" | "pdf";
+    mode: "image" | "text" | "pdf" | "video";
     text?: string;
     fileId?: string;
     gallery?: Array<{

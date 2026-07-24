@@ -704,43 +704,23 @@ Build outputs:
 
 ## Mobile Client (MVP)
 
-The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app (Expo / React Native). It connects to the same REST API as the web UI and desktop client.
+The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app (Expo / React Native).
 
-- **Sign in** with server URL, email, password, and email 2FA when enabled
-- **Drive-like dark UI** — bottom tabs (Home, Starred, Shared, Files) on portrait; pill search bar, list/grid toggle, sort chip
-- **Landscape NavRail** — when width > height (phone rotate / tablet landscape): narrow left rail with menu ≡, Create, and vertically centered primary tabs; portrait (including tablet) keeps phone chrome; Create uses rail `+` in landscape and FAB in portrait
-- **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage bar (portrait and landscape)
-- **Files stack** — Files tab nests My Drive home and Folder screens; Shared can open a folder under that stack
-- **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast; grid view uses square tiles and more columns on wide screens
-- **Create FAB** — Upload and New folder on Files / Folder screens
-- **Encrypted upload** — multi-file picker → AES-GCM → cache file → native `expo-file-system` `uploadAsync` multipart to `POST /api/v1/files/upload` (Hermes cannot build Blobs from ArrayBuffer); same helper for content replace
-- **New folder** — `POST /api/v1/folders` from the FAB dialog
-- **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
-- **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
-- **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
-- **File actions** — open, share a decrypted copy, download, star/unstar, and move files to Bin from item menus
-- **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
-- **In-app preview** — images, plain text (Markdown/JSON/CSV), PDF (open with another app)
-- **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors
-- **Edit & save** — text Edit/Save and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content` (no Docs/Sheets clone)
-- **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
-- Offline files are planned for later releases
-- See [`mobile/README.md`](mobile/README.md) for Expo Go setup and local APK build notes
+- Sign in, Drive-like UI (tabs / landscape NavRail / drawer), My Drive & Computers, encrypted upload/open
+- In-app previews: images and video (swipe galleries), text (edit/save), PDF (open with another app)
+- Downloads to MediaStore with status notifications; no persistent “app running” notification
 
-Quick start:
+See [`mobile/README.md`](mobile/README.md) for setup and APK build notes.
 
 ```bash
 go run ./cmd/freedrive          # terminal 1 — server
 cd mobile && npm install && npm start   # terminal 2 — Expo
 ```
 
-Build a release APK on Windows (canonical: `mobile\scripts\build-apk.ps1` → `mobile\dist\FreeDrive-1.0.0.apk`; do not build from long `Desktop\…` paths):
-
-```bash
-cd mobile && powershell -File scripts\build-apk.ps1
+```powershell
+cd mobile; powershell -File scripts\build-apk.ps1   # → mobile\dist\FreeDrive-1.0.0.apk
 ```
 
-Requires a server that supports paginated `GET /folders/root` and `GET /folders/{id}` (see [API Reference](#api-reference)).
 ---
 
 ## Project Structure

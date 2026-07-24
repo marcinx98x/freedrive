@@ -19,6 +19,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Sharing from "expo-sharing";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useVideoPlayer, VideoView } from "expo-video";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import {
@@ -31,6 +33,32 @@ import {
 type Props = NativeStackScreenProps<RootStackParamList, "FilePreview">;
 
 type UriCache = Record<string, string>;
+
+function VideoPreview({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.play();
+  });
+
+  useEffect(() => {
+    return () => {
+      try {
+        player.pause();
+      } catch {
+        // Player may already be released.
+      }
+    };
+  }, [player]);
+
+  return (
+    <VideoView
+      style={styles.video}
+      player={player}
+      nativeControls
+      contentFit="contain"
+      fullscreenOptions={{ enable: true }}
+    />
+  );
+}
 
 export function FilePreviewScreen({ route, navigation }: Props) {
   const {
@@ -48,8 +76,9 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     () => galleryParam ?? [],
     [galleryParam],
   );
-  const paging = mode === "image" && gallery.length > 1;
+  const paging = (mode === "image" || mode === "video") && gallery.length > 1;
   const pageWidth = Dimensions.get("window").width;
+  const insets = useSafeAreaInsets();
 
   const [pageIndex, setPageIndex] = useState(
     Math.min(Math.max(initialIndex, 0), Math.max(gallery.length - 1, 0)),
@@ -247,7 +276,10 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   React.useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: true,
-      title: mode === "image" ? currentTitle : initialTitle || "Preview",
+      title:
+        mode === "image" || mode === "video"
+          ? currentTitle
+          : initialTitle || "Preview",
       headerStyle: { backgroundColor: colors.bg },
       headerTintColor: colors.text,
       headerRight: () => (
@@ -385,6 +417,82 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     );
   }
 
+  if (mode === "video" && paging) {
+    return (
+      <View style={[styles.center, styles.videoSafe]}>
+        <FlatList
+          ref={listRef}
+          data={gallery}
+          keyExtractor={(item) => item.id}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={Math.min(initialIndex, gallery.length - 1)}
+          getItemLayout={(_, index) => ({
+            length: pageWidth,
+            offset: pageWidth * index,
+            index,
+          })}
+          onMomentumScrollEnd={onMomentumScrollEnd}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          renderItem={({ item, index }) => {
+            const uri = uriById[item.id];
+            const loading = !!loadingIds[item.id];
+            const error = errorById[item.id];
+            const active = index === pageIndex;
+            return (
+              <View
+                style={[
+                  styles.page,
+                  styles.videoSafe,
+                  { width: pageWidth, paddingBottom: insets.bottom },
+                ]}
+              >
+                {uri && active ? (
+                  <VideoPreview uri={uri} />
+                ) : uri ? (
+                  <View style={styles.video} />
+                ) : loading ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : error ? (
+                  <Text style={styles.hint}>{error}</Text>
+                ) : (
+                  <ActivityIndicator color={colors.accent} />
+                )}
+              </View>
+            );
+          }}
+        />
+        <Text style={[styles.counter, { bottom: spacing.lg + insets.bottom }]}>
+          {pageIndex + 1} / {gallery.length}
+        </Text>
+      </View>
+    );
+  }
+
+  if (mode === "video") {
+    const videoUri = currentUri || initialUri;
+    if (!videoUri) {
+      return (
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.accent} />
+        </View>
+      );
+    }
+    return (
+      <View
+        style={[
+          styles.center,
+          styles.videoSafe,
+          { paddingBottom: insets.bottom, width: "100%" },
+        ]}
+      >
+        <VideoPreview uri={videoUri} />
+      </View>
+    );
+  }
+
   if (mode === "text") {
     if (editing) {
       return (
@@ -440,6 +548,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   image: { width: "100%", height: "100%" },
+  videoSafe: { backgroundColor: "#000", width: "100%" },
+  video: { width: "100%", flex: 1, backgroundColor: "#000" },
   textPad: { padding: spacing.lg, flexGrow: 1 },
   text: { color: colors.text, fontSize: 14, lineHeight: 20, fontFamily: "monospace" },
   editor: {

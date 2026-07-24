@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.freedrive.mobile",
-      "versionCode": 29,
+      "versionCode": 32,
       "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
@@ -38,6 +38,7 @@
     },
     "plugins": [
       "expo-secure-store",
+      "expo-video",
       [
         "expo-splash-screen",
         {

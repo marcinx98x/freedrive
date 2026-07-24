@@ -63,8 +63,18 @@ export function isImageFile(file: Pick<FileItem, "name" | "mime_type">): boolean
   return /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(file.name);
 }
 
+export function isVideoFile(file: Pick<FileItem, "name" | "mime_type">): boolean {
+  const mime = (file.mime_type || "").toLowerCase();
+  if (mime.startsWith("video/")) return true;
+  return /\.(mp4|webm|mkv|mov|m4v|avi|3gp)$/i.test(file.name);
+}
+
 function isImage(mime: string): boolean {
   return mime.toLowerCase().startsWith("image/");
+}
+
+function isVideo(mime: string): boolean {
+  return mime.toLowerCase().startsWith("video/");
 }
 
 function isText(mime: string, name: string): boolean {
@@ -184,6 +194,46 @@ export async function openFile(
         uri,
         mime,
         mode: "image",
+        fileId: file.id,
+        gallery,
+        index,
+      });
+      return;
+    }
+
+    if (navigation && (isVideo(mime) || isVideoFile(file))) {
+      const gallerySrc = (opts?.gallery ?? []).filter(isVideoFile);
+      const gallery: GalleryItem[] =
+        gallerySrc.length > 0
+          ? gallerySrc.map((f) => ({
+              id: f.id,
+              name: f.name,
+              mime_type: f.mime_type,
+              iv: f.iv,
+            }))
+          : [
+              {
+                id: file.id,
+                name: file.name,
+                mime_type: file.mime_type,
+                iv: file.iv,
+              },
+            ];
+      let index = gallery.findIndex((g) => g.id === file.id);
+      if (index < 0) {
+        gallery.unshift({
+          id: file.id,
+          name: file.name,
+          mime_type: file.mime_type,
+          iv: file.iv,
+        });
+        index = 0;
+      }
+      navigation.navigate("FilePreview", {
+        title: file.name,
+        uri,
+        mime,
+        mode: "video",
         fileId: file.id,
         gallery,
         index,
