@@ -290,6 +290,106 @@ async function multipartUploadFromFile(
   }
 }
 
+const RESUMABLE_THRESHOLD = 32 * 1024 * 1024;
+const RESUMABLE_CHUNK = 8 * 1024 * 1024;
+
+function base64ToBytesLocal(base64: string): Uint8Array {
+  const binary = globalThis.atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+async function resumableUploadFromFile(opts: {
+  encryptedUri: string;
+  name: string;
+  mimeType: string;
+  iv: string;
+  originalSize: number;
+  folderId?: string | null;
+  fileId?: string;
+}): Promise<FileItem> {
+  const info = await FileSystem.getInfoAsync(opts.encryptedUri);
+  const size = info.exists && "size" in info ? Number(info.size || 0) : 0;
+  if (size > 0 && size <= RESUMABLE_THRESHOLD) {
+    const parameters: Record<string, string> = {
+      name: opts.name,
+      mime_type: opts.mimeType,
+      iv: opts.iv,
+      original_size: String(opts.originalSize),
+    };
+    if (opts.folderId) parameters.folder_id = opts.folderId;
+    if (opts.fileId) {
+      return multipartUploadFromFile(`/files/${opts.fileId}/content`, opts.encryptedUri, parameters);
+    }
+    return multipartUploadFromFile("/files/upload", opts.encryptedUri, parameters);
+  }
+
+  const b64 = await FileSystem.readAsStringAsync(opts.encryptedUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const bytes = base64ToBytesLocal(b64);
+  const encryptedSize = bytes.byteLength;
+  if (encryptedSize <= RESUMABLE_THRESHOLD) {
+    const parameters: Record<string, string> = {
+      name: opts.name,
+      mime_type: opts.mimeType,
+      iv: opts.iv,
+      original_size: String(opts.originalSize),
+    };
+    if (opts.folderId) parameters.folder_id = opts.folderId;
+    if (opts.fileId) {
+      return multipartUploadFromFile(`/files/${opts.fileId}/content`, opts.encryptedUri, parameters);
+    }
+    return multipartUploadFromFile("/files/upload", opts.encryptedUri, parameters);
+  }
+
+  const sessionBody: Record<string, unknown> = {
+    name: opts.name,
+    mime_type: opts.mimeType,
+    iv: opts.iv,
+    original_size: opts.originalSize,
+    encrypted_size: encryptedSize,
+  };
+  if (opts.folderId) sessionBody.folder_id = opts.folderId;
+  if (opts.fileId) sessionBody.file_id = opts.fileId;
+
+  const session = await request<{ id: string }>("POST", "/uploads/sessions", sessionBody);
+  let offset = 0;
+  let last: FileItem | { complete?: boolean; id?: string } | null = null;
+  const url = await baseUrl();
+
+  while (offset < encryptedSize) {
+    const end = Math.min(offset + RESUMABLE_CHUNK, encryptedSize) - 1;
+    const chunk = bytes.subarray(offset, end + 1);
+    const headers: Record<string, string> = {
+      ...(await deviceHeaders()),
+      "Content-Type": "application/octet-stream",
+      "Content-Range": `bytes ${offset}-${end}/${encryptedSize}`,
+    };
+    const tokens = await getTokens();
+    if (tokens?.access_token) {
+      headers.Authorization = `Bearer ${tokens.access_token}`;
+    }
+
+    const res = await fetch(`${url}/api/v1/uploads/sessions/${session.id}`, {
+      method: "PUT",
+      headers,
+      body: chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
+    });
+    if (!res.ok) {
+      throw new ApiError(await parseError(res), res.status);
+    }
+    last = (await res.json()) as FileItem;
+    offset = end + 1;
+  }
+
+  if (!last || !("name" in last)) {
+    throw new ApiError("Invalid resumable upload response", 500);
+  }
+  return last as FileItem;
+}
+
 export const api = {
   login: async (email: string, password: string) => {
     return request<LoginResult>("POST", "/auth/login", { email, password }, { auth: false });
@@ -525,11 +625,13 @@ export const api = {
       encryptedUri: string;
     },
   ): Promise<FileItem> => {
-    return multipartUploadFromFile(`/files/${fileId}/content`, opts.encryptedUri, {
+    return resumableUploadFromFile({
+      encryptedUri: opts.encryptedUri,
       name: opts.name,
-      mime_type: opts.mimeType,
+      mimeType: opts.mimeType,
       iv: opts.iv,
-      original_size: String(opts.originalSize),
+      originalSize: opts.originalSize,
+      fileId,
     });
   },
 
@@ -542,16 +644,14 @@ export const api = {
     encryptedUri: string;
     folderId?: string | null;
   }): Promise<FileItem> => {
-    const parameters: Record<string, string> = {
+    return resumableUploadFromFile({
+      encryptedUri: opts.encryptedUri,
       name: opts.name,
-      mime_type: opts.mimeType,
+      mimeType: opts.mimeType,
       iv: opts.iv,
-      original_size: String(opts.originalSize),
-    };
-    if (opts.folderId) {
-      parameters.folder_id = opts.folderId;
-    }
-    return multipartUploadFromFile("/files/upload", opts.encryptedUri, parameters);
+      originalSize: opts.originalSize,
+      folderId: opts.folderId,
+    });
   },
 
   getCryptoAccount: () => request<CryptoAccount>("GET", "/crypto/account"),

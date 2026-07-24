@@ -81,6 +81,9 @@ enum UploadBody {
 
 /// Files at or below this size are encrypted in RAM (no temp file on disk).
 const SMALL_UPLOAD_BYTES: u64 = 1_048_576;
+/// Ciphertext larger than this uses resumable chunked upload (Cloudflare-safe).
+const RESUMABLE_THRESHOLD: u64 = 32 * 1024 * 1024;
+const RESUMABLE_CHUNK: usize = 8 * 1024 * 1024;
 
 
 
@@ -1082,11 +1085,21 @@ impl ApiClient {
 
 
 
-            let upload_result: AppResult<crate::api::types::FileRecord> = self
+            let cipher_len = match &prepared.body {
+                UploadBody::Memory(v) => v.len() as u64,
+                UploadBody::TempFile(p) => std::fs::metadata(p).map(|m| m.len()).unwrap_or(0),
+            };
 
-                .multipart_stream_once(path, &prepared, http_timeout)
-
-                .await;
+            let upload_result: AppResult<crate::api::types::FileRecord> = if cipher_len > RESUMABLE_THRESHOLD {
+                let replace_id = path
+                    .strip_prefix("/files/")
+                    .and_then(|rest| rest.strip_suffix("/content"))
+                    .map(|s| s.to_string());
+                self.resumable_stream_once(&prepared, replace_id.as_deref(), http_timeout)
+                    .await
+            } else {
+                self.multipart_stream_once(path, &prepared, http_timeout).await
+            };
 
 
 
@@ -1365,6 +1378,100 @@ impl ApiClient {
     }
 
 
+
+    async fn resumable_stream_once(
+        &self,
+        prepared: &PreparedUpload,
+        replace_file_id: Option<&str>,
+        timeout: Duration,
+    ) -> AppResult<crate::api::types::FileRecord> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let cipher_len = match &prepared.body {
+            UploadBody::Memory(v) => v.len() as u64,
+            UploadBody::TempFile(p) => std::fs::metadata(p)?.len(),
+        };
+
+        let mut session_body = serde_json::json!({
+            "name": prepared.name,
+            "mime_type": prepared.mime,
+            "iv": prepared.iv_b64,
+            "original_size": prepared.original_size,
+            "encrypted_size": cipher_len,
+        });
+        if let Some(fid) = &prepared.folder_id {
+            session_body["folder_id"] = serde_json::Value::String(fid.clone());
+        }
+        if let Some(fid) = replace_file_id {
+            session_body["file_id"] = serde_json::Value::String(fid.to_string());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct SessionResp {
+            id: String,
+        }
+        let session: SessionResp = self
+            .request_json(
+                reqwest::Method::POST,
+                "/uploads/sessions",
+                Some(session_body),
+                false,
+                2,
+            )
+            .await?;
+
+        let mut offset: u64 = 0;
+        while offset < cipher_len {
+            let end = std::cmp::min(offset + RESUMABLE_CHUNK as u64, cipher_len) - 1;
+            let chunk_len = (end - offset + 1) as usize;
+            let chunk = match &prepared.body {
+                UploadBody::Memory(v) => v[offset as usize..=end as usize].to_vec(),
+                UploadBody::TempFile(p) => {
+                    let mut f = std::fs::File::open(p)?;
+                    f.seek(SeekFrom::Start(offset))?;
+                    let mut buf = vec![0u8; chunk_len];
+                    f.read_exact(&mut buf)?;
+                    buf
+                }
+            };
+            let range = format!("bytes {}-{}/{}", offset, end, cipher_len);
+            let url = self.api_url(&format!("/uploads/sessions/{}", session.id));
+            let access_token = self.inner.read().access_token.clone();
+            let http = self.inner.read().upload_http.clone();
+            let res = http
+                .put(&url)
+                .header("Authorization", format!("Bearer {}", access_token))
+                .header("Content-Range", &range)
+                .header("Content-Type", "application/octet-stream")
+                .timeout(timeout)
+                .body(chunk)
+                .send()
+                .await?;
+
+            if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+                let _ = self.try_refresh().await?;
+                return Err(AppError::msg("session expired"));
+            }
+            if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Err(AppError::msg("rate limit exceeded"));
+            }
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            if !status.is_success() {
+                if let Ok(err) = serde_json::from_str::<ApiError>(&text) {
+                    return Err(AppError::msg(format!("{} ({})", err.error, status)));
+                }
+                return Err(AppError::msg(format!("HTTP {}: {}", status, text)));
+            }
+
+            offset = end + 1;
+            if offset >= cipher_len {
+                return serde_json::from_str(&text)
+                    .map_err(|e| AppError::msg(format!("parse file response: {e}")));
+            }
+        }
+        Err(AppError::msg("resumable upload incomplete"))
+    }
 
     async fn multipart_stream_once<T: serde::de::DeserializeOwned>(
 

@@ -568,6 +568,103 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 	return file, nil
 }
 
+// UpdateContentFromBlob is like UpdateContent but uses an already-written blob path
+// (e.g. after a resumable upload session is assembled on disk).
+func (s *FileService) UpdateContentFromBlob(
+	ctx context.Context,
+	fileID, userID, name, mimeType, iv string,
+	originalSize, encryptedSize int64,
+	blobPath string,
+) (*domain.File, error) {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, err
+	}
+	file, err := s.fileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, err
+	}
+	if file == nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, fmt.Errorf("file not found")
+	}
+
+	if adminsettings.VersioningEnabled() {
+		_ = s.fileRepo.CreateVersion(ctx, &domain.FileVersion{
+			FileID:    file.ID,
+			Version:   file.Version,
+			Size:      file.Size,
+			BlobPath:  file.BlobPath,
+			IV:        file.IV,
+			CreatedBy: userID,
+		})
+	}
+
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, err
+	}
+	if user == nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, fmt.Errorf("user not found")
+	}
+
+	newUsed := user.UsedBytes - file.EncryptedSize + encryptedSize
+	if newUsed > user.QuotaBytes {
+		_ = s.storage.Delete(blobPath)
+		return nil, fmt.Errorf("quota exceeded")
+	}
+	if err := s.checkServerCapacity(ctx, encryptedSize-file.EncryptedSize); err != nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, err
+	}
+
+	oldBlobPath := file.BlobPath
+	oldEncryptedSize := file.EncryptedSize
+
+	if name != "" {
+		file.Name = name
+	}
+	if mimeType != "" {
+		file.MimeType = mimeType
+	}
+	if originalSize > 0 {
+		file.Size = originalSize
+	}
+	file.EncryptedSize = encryptedSize
+	file.BlobPath = blobPath
+	file.IV = iv
+	file.Version += 1
+	file.AccessedAt = time.Now()
+
+	if err := s.fileRepo.Update(ctx, file); err != nil {
+		_ = s.storage.Delete(blobPath)
+		return nil, err
+	}
+
+	if err := s.userRepo.UpdateUsedBytes(ctx, userID, encryptedSize-oldEncryptedSize); err != nil {
+		return nil, err
+	}
+
+	_ = s.storage.Delete(oldBlobPath)
+	if adminsettings.VersioningEnabled() {
+		if removed, err := s.fileRepo.DeleteOldVersions(ctx, file.ID, adminsettings.KeepVersions()); err == nil {
+			for _, v := range removed {
+				_ = s.storage.Delete(v.BlobPath)
+			}
+		}
+	}
+	s.logActivity(ctx, userID, domain.ActionUpload, "file", file.ID, file.Name, `{"updated":true}`)
+
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileUpdate(ctx, file)
+	}
+
+	return file, nil
+}
+
 // RestoreVersion restores a historical version as the latest file content.
 func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string, version int) (*domain.File, error) {
 	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {

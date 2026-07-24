@@ -133,6 +133,7 @@ const API = (() => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', BASE + path);
             if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+            xhr.setRequestHeader('X-Device-ID', getDeviceID());
 
             xhr.upload.onprogress = (e) => {
                 if (!e.lengthComputable || !onProgress) return;
@@ -151,6 +152,106 @@ const API = (() => {
             xhr.onerror = () => reject(new Error('Network error'));
             xhr.send(formData);
         });
+    }
+
+    /** Ciphertext larger than this uses resumable chunked upload (Cloudflare-safe). */
+    const RESUMABLE_THRESHOLD = 32 * 1024 * 1024;
+    const RESUMABLE_CHUNK = 8 * 1024 * 1024;
+
+    function putChunkXHR(sessionId, body, contentRange, onChunkProgress) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', `${BASE}/uploads/sessions/${sessionId}`);
+            if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+            xhr.setRequestHeader('X-Device-ID', getDeviceID());
+            xhr.setRequestHeader('Content-Range', contentRange);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+            if (onChunkProgress) {
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) onChunkProgress(e.loaded, e.total);
+                };
+            }
+            xhr.onload = () => {
+                let payload = {};
+                try { payload = JSON.parse(xhr.responseText || '{}'); } catch {}
+                if (xhr.status >= 200 && xhr.status < 300) resolve(payload);
+                else reject(new Error(payload.error || `Chunk upload failed (${xhr.status})`));
+            };
+            xhr.onerror = () => reject(new Error('Network error'));
+            xhr.send(body);
+        });
+    }
+
+    /**
+     * Upload encrypted (or plain) bytes via resumable session when large enough.
+     * @param {object} opts
+     * @param {ArrayBuffer|Uint8Array|Blob} opts.data
+     * @param {string} opts.name
+     * @param {string} opts.mimeType
+     * @param {number} opts.originalSize
+     * @param {string} [opts.iv]
+     * @param {string} [opts.folderId]
+     * @param {string} [opts.fileId] replace existing file content
+     * @param {(pct:number)=>void} [opts.onProgress]
+     */
+    async function uploadBytes(opts) {
+        const {
+            data, name, mimeType, originalSize, iv = '', folderId, fileId, onProgress,
+        } = opts;
+        let bytes;
+        if (data instanceof Blob) {
+            bytes = new Uint8Array(await data.arrayBuffer());
+        } else if (data instanceof ArrayBuffer) {
+            bytes = new Uint8Array(data);
+        } else {
+            bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        }
+        const encryptedSize = bytes.byteLength;
+
+        if (encryptedSize <= RESUMABLE_THRESHOLD) {
+            const form = new FormData();
+            form.append('name', name);
+            form.append('mime_type', mimeType || 'application/octet-stream');
+            form.append('original_size', String(originalSize));
+            if (iv) form.append('iv', iv);
+            if (folderId) form.append('folder_id', folderId);
+            form.append('file', new Blob([bytes], { type: 'application/octet-stream' }), name);
+            if (fileId) return files.updateContent(fileId, form, onProgress);
+            return uploadXHR('/files/upload', form, onProgress);
+        }
+
+        const sessionBody = {
+            name,
+            mime_type: mimeType || 'application/octet-stream',
+            iv: iv || '',
+            original_size: originalSize,
+            encrypted_size: encryptedSize,
+        };
+        if (folderId) sessionBody.folder_id = folderId;
+        if (fileId) sessionBody.file_id = fileId;
+
+        const session = await request('POST', '/uploads/sessions', sessionBody);
+        let offset = 0;
+        let last = null;
+        while (offset < encryptedSize) {
+            const end = Math.min(offset + RESUMABLE_CHUNK, encryptedSize) - 1;
+            const chunk = bytes.subarray(offset, end + 1);
+            const range = `bytes ${offset}-${end}/${encryptedSize}`;
+            last = await putChunkXHR(session.id, chunk, range, (loaded, total) => {
+                if (!onProgress) return;
+                const overall = offset + (total ? (loaded / total) * (end - offset + 1) : 0);
+                onProgress(Math.min(99, Math.round((overall / encryptedSize) * 100)));
+            });
+            offset = end + 1;
+            if (onProgress) onProgress(Math.min(100, Math.round((offset / encryptedSize) * 100)));
+            if (last && last.id && last.name && last.complete !== false && offset >= encryptedSize) {
+                return last;
+            }
+            if (last && last.complete === false) continue;
+            if (last && last.id && last.owner_id !== undefined) return last;
+            if (last && last.id && last.mime_type !== undefined && offset >= encryptedSize) return last;
+        }
+        return last;
     }
 
     async function downloadBlob(fileId) {
@@ -385,6 +486,7 @@ const API = (() => {
         emailChangeStatus,
         request,
         uploadFile: uploadXHR.bind(null, '/files/upload'),
+        uploadBytes,
         downloadBlob,
     };
 })();

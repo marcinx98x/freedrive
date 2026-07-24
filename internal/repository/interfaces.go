@@ -200,3 +200,13 @@ type CryptoRepository interface {
 	UpsertFileEncryptionKey(ctx context.Context, key *domain.FileEncryptionKey) error
 	ListFileEncryptionKeysSince(ctx context.Context, ownerID string, since time.Time, limit int) ([]domain.EncryptionKeyEntry, error)
 }
+
+// UploadSessionRepository persists resumable upload sessions.
+type UploadSessionRepository interface {
+	Create(ctx context.Context, session *domain.UploadSession) error
+	GetByID(ctx context.Context, id string) (*domain.UploadSession, error)
+	UpdateReceived(ctx context.Context, id string, receivedBytes int64) error
+	Delete(ctx context.Context, id string) error
+	DeleteExpired(ctx context.Context, now time.Time) ([]domain.UploadSession, error)
+	ListByUser(ctx context.Context, userID string) ([]domain.UploadSession, error)
+}

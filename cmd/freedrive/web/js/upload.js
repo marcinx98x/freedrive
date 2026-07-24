@@ -278,14 +278,14 @@ const Upload = (() => {
         }
     }
 
-    async function uploadWithRetry(formData, onProgress) {
+    async function uploadWithRetry(jobFn) {
         try {
-            return await API.uploadFile(formData, onProgress);
+            return await jobFn();
         } catch (err) {
             const msg = String(err.message || '').toLowerCase();
             if (msg.includes('rate limit') || msg.includes('database') || msg.includes('locked')) {
                 await new Promise((r) => setTimeout(r, 600));
-                return API.uploadFile(formData, onProgress);
+                return jobFn();
             }
             throw err;
         }
@@ -304,35 +304,39 @@ const Upload = (() => {
 
             statusEl.textContent = 'Uploading...';
 
-            const formData = new FormData();
-            formData.append('name', file.name);
-            formData.append('mime_type', file.type || 'application/octet-stream');
-            formData.append('original_size', String(file.size));
-
+            const currentFolder = jobFolderId || FileManager.getCurrentFolder?.();
             let key = null;
+            let payload;
+            let ivB64 = '';
+            const originalSize = file.size;
+
             if (canEncrypt) {
                 statusEl.textContent = 'Encrypting...';
                 key = await cryptoModule.generateKey();
                 const originalBuffer = await file.arrayBuffer();
                 const { ciphertext, iv } = await cryptoModule.encryptFile(originalBuffer, key);
-                const encryptedBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
-                formData.append('file', encryptedBlob, file.name);
-                formData.append('iv', cryptoModule.uint8ToBase64(iv));
+                payload = ciphertext;
+                ivB64 = cryptoModule.uint8ToBase64(iv);
             } else {
                 if (!insecureUploadNoticeShown) {
                     insecureUploadNoticeShown = true;
                     Components.toast('HTTPS is not enabled, so files will be uploaded without browser encryption.', 'info', { duration: 7000 });
                 }
-                formData.append('file', file, file.name);
+                payload = await file.arrayBuffer();
             }
 
-            const currentFolder = jobFolderId || FileManager.getCurrentFolder?.();
-            if (currentFolder) formData.append('folder_id', currentFolder);
-
-            const result = await uploadWithRetry(formData, (pct) => {
-                progressFill.style.width = `${pct}%`;
-                statusEl.textContent = `${pct}%`;
-            });
+            const result = await uploadWithRetry(() => API.uploadBytes({
+                data: payload,
+                name: file.name,
+                mimeType: file.type || 'application/octet-stream',
+                originalSize,
+                iv: ivB64,
+                folderId: currentFolder || undefined,
+                onProgress: (pct) => {
+                    progressFill.style.width = `${pct}%`;
+                    statusEl.textContent = `${pct}%`;
+                },
+            }));
 
             if (key) {
                 await cryptoModule.storeKey(result.id, key);

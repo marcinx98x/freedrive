@@ -580,6 +580,15 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 - `GET /files/{id}/versions`
 - `POST /files/{id}/versions/{version}/restore`
 
+#### Resumable uploads (Cloudflare-safe)
+
+For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB** chunks (avoids ~100 MB Cloudflare request limits). Smaller files still use multipart `/files/upload` or `/files/{id}/content`.
+
+- `POST /uploads/sessions` — JSON `{ name, mime_type, iv, original_size, encrypted_size, folder_id?, file_id? }` → `{ id, received_bytes, encrypted_size, chunk_size_hint, expires_at }`
+- `PUT /uploads/sessions/{id}` — raw body + `Content-Range: bytes start-end/total`; last chunk returns the `File` object
+- `GET /uploads/sessions/{id}` — resume status (`received_bytes`)
+- `DELETE /uploads/sessions/{id}` — abort and delete temp data
+
 #### Folders
 
 - `POST /folders`
@@ -715,7 +724,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Files stack** — Files tab nests My Drive home and Folder screens; Shared can open a folder under that stack
 - **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast; grid view uses square tiles and more columns on wide screens
 - **Create FAB** — Upload, New folder, Document, and Spreadsheet on Files / Folder screens
-- **Encrypted upload** — multi-file picker → AES-GCM → cache file → native `expo-file-system` `uploadAsync` multipart to `POST /api/v1/files/upload` (Hermes cannot build Blobs from ArrayBuffer); same helper for content replace
+- **Encrypted upload** — multi-file picker → AES-GCM → cache file → upload; payloads **> 32 MiB** use resumable chunked `PUT /uploads/sessions/{id}` (8 MiB chunks, Cloudflare-safe); smaller files use native multipart `POST /files/upload` / content replace
 - **New folder** — `POST /api/v1/folders` from the FAB dialog
 - **New Document / Spreadsheet** — creates encrypted `Document.txt` / `Spreadsheet.xlsx`; Document opens in the text editor; Spreadsheet opens the in-app sheet grid
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs

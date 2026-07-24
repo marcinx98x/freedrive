@@ -39,9 +39,20 @@ Response includes `folders` (full child-folder list on the first page only), `fi
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/v1/files/upload` | Upload new encrypted file (multipart) |
-| `PUT` | `/api/v1/files/{id}/content` | Update file content |
+| `POST` | `/api/v1/files/upload` | Upload new encrypted file (multipart; used when ciphertext ≤ 32 MiB) |
+| `POST` | `/api/v1/files/{id}/content` | Update file content (multipart; small payloads) |
 | `GET` | `/api/v1/files/{id}/download` | Download encrypted blob |
+
+## Resumable uploads
+
+Used by desktop (and web/mobile) when encrypted size **> 32 MiB** so uploads work behind Cloudflare (~100 MB request limit). Chunk hint: **8 MiB**.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/uploads/sessions` | Start session (JSON metadata: name, mime_type, iv, sizes, optional folder_id / file_id) |
+| `PUT` | `/api/v1/uploads/sessions/{id}` | Upload chunk (`Content-Range: bytes start-end/total`); final chunk returns `File` |
+| `GET` | `/api/v1/uploads/sessions/{id}` | Session status / resume offset |
+| `DELETE` | `/api/v1/uploads/sessions/{id}` | Abort session |
 
 ## Shares
 

@@ -43,6 +43,7 @@ func NewRouter(
 	maxUpload int64,
 	dataDir string,
 	clientMutationRepo repository.ClientMutationRepository,
+	uploadSessionRepo repository.UploadSessionRepository,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -59,6 +60,7 @@ func NewRouter(
 	authHandler := handlers.NewAuthHandler(authService, cryptoService, emailChangeRepo, userRepo, activityRepo, passwordResetService)
 	sessionHandler := handlers.NewSessionHandler(authService)
 	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload, clientMutationRepo)
+	uploadHandler := handlers.NewUploadHandler(uploadSessionRepo, fileRepo, userRepo, fileService, diskStorage, accessService, maxUpload, dataDir)
 	folderHandler := handlers.NewFolderHandler(folderService, clientMutationRepo)
 	computerHandler := handlers.NewComputerHandler(computerService, folderService, syncFeedService)
 	shareHandler := handlers.NewShareHandler(shareService, fileRepo, userRepo, diskStorage)
@@ -114,6 +116,13 @@ func NewRouter(
 			})
 
 			r.Post("/trash/empty", fileHandler.EmptyTrash)
+
+			r.Route("/uploads/sessions", func(r chi.Router) {
+				r.Post("/", uploadHandler.CreateSession)
+				r.Get("/{id}", uploadHandler.GetSession)
+				r.Put("/{id}", uploadHandler.PutChunk)
+				r.Delete("/{id}", uploadHandler.AbortSession)
+			})
 
 			r.Route("/files", func(r chi.Router) {
 				r.Post("/upload", fileHandler.Upload)

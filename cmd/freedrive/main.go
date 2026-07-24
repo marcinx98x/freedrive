@@ -112,6 +112,7 @@ func main() {
 		cfg.MaxUploadBytes,
 		cfg.DataDir,
 		clientMutationRepo,
+		sqlite.NewUploadSessionRepo(db),
 	)
 
 	server := &http.Server{

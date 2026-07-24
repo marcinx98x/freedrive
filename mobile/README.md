@@ -14,7 +14,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Files** — My Drive | Computers, folder navigation, list/grid, sort chip; folder listings use server pagination and load more on scroll (same contract as web/desktop)
 - **Grid tiles** — square previews (`aspectRatio: 1`); column count scales with content width so landscape tiles stay phone-sized
 - **Create FAB** — Upload, New folder, Document (`.txt`), and Spreadsheet (`.xlsx`) on Files / Folder (camera stub reserved); FAB respects safe-area insets
-- **Upload** — multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then native `FileSystem.uploadAsync` multipart (`POST /api/v1/files/upload`) — avoids Hermes Blob / FormDataPart limits
+- **Upload** — multi-file picker; client-side AES-GCM encrypt, write ciphertext to cache, then upload (multipart under 32 MiB; resumable 8 MiB chunks above that for Cloudflare)
 - **New folder** — dialog → `POST /api/v1/folders` in the current folder (or My Drive root)
 - **New Document / Spreadsheet** — encrypted empty `Document.txt` / `Spreadsheet.xlsx`; Document opens in the text editor; Spreadsheet opens in the in-app sheet grid
 - **Drawer** — hamburger slides in Recent, Bin, Settings, Help, and storage usage from `GET /api/v1/me/storage` (reconciled used + quota)

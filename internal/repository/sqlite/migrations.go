@@ -35,6 +35,7 @@ func runMigrations(db *sql.DB) error {
 		{12, migrationV12},
 		{13, migrationV13},
 		{14, migrationV14},
+		{15, migrationV15},
 	}
 
 	for _, m := range migrations {
@@ -373,4 +374,25 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 const migrationV14 = `
 ALTER TABLE sessions ADD COLUMN device_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(user_id, device_id);
+`
+
+const migrationV15 = `
+CREATE TABLE IF NOT EXISTS upload_sessions (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    file_id         TEXT,
+    name            TEXT NOT NULL,
+    mime_type       TEXT NOT NULL DEFAULT 'application/octet-stream',
+    iv              TEXT NOT NULL DEFAULT '',
+    original_size   INTEGER NOT NULL DEFAULT 0,
+    encrypted_size  INTEGER NOT NULL DEFAULT 0,
+    folder_id       TEXT,
+    temp_path       TEXT NOT NULL,
+    received_bytes  INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at      DATETIME NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_user ON upload_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires ON upload_sessions(expires_at);
 `

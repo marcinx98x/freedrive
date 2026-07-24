@@ -9,7 +9,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Sign in** to your FreeDrive server (JWT auth + 2FA support)
 - **Single-instance** — a second launch focuses the existing main window
 - **Onboarding wizard** — choose folders to sync (Desktop, Documents, Downloads, or custom)
-- **Background sync** — uploads local changes, polls for remote changes; skips `.git`, `node_modules`, and `.svn` folders during scan
+- **Background sync** — uploads local changes, polls for remote changes; skips `.git`, `node_modules`, and `.svn` folders during scan; large encrypted uploads (>32 MiB) use resumable chunked API (Cloudflare-safe)
 - **Local deletes → server trash** — removing a file from a sync folder (including Explorer Delete, which moves it out of the tree) soft-deletes the matching server file; periodic verify (~5 min) and pre-upload same-name cleanup catch missed events and avoid live duplicates
 - **Silent background verify** — on restart, verifies files in the background without a full UI rescan; if initial sync was never completed, startup resumes full sync with a “Resuming sync…” status
 - **Home & Sync activity** — status dashboard inspired by Google Drive for desktop
