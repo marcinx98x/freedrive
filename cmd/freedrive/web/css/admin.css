@@ -295,6 +295,15 @@
     font-size: 14px;
     text-transform: uppercase;
     flex-shrink: 0;
+    overflow: hidden;
+}
+
+.gd-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
 }
 
 .gd-user-info {
@@ -1010,27 +1019,9 @@
     pointer-events: none !important;
 }
 
-/* Topbar list/grid toggle — same pill as Drive */
+/* Hide Drive list/grid toggle in admin — unused here */
 .app.admin-mode .topbar-view-toggle {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 4px;
-    border-radius: 999px;
-    background: #f1f3f4;
-    height: 40px;
-}
-
-.app.admin-mode .topbar-view-toggle .btn-icon {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-    min-height: 32px !important;
-}
-
-.app.admin-mode .topbar-view-toggle .btn-icon.active {
-    background: #c2e7ff !important;
-    color: #001d35 !important;
+    display: none !important;
 }
 
 /* Fix Admin Page Background and Header */

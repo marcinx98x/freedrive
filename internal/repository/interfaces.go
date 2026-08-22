@@ -211,6 +211,7 @@ type SessionRepository interface {
 	GetByRefreshHash(ctx context.Context, tokenHash string) (*domain.Session, error)
 	GetActiveByUserDevice(ctx context.Context, userID, deviceID string) (*domain.Session, error)
 	ListActiveByUser(ctx context.Context, userID string) ([]domain.Session, error)
+	ListActiveAll(ctx context.Context) ([]domain.Session, error)
 	// UpdateCredentials rotates the refresh token and refreshes device metadata.
 	UpdateCredentials(ctx context.Context, session *domain.Session) error
 	UpdateDeviceMeta(ctx context.Context, id, deviceType, deviceName string) error

@@ -122,6 +122,26 @@ func (r *SessionRepo) ListActiveByUser(ctx context.Context, userID string) ([]do
 	return out, rows.Err()
 }
 
+func (r *SessionRepo) ListActiveAll(ctx context.Context) ([]domain.Session, error) {
+	rows, err := r.reader.QueryContext(ctx, sessionSelect+`
+		WHERE revoked_at IS NULL AND expires_at > ?
+		ORDER BY last_seen_at DESC`, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.Session
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
 func (r *SessionRepo) UpdateCredentials(ctx context.Context, session *domain.Session) error {
 	now := time.Now()
 	session.LastSeenAt = now

@@ -280,6 +280,53 @@ func (h *AdminHandler) RevokeUserSessions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// ListSessions handles GET /api/v1/admin/sessions
+func (h *AdminHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := h.authService.ListAllActiveSessions(r.Context())
+	if err != nil {
+		writeError(w, "failed to list sessions", http.StatusInternalServerError)
+		return
+	}
+
+	users, err := h.userRepo.List(r.Context())
+	if err != nil {
+		writeError(w, "failed to list users", http.StatusInternalServerError)
+		return
+	}
+	names := make(map[string]string, len(users))
+	for _, u := range users {
+		name := strings.TrimSpace(u.Username)
+		if name == "" {
+			name = strings.TrimSpace(u.Email)
+		}
+		if name == "" {
+			name = "User"
+		}
+		names[u.ID] = name
+	}
+
+	currentID := middleware.GetSessionID(r.Context())
+	out := make([]map[string]interface{}, 0, len(sessions))
+	for _, s := range sessions {
+		username := names[s.UserID]
+		if username == "" {
+			username = "User"
+		}
+		out = append(out, map[string]interface{}{
+			"id":           s.ID,
+			"user_id":      s.UserID,
+			"username":     username,
+			"device_name":  s.DeviceName,
+			"device_type":  s.DeviceType,
+			"ip_address":   s.IPAddress,
+			"created_at":   s.CreatedAt,
+			"last_seen_at": s.LastSeenAt,
+			"current":      s.ID == currentID,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": out})
+}
+
 // RevokeAllSessions handles POST /api/v1/admin/sessions/revoke-all
 func (h *AdminHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	if err := h.authService.RevokeAllSessions(r.Context()); err != nil {

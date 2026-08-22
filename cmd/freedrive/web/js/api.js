@@ -422,6 +422,7 @@ const API = (() => {
         sendPasswordReset: (id) => request('POST', `/admin/users/${id}/reset-password`),
         send2FAReminder: () => request('POST', '/admin/users/send-2fa-reminder'),
         revokeUserSessions: (id) => request('POST', `/admin/users/${id}/revoke-sessions`),
+        sessions: () => request('GET', '/admin/sessions'),
         revokeAllSessions: () => request('POST', '/admin/sessions/revoke-all'),
         stats: () => request('GET', '/admin/stats'),
         createInvite: (data) => request('POST', '/admin/invites', data),

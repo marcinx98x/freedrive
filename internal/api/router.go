@@ -209,6 +209,7 @@ func NewRouter(
 				r.Delete("/users/{id}", adminHandler.DeleteUser)
 				r.Post("/users/{id}/reset-password", adminHandler.SendPasswordReset)
 				r.Post("/users/{id}/revoke-sessions", adminHandler.RevokeUserSessions)
+				r.Get("/sessions", adminHandler.ListSessions)
 				r.Post("/sessions/revoke-all", adminHandler.RevokeAllSessions)
 				r.Get("/stats", adminHandler.Stats)
 				r.Post("/invites", adminHandler.CreateInvite)

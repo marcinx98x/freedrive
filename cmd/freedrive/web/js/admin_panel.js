@@ -80,6 +80,7 @@ const AdminPanel = (() => {
         users: [],
         files: [],
         activities: [],
+        sessions: [],
         disk: {},
         userMeta: {},
         userSelection: new Set(),
@@ -133,6 +134,34 @@ const AdminPanel = (() => {
 
     function initials(name) {
         return Components.initials(name || 'U');
+    }
+
+    function userAvatarHtml(u, { xl } = {}) {
+        const photo = String(u?.avatar_url || '').trim();
+        const hue = ((u?.email || u?.username || '').length * 137) % 360;
+        const cls = xl ? 'gd-avatar gd-avatar-xl' : 'gd-avatar';
+        if (photo) {
+            return `<span class="${cls}" style="padding:0;background:#e8eaed"><img src="${esc(photo)}" alt=""></span>`;
+        }
+        return `<span class="${cls}" style="background-color:hsl(${hue},60%,50%)">${esc(initials(u?.username || u?.email))}</span>`;
+    }
+
+    function resolveAdminUser({ user_id, username } = {}) {
+        const id = String(user_id || '');
+        const name = String(username || '').toLowerCase();
+        const users = state.users || [];
+        if (id) {
+            const byId = users.find((u) => String(u.id) === id);
+            if (byId) return byId;
+        }
+        if (name) {
+            const byName = users.find((u) =>
+                String(u.username || '').toLowerCase() === name
+                || String(u.email || '').toLowerCase() === name
+            );
+            if (byName) return byName;
+        }
+        return { username: username || 'User', email: '', avatar_url: '' };
     }
 
     function nowISO() {
@@ -446,11 +475,12 @@ const AdminPanel = (() => {
     }
 
     async function hydrateData() {
-        const [statsRes, usersRes, diskRes, activityRes, filesRes, invitesRes, backupsRes, breakdownRes] = await Promise.all([
+        const [statsRes, usersRes, diskRes, activityRes, sessionsRes, filesRes, invitesRes, backupsRes, breakdownRes] = await Promise.all([
             API.admin.stats().catch(() => ({})),
             API.admin.users().catch(() => ({ users: [] })),
             API.diskStats().catch(() => ({})),
             API.admin.activity(1, 300).catch(() => ({ activities: [] })),
+            API.admin.sessions().catch(() => ({ sessions: [] })),
             API.files.list({ page_size: '800' }).catch(() => ({ files: [] })),
             API.admin.invites().catch(() => ({ invites: [] })),
             API.admin.listBackups().catch(() => ({ backups: [] })),
@@ -461,6 +491,7 @@ const AdminPanel = (() => {
         state.users = Array.isArray(usersRes.users) ? usersRes.users : [];
         state.disk = diskRes || {};
         state.activities = Array.isArray(activityRes.activities) ? activityRes.activities : [];
+        state.sessions = Array.isArray(sessionsRes.sessions) ? sessionsRes.sessions : [];
         state.files = Array.isArray(filesRes.files) ? filesRes.files : [];
         state.invites = (Array.isArray(invitesRes.invites) ? invitesRes.invites : []).map(mapInviteRecord);
         state.backups = Array.isArray(backupsRes.backups) ? backupsRes.backups : [];
@@ -704,15 +735,18 @@ const AdminPanel = (() => {
                             <a href="#/admin/activity" class="gd-btn-outline" style="font-size:12px; padding: 4px 10px; text-decoration:none;">View all</a>
                         </div>
                         <div class="gd-recent-activity">
-                            ${recent.map((a) => `
+                            ${recent.map((a) => {
+                                const u = resolveAdminUser({ user_id: a.user_id, username: a.username });
+                                return `
                                 <div class="gd-activity-item">
-                                    <span class="gd-avatar" style="width:32px; height:32px; font-size:12px; background-color: hsl(${((a.username || '').length * 137) % 360}, 60%, 50%)">${esc(initials(a.username || 'U'))}</span>
+                                    ${userAvatarHtml(u)}
                                     <div class="gd-activity-info">
                                         <div class="gd-activity-text"><strong>${esc(a.username || 'User')}</strong> ${esc(String(a.action || 'did').toLowerCase())} <strong>${esc(a.target_name || 'item')}</strong></div>
                                         <span class="gd-activity-time">${Components.formatDate(a.created_at)}</span>
                                     </div>
                                 </div>
-                            `).join('') || '<div class="gd-empty-table">No recent activity</div>'}
+                            `;
+                            }).join('') || '<div class="gd-empty-table">No recent activity</div>'}
                         </div>
                     </div>
                 </div>
@@ -811,7 +845,7 @@ const AdminPanel = (() => {
                                             <td style="text-align:center;"><input class="gd-checkbox" type="checkbox" data-admin-action="toggle-user-select" data-user-id="${u.id}" ${state.userSelection.has(u.id) ? 'checked' : ''}></td>
                                             <td>
                                                 <div class="gd-user-cell toggle-drawer-clickable" data-admin-action="open-user-drawer" data-user-id="${u.id}" style="cursor:pointer;">
-                                                    <span class="gd-avatar" style="background-color: hsl(${((u.email || '').length * 137) % 360}, 60%, 50%)">${esc(initials(u.username || u.email))}</span>
+                                                    ${userAvatarHtml(u)}
                                                     <div class="gd-user-info">
                                                         <span class="gd-user-name">${esc(u.username || 'Unnamed')}</span>
                                                         <span class="gd-user-email">${esc(u.email || '')}</span>
@@ -886,7 +920,7 @@ const AdminPanel = (() => {
             </div>
             <div class="gd-drawer-content">
                 <div class="gd-drawer-profile">
-                    <div class="gd-avatar gd-avatar-xl" style="background-color: hsl(${((u.email || '').length * 137) % 360}, 60%, 50%)">${esc(initials(u.username || u.email))}</div>
+                    ${userAvatarHtml(u, { xl: true })}
                     <div class="gd-profile-info">
                         <h2>${esc(u.username || 'Unnamed')}</h2>
                         <span class="gd-email">${esc(u.email || '')}</span>
@@ -1099,7 +1133,7 @@ const AdminPanel = (() => {
                                             <tr>
                                                 <td>
                                                     <div class="gd-user-cell">
-                                                        <span class="gd-avatar" style="background-color: hsl(${((u.email || '').length * 137) % 360}, 60%, 50%)">${esc(initials(u.username || u.email))}</span>
+                                                        ${userAvatarHtml(u)}
                                                         <div class="gd-user-info">
                                                             <span class="gd-user-name">${esc(u.username || 'Unnamed')}</span>
                                                             <span class="gd-user-email">${esc(u.email)}</span>
@@ -1171,12 +1205,32 @@ const AdminPanel = (() => {
 
     function decorateActivity(item) {
         const action = String(item.action || '').toLowerCase();
+        let device = String(item.device || item.device_name || '').trim();
+        let userAgent = String(item.user_agent || '').trim();
+        const metaRaw = String(item.metadata || '').trim();
+        if (metaRaw) {
+            try {
+                const meta = JSON.parse(metaRaw);
+                if (!device && meta.device_name) device = String(meta.device_name).trim();
+                if (!userAgent && meta.user_agent) userAgent = String(meta.user_agent).trim();
+            } catch (_) { /* ignore bad metadata */ }
+        }
+        if (!device) {
+            const uid = String(item.user_id || '');
+            const ip = String(item.ip_address || item.ip || '');
+            const match = (state.sessions || []).find((s) =>
+                String(s.user_id || '') === uid
+                && (!ip || String(s.ip_address || '') === ip)
+                && String(s.device_name || '').trim()
+            );
+            if (match) device = String(match.device_name).trim();
+        }
         return {
             ...item,
             ip: item.ip_address || item.ip || '',
-            device: item.device || 'Unknown device',
+            device: device || 'Unknown device',
             status: action.includes('failed') ? 'failed' : 'success',
-            user_agent: item.user_agent || '',
+            user_agent: userAgent,
             session_id: item.session_id || item.id || '',
             file_uuid: item.target_id || '',
         };
@@ -1362,30 +1416,16 @@ const AdminPanel = (() => {
     }
 
     function getActiveSessions() {
-        const me = getCurrentUser();
-        const loginEvents = filteredActivityList().filter((a) => String(a.action || '').toLowerCase() === 'login');
-        const bySession = new Map();
-        loginEvents.forEach((a) => {
-            const sessionKey = String(a.session_id || `${a.user_id || a.username || 'user'}:${a.ip || 'unknown'}`);
-            if (!bySession.has(sessionKey)) {
-                bySession.set(sessionKey, {
-                    id: sessionKey,
-                    user_id: a.user_id || '',
-                    user: a.username || 'User',
-                    device: a.device || 'Unknown device',
-                    ip: a.ip || '',
-                    location: a.location || 'Unknown',
-                    started: a.created_at,
-                    last_active: a.created_at,
-                    is_me: String(a.user_id || '') === String(me.id || ''),
-                });
-            } else {
-                const s = bySession.get(sessionKey);
-                if (new Date(a.created_at) < new Date(s.started)) s.started = a.created_at;
-                if (new Date(a.created_at) > new Date(s.last_active)) s.last_active = a.created_at;
-            }
-        });
-        return Array.from(bySession.values()).slice(0, 50);
+        return (state.sessions || []).slice(0, 50).map((s) => ({
+            id: s.id,
+            user_id: s.user_id || '',
+            user: s.username || 'User',
+            device: s.device_name || 'Unknown device',
+            ip: s.ip_address || '',
+            started: s.created_at,
+            last_active: s.last_seen_at || s.created_at,
+            is_me: Boolean(s.current),
+        }));
     }
 
     function renderSecuritySection() {
@@ -1461,11 +1501,13 @@ const AdminPanel = (() => {
                             <table class="gd-clean-table">
                                 <thead><tr><th style="padding-left:24px;">User</th><th>Device</th><th>IP Address</th><th>Started</th><th>Last active</th><th></th></tr></thead>
                                 <tbody>
-                                    ${sessions.map((s) => `
+                                    ${sessions.map((s) => {
+                                        const u = resolveAdminUser({ user_id: s.user_id, username: s.user });
+                                        return `
                                         <tr>
                                             <td style="padding-left:24px;">
                                                 <div style="display:flex; align-items:center; gap:8px;">
-                                                    <span class="gd-avatar" style="width:24px; height:24px; font-size:10px; background-color:hsl(${((s.user || '').length * 137) % 360},60%,50%)">${esc(initials(s.user))}</span>
+                                                    ${userAvatarHtml(u)}
                                                     ${esc(s.user)}
                                                     ${s.is_me ? '<span style="font-size:10px; font-weight:600; padding:2px 6px; background:#CEEAD6; color:#188038; border-radius:10px;">This device</span>' : ''}
                                                 </div>
@@ -1476,7 +1518,8 @@ const AdminPanel = (() => {
                                             <td style="color:#5F6368;">${Components.formatDate(s.last_active)}</td>
                                             <td></td>
                                         </tr>
-                                    `).join('') || '<tr><td colspan="6" class="gd-empty-table">No active sessions</td></tr>'}
+                                    `;
+                                    }).join('') || '<tr><td colspan="6" class="gd-empty-table">No active sessions</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -2580,7 +2623,10 @@ const AdminPanel = (() => {
                     if (!ok) return;
                     try {
                         await API.admin.revokeAllSessions();
+                        const sessionsRes = await API.admin.sessions().catch(() => ({ sessions: [] }));
+                        state.sessions = Array.isArray(sessionsRes.sessions) ? sessionsRes.sessions : [];
                         Components.toast('All sessions revoked', 'success');
+                        renderSection();
                     } catch (err) {
                         Components.toast(err?.message || 'Failed to revoke sessions', 'error');
                     }

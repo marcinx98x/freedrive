@@ -338,6 +338,11 @@ func (s *AuthService) ListSessions(ctx context.Context, userID string) ([]domain
 	return s.sessionRepo.ListActiveByUser(ctx, userID)
 }
 
+// ListAllActiveSessions returns every non-revoked, non-expired session (admin).
+func (s *AuthService) ListAllActiveSessions(ctx context.Context) ([]domain.Session, error) {
+	return s.sessionRepo.ListActiveAll(ctx)
+}
+
 // RevokeSession revokes one of the user's sessions.
 func (s *AuthService) RevokeSession(ctx context.Context, userID, sessionID string) error {
 	return s.sessionRepo.RevokeByID(ctx, sessionID, userID)

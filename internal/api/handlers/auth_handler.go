@@ -63,6 +63,12 @@ func (h *AuthHandler) logAuthActivity(r *http.Request, user *domain.User, action
 	if username == "" {
 		username = user.Email
 	}
+	dev := deviceInfoFromRequest(r)
+	metaBytes, _ := json.Marshal(map[string]string{
+		"device_name": dev.DeviceName,
+		"device_type": dev.DeviceType,
+		"user_agent":  dev.UserAgent,
+	})
 	_ = h.activityRepo.Create(r.Context(), &domain.ActivityLog{
 		UserID:     user.ID,
 		Username:   username,
@@ -70,6 +76,7 @@ func (h *AuthHandler) logAuthActivity(r *http.Request, user *domain.User, action
 		TargetType: "auth",
 		TargetID:   user.ID,
 		TargetName: username,
+		Metadata:   string(metaBytes),
 		IPAddress:  middleware.ClientIP(r),
 	})
 }
