@@ -241,7 +241,10 @@ func (s *AuthService) ResetPasswordByEmail(ctx context.Context, email, newPasswo
 		return fmt.Errorf("hash password: %w", err)
 	}
 	user.PasswordHash = string(hash)
-	return s.userRepo.Update(ctx, user)
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return err
+	}
+	return s.RevokeAllUserSessions(ctx, user.ID)
 }
 
 // ValidateAccessToken validates a JWT access token and returns the claims.
@@ -260,8 +263,38 @@ func (s *AuthService) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	if !ok || !token.Valid {
 		return nil, ErrInvalidToken
 	}
+	if claims.Subject != "" && claims.Subject != claims.UserID {
+		return nil, ErrInvalidToken
+	}
 
 	return claims, nil
+}
+
+// ValidateSession verifies the session is active, belongs to userID, and optionally updates last_seen.
+// Returns the current user from the database (authoritative role/identity).
+func (s *AuthService) ValidateSession(ctx context.Context, sessionID, userID string) (*domain.User, error) {
+	if sessionID == "" || userID == "" {
+		return nil, ErrSessionRevoked
+	}
+	session, err := s.sessionRepo.GetByID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil || session.RevokedAt != nil || session.ExpiresAt.Before(time.Now()) {
+		return nil, ErrSessionRevoked
+	}
+	if session.UserID != userID {
+		return nil, ErrSessionRevoked
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || user.Suspended {
+		return nil, ErrSessionRevoked
+	}
+	_ = s.sessionRepo.TouchLastSeen(ctx, sessionID, 60)
+	return user, nil
 }
 
 // EnsureSessionActive verifies the session is still valid and optionally updates last_seen.
@@ -335,6 +368,11 @@ func (s *AuthService) EnsureAdmin(ctx context.Context, email, password string) e
 	}
 	if count > 0 {
 		return nil
+	}
+	email = strings.TrimSpace(email)
+	password = strings.TrimSpace(password)
+	if email == "" || password == "" {
+		return fmt.Errorf("FREEDRIVE_ADMIN_EMAIL and FREEDRIVE_ADMIN_PASSWORD are required on first start")
 	}
 
 	_, err = s.Register(ctx, email, "Admin", password, "")
@@ -493,6 +531,7 @@ func (s *AuthService) signTokenPair(user *domain.User, sessionID, refreshStr str
 		Role:      user.Role,
 		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   user.ID,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "freedrive",

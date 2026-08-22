@@ -6170,7 +6170,7 @@ const FileManager = (() => {
         try {
             const blob = await decryptFileBlob(file);
             if (isXlsx) {
-                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', 'XLSX');
+                await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js', 'XLSX');
                 const arrayBuffer = await blob.arrayBuffer();
                 workbook = window.XLSX.read(arrayBuffer, {
                     type: 'array',

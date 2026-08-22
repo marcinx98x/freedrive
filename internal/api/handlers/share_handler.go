@@ -201,7 +201,7 @@ func (h *ShareHandler) ListLinks(w http.ResponseWriter, r *http.Request) {
 // PublicLinkInfo handles GET /api/v1/public/share/{token}
 func (h *ShareHandler) PublicLinkInfo(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	password := r.URL.Query().Get("password")
+	password := r.Header.Get("X-Share-Password")
 	link, err := h.shareService.ResolveLink(r.Context(), token, password)
 	if err != nil {
 		writeError(w, "invalid or expired share link", http.StatusBadRequest)
@@ -213,7 +213,7 @@ func (h *ShareHandler) PublicLinkInfo(w http.ResponseWriter, r *http.Request) {
 // PublicLinkDownload handles GET /api/v1/public/share/{token}/download
 func (h *ShareHandler) PublicLinkDownload(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	password := r.URL.Query().Get("password")
+	password := r.Header.Get("X-Share-Password")
 	link, err := h.shareService.ResolveLink(r.Context(), token, password)
 	if err != nil || link.FileID == nil {
 		writeError(w, "invalid or expired share link", http.StatusBadRequest)

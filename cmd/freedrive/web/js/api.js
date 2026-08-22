@@ -373,6 +373,17 @@ const API = (() => {
         listLinks: () => request('GET', '/shares/links'),
         createLink: (data) => request('POST', '/shares/links', data),
         deleteLink: (id) => request('DELETE', `/shares/links/${id}`),
+        /** Password-protected public links must send X-Share-Password (never ?password=). */
+        publicInfo: async (token, password = '') => {
+            const headers = {};
+            if (password) headers['X-Share-Password'] = password;
+            const res = await fetch(`${BASE}/public/share/${encodeURIComponent(token)}`, { headers });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'invalid or expired share link');
+            }
+            return res.json();
+        },
     };
 
     const comments = {
