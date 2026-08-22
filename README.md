@@ -113,7 +113,7 @@ FreeDrive is ideal for:
 
 ### 4. In-browser editors & Open with
 
-- **Docs** — Google Docs-style rich-text editor for `.txt`, `.md`, and `.html` (toolbar, page canvas, autosave)
+- **Docs** — Google Docs-style rich-text editor (Quill) for `.txt`, `.md`, and `.html` (toolbar, page canvas, autosave)
 - **Photos** — Google Photos-style image editor (top icon toolbar, crop/draw/rotate, Adjustments and Filters panels)
 - **Sheets** — Google Sheets-style grid for `.xlsx`, `.xls`, and `.csv` (formula bar, sheet tabs, search); saves only changed cells so untouched formulas and formatting stay intact
 - **PDF / video / audio / JSON** — dedicated viewers and players

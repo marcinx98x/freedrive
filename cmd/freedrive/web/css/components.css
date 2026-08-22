@@ -899,6 +899,109 @@
     color: #1a73e8;
 }
 
+/* Quill Docs (snow) — toolbar + page canvas */
+.text-editor-docs .fd-quill-toolbar.ql-toolbar,
+.text-editor-docs .ql-toolbar.ql-snow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 12px;
+    border: none;
+    border-bottom: 1px solid #dadce0;
+    background: #edf2fa;
+    flex-shrink: 0;
+    font-family: 'Roboto', Arial, sans-serif;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow .ql-formats {
+    margin-right: 8px;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow button,
+.text-editor-docs .ql-toolbar.ql-snow .ql-picker-label {
+    border-radius: 4px;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow button:hover,
+.text-editor-docs .ql-toolbar.ql-snow button:focus,
+.text-editor-docs .ql-toolbar.ql-snow .ql-picker-label:hover {
+    background: #d3e3fd;
+    color: #001d35;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow button.ql-active,
+.text-editor-docs .ql-toolbar.ql-snow .ql-picker-label.ql-active {
+    background: #c2e7ff;
+    color: #001d35;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow .ql-stroke {
+    stroke: #444746;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow .ql-fill {
+    fill: #444746;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow button.ql-active .ql-stroke,
+.text-editor-docs .ql-toolbar.ql-snow .ql-picker-label.ql-active .ql-stroke {
+    stroke: #001d35;
+}
+
+.text-editor-docs .ql-toolbar.ql-snow button.ql-active .ql-fill,
+.text-editor-docs .ql-toolbar.ql-snow .ql-picker-label.ql-active .ql-fill {
+    fill: #001d35;
+}
+
+.text-editor-docs .quill-page.text-editor-page {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.text-editor-docs .quill-page .ql-container.ql-snow {
+    border: none;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    flex: 1;
+}
+
+.text-editor-docs .quill-page .ql-editor {
+    min-height: 11in;
+    padding: 1in;
+    box-sizing: border-box;
+    line-height: 1.5;
+    color: #202124;
+}
+
+.text-editor-docs .quill-page .ql-editor.ql-blank::before {
+    color: #80868b;
+    font-style: normal;
+    left: 1in;
+    right: 1in;
+}
+
+.text-editor-docs .quill-page .ql-editor img {
+    max-width: 100%;
+    height: auto;
+}
+
+.text-editor-docs .quill-page .ql-editor blockquote {
+    border-left: 3px solid #dadce0;
+    margin: 0.5em 0;
+    padding-left: 1em;
+    color: #5f6368;
+}
+
+.text-editor-docs .quill-page .ql-editor pre.ql-syntax {
+    background: #f1f3f4;
+    color: #202124;
+    border-radius: 4px;
+    padding: 12px;
+    overflow-x: auto;
+}
+
 .text-editor-code {
     background: #fff;
 }

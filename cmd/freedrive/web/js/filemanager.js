@@ -5541,71 +5541,26 @@ const FileManager = (() => {
         const ext = getFileExtension(file.name);
         const isRichText = ['md', 'html', 'htm', 'txt'].includes(ext);
 
+        if (isRichText) {
+            try {
+                await loadStylesheet('https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css');
+                await loadScript('https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js', 'Quill');
+            } catch (err) {
+                Components.toast(err.message || 'Failed to load editor', 'error');
+                closeEditor();
+                return;
+            }
+        }
+
         const wrap = document.createElement('div');
         wrap.className = `text-editor-wrap${isRichText ? ' text-editor-docs' : ' text-editor-code'}`;
 
         if (isRichText) {
             wrap.innerHTML = `
-                <div class="text-toolbar" id="text-toolbar">
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="undo" title="Undo"><span class="material-icons-outlined">undo</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="redo" title="Redo"><span class="material-icons-outlined">redo</span></button>
-                    <span class="tool-sep" aria-hidden="true"></span>
-                    <select id="text-block" class="tool-select" title="Styles">
-                        <option value="p">Normal</option>
-                        <option value="h1">Heading 1</option>
-                        <option value="h2">Heading 2</option>
-                        <option value="h3">Heading 3</option>
-                        <option value="h4">Heading 4</option>
-                        <option value="h5">Heading 5</option>
-                        <option value="h6">Heading 6</option>
-                    </select>
-                    <select id="text-font" class="tool-select" title="Font">
-                        <option value="Arial">Arial</option>
-                        <option value="Georgia">Georgia</option>
-                        <option value="Times New Roman">Times New Roman</option>
-                        <option value="Courier New">Courier New</option>
-                        <option value="Manrope">Manrope</option>
-                        <option value="Space Grotesk">Space Grotesk</option>
-                    </select>
-                    <select id="text-size" class="tool-select" title="Font size">
-                        <option value="12">12</option>
-                        <option value="14">14</option>
-                        <option value="16" selected>16</option>
-                        <option value="18">18</option>
-                        <option value="24">24</option>
-                        <option value="32">32</option>
-                        <option value="48">48</option>
-                    </select>
-                    <span class="tool-sep" aria-hidden="true"></span>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="bold" title="Bold"><span class="material-icons-outlined">format_bold</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="italic" title="Italic"><span class="material-icons-outlined">format_italic</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="underline" title="Underline"><span class="material-icons-outlined">format_underlined</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="strikeThrough" title="Strikethrough"><span class="material-icons-outlined">strikethrough_s</span></button>
-                    <label class="tool-color" title="Text color"><span class="material-icons-outlined">format_color_text</span><input type="color" id="text-color" value="#202124"></label>
-                    <label class="tool-color" title="Highlight color"><span class="material-icons-outlined">format_color_fill</span><input type="color" id="text-highlight" value="#ffff00"></label>
-                    <span class="tool-sep" aria-hidden="true"></span>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="insertUnorderedList" title="Bulleted list"><span class="material-icons-outlined">format_list_bulleted</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="insertOrderedList" title="Numbered list"><span class="material-icons-outlined">format_list_numbered</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="outdent" title="Decrease indent"><span class="material-icons-outlined">format_indent_decrease</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="indent" title="Increase indent"><span class="material-icons-outlined">format_indent_increase</span></button>
-                    <span class="tool-sep" aria-hidden="true"></span>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyLeft" title="Align left"><span class="material-icons-outlined">format_align_left</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyCenter" title="Align center"><span class="material-icons-outlined">format_align_center</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyRight" title="Align right"><span class="material-icons-outlined">format_align_right</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="justifyFull" title="Justify"><span class="material-icons-outlined">format_align_justify</span></button>
-                    <span class="tool-sep" aria-hidden="true"></span>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="subscript" title="Subscript"><span class="material-icons-outlined">subscript</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="superscript" title="Superscript"><span class="material-icons-outlined">superscript</span></button>
-                    <span class="tool-sep" aria-hidden="true"></span>
-                    <button type="button" class="tool-btn tool-btn-icon" id="text-link" title="Insert link"><span class="material-icons-outlined">link</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" id="text-image" title="Insert image"><span class="material-icons-outlined">image</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" id="text-quote" title="Quote"><span class="material-icons-outlined">format_quote</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" id="text-code" title="Code block"><span class="material-icons-outlined">code</span></button>
-                    <button type="button" class="tool-btn tool-btn-icon" data-cmd="removeFormat" title="Clear formatting"><span class="material-icons-outlined">format_clear</span></button>
-                    <input type="file" id="text-image-input" accept="image/*" hidden>
-                </div>
                 <div class="text-editor-scroll">
-                    <div class="text-editor text-editor-page" id="text-editor" contenteditable="true" spellcheck="true"></div>
+                    <div class="quill-page text-editor-page">
+                        <div id="quill-editor"></div>
+                    </div>
                 </div>
                 <div class="text-meta">
                     <span id="text-autosave">Auto-save every 30s</span>
@@ -5623,132 +5578,94 @@ const FileManager = (() => {
         }
         shell.appendChild(wrap);
 
-        let editor, getEditorValue, setEditorValue;
-        let selectionListener = null;
+        let editor;
+        let quill = null;
+        let getEditorValue;
+        let setEditorValue;
+        let getPlainText;
+
+        const looksLikeHtml = (v) => {
+            const trimmed = (v || '').trim();
+            return trimmed.startsWith('<') || /<[a-z][\s\S]*>/i.test(trimmed);
+        };
+
+        const loadRichIntoQuill = (v) => {
+            if (!quill) return;
+            if (looksLikeHtml(v)) {
+                quill.setContents([]);
+                quill.clipboard.dangerouslyPasteHTML(0, v || '', 'silent');
+            } else {
+                quill.setText(v || '', 'silent');
+            }
+        };
 
         if (isRichText) {
-            editor = document.getElementById('text-editor');
-            const loadRichContent = (v) => {
-                const trimmed = (v || '').trim();
-                if (trimmed.startsWith('<') || /<[a-z][\s\S]*>/i.test(trimmed)) {
-                    editor.innerHTML = v;
-                } else {
-                    editor.textContent = v;
-                }
-            };
-            loadRichContent(text);
-            getEditorValue = () => editor.innerHTML;
-            setEditorValue = (v) => loadRichContent(v);
-
-            const syncToolbarState = () => {
-                document.querySelectorAll('#text-toolbar [data-cmd]').forEach((b) => {
-                    const cmd = b.dataset.cmd;
-                    if (['undo', 'redo', 'indent', 'outdent', 'removeFormat'].includes(cmd)) {
-                        b.classList.remove('active');
-                        return;
-                    }
-                    try {
-                        b.classList.toggle('active', document.queryCommandState(cmd));
-                    } catch (_) {
-                        b.classList.remove('active');
-                    }
-                });
-            };
-
-            const runCmd = (cmd, value = null) => {
-                document.execCommand(cmd, false, value);
-                editor.focus();
-                setEditorSaved(false);
-                syncToolbarState();
-            };
-
-            document.querySelectorAll('#text-toolbar [data-cmd]').forEach((b) => {
-                b.addEventListener('mousedown', (e) => e.preventDefault());
-                b.addEventListener('click', () => runCmd(b.dataset.cmd));
-            });
-
-            document.getElementById('text-block').addEventListener('change', (e) => {
-                const tag = e.target.value || 'p';
-                runCmd('formatBlock', `<${tag}>`);
-            });
-
-            document.getElementById('text-link').addEventListener('mousedown', (e) => e.preventDefault());
-            document.getElementById('text-link').addEventListener('click', () => {
-                const href = prompt('Enter URL');
-                if (!href) return;
-                runCmd('createLink', href);
-            });
-
-            document.getElementById('text-quote').addEventListener('mousedown', (e) => e.preventDefault());
-            document.getElementById('text-quote').addEventListener('click', () => {
-                runCmd('formatBlock', '<blockquote>');
-            });
-
-            document.getElementById('text-code').addEventListener('mousedown', (e) => e.preventDefault());
-            document.getElementById('text-code').addEventListener('click', () => {
-                document.execCommand('insertHTML', false, '<pre><code></code></pre>');
-                editor.focus();
-                setEditorSaved(false);
-            });
-
-            const imageInput = document.getElementById('text-image-input');
-            document.getElementById('text-image').addEventListener('mousedown', (e) => e.preventDefault());
-            document.getElementById('text-image').addEventListener('click', () => imageInput.click());
-            imageInput.addEventListener('change', () => {
-                const fileObj = imageInput.files?.[0];
-                imageInput.value = '';
-                if (!fileObj) return;
-                const reader = new FileReader();
-                reader.onload = () => {
-                    document.execCommand('insertImage', false, reader.result);
-                    editor.focus();
-                    setEditorSaved(false);
+            const imageHandler = function imageHandler() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/*';
+                input.onchange = () => {
+                    const fileObj = input.files?.[0];
+                    if (!fileObj) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const range = quill.getSelection(true);
+                        const index = range ? range.index : quill.getLength();
+                        quill.insertEmbed(index, 'image', reader.result, 'user');
+                        quill.setSelection(index + 1, 0, 'silent');
+                    };
+                    reader.readAsDataURL(fileObj);
                 };
-                reader.readAsDataURL(fileObj);
-            });
-
-            document.getElementById('text-font').addEventListener('change', (e) => {
-                runCmd('fontName', e.target.value);
-            });
-
-            document.getElementById('text-size').addEventListener('change', (e) => {
-                const px = e.target.value;
-                document.execCommand('fontSize', false, 7);
-                const fonts = editor.getElementsByTagName('font');
-                for (let i = 0; i < fonts.length; i += 1) {
-                    if (fonts[i].size === '7') {
-                        fonts[i].removeAttribute('size');
-                        fonts[i].style.fontSize = `${px}px`;
-                    }
-                }
-                editor.focus();
-                setEditorSaved(false);
-            });
-
-            document.getElementById('text-color').addEventListener('input', (e) => {
-                runCmd('foreColor', e.target.value);
-            });
-
-            document.getElementById('text-highlight').addEventListener('input', (e) => {
-                runCmd('hiliteColor', e.target.value);
-            });
-
-            editor.addEventListener('input', () => {
-                updateWordCount(editor.innerText || '');
-                setEditorSaved(false);
-            });
-
-            selectionListener = () => {
-                if (!editorState || document.getElementById('text-editor') !== editor) return;
-                syncToolbarState();
+                input.click();
             };
-            document.addEventListener('selectionchange', selectionListener);
-            syncToolbarState();
+
+            quill = new window.Quill('#quill-editor', {
+                theme: 'snow',
+                placeholder: 'Start writing…',
+                modules: {
+                    history: { delay: 1000, maxStack: 200, userOnly: true },
+                    toolbar: {
+                        container: [
+                            [{ header: [1, 2, 3, 4, 5, 6, false] }],
+                            [{ font: [] }],
+                            [{ size: ['small', false, 'large', 'huge'] }],
+                            ['bold', 'italic', 'underline', 'strike'],
+                            [{ color: [] }, { background: [] }],
+                            [{ list: 'ordered' }, { list: 'bullet' }],
+                            [{ indent: '-1' }, { indent: '+1' }],
+                            [{ align: [] }],
+                            ['blockquote', 'code-block'],
+                            ['link', 'image'],
+                            ['clean'],
+                        ],
+                        handlers: { image: imageHandler },
+                    },
+                },
+            });
+
+            // Move Quill toolbar above the scroll canvas (Docs-style).
+            const toolbarEl = wrap.querySelector('.ql-toolbar');
+            if (toolbarEl) {
+                wrap.insertBefore(toolbarEl, wrap.firstChild);
+                toolbarEl.classList.add('fd-quill-toolbar');
+            }
+
+            loadRichIntoQuill(text);
+            getEditorValue = () => quill.root.innerHTML;
+            setEditorValue = (v) => loadRichIntoQuill(v);
+            getPlainText = () => quill.getText() || '';
+
+            quill.on('text-change', (_delta, _old, source) => {
+                if (source !== 'user' && source !== 'api') return;
+                updateWordCount(getPlainText());
+                setEditorSaved(false);
+            });
         } else {
             editor = document.getElementById('text-editor-plain');
             editor.value = text;
             getEditorValue = () => editor.value;
             setEditorValue = (v) => { editor.value = v; };
+            getPlainText = () => editor.value || '';
 
             editor.addEventListener('input', () => {
                 updateWordCount(editor.value || '');
@@ -5756,19 +5673,19 @@ const FileManager = (() => {
             });
         }
 
-        updateWordCount(isRichText ? (editor.innerText || '') : editor.value);
+        updateWordCount(getPlainText());
 
         editorState.onUndo = () => {
-            if (isRichText) {
-                document.execCommand('undo', false, null);
-            } else {
-                document.execCommand('undo', false, null);
-            }
+            if (quill) quill.history.undo();
+            else document.execCommand('undo', false, null);
             setEditorSaved(false);
+            updateWordCount(getPlainText());
         };
         editorState.onRedo = () => {
-            document.execCommand('redo', false, null);
+            if (quill) quill.history.redo();
+            else document.execCommand('redo', false, null);
             setEditorSaved(false);
+            updateWordCount(getPlainText());
         };
 
         const doSave = async () => {
@@ -5795,20 +5712,34 @@ const FileManager = (() => {
 
         editorState.onReset = () => {
             setEditorValue(text);
-            updateWordCount(isRichText ? (editor.innerText || '') : editor.value);
+            updateWordCount(getPlainText());
             setEditorSaved(false);
         };
 
         editorState.cleanup = () => {
             clearInterval(autosaveTimer);
-            if (selectionListener) document.removeEventListener('selectionchange', selectionListener);
         };
     }
 
     function updateWordCount(text) {
-        const words = (text.trim().match(/\S+/g) || []).length;
-        const chars = text.length;
-        document.getElementById('text-count').textContent = `${words} words · ${chars.toLocaleString()} chars`;
+        const words = (String(text || '').trim().match(/\S+/g) || []).length;
+        const chars = String(text || '').replace(/\n$/, '').length;
+        const el = document.getElementById('text-count');
+        if (el) el.textContent = `${words} words · ${chars.toLocaleString()} chars`;
+    }
+
+    function loadStylesheet(href) {
+        const existing = document.querySelector(`link[data-href="${href}"]`);
+        if (existing) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            link.dataset.href = href;
+            link.onload = () => resolve();
+            link.onerror = () => reject(new Error(`Failed to load stylesheet: ${href}`));
+            document.head.appendChild(link);
+        });
     }
 
     async function openPdfViewer(file) {
