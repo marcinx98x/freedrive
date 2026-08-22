@@ -60,7 +60,7 @@ const API = (() => {
         return id;
     }
 
-    async function request(method, path, body = null, isRetry = false, rlRetries = 2) {
+    async function request(method, path, body = null, isRetry = false, rlRetries = 2, extraHeaders = null) {
         const headers = {};
         if (!(body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
@@ -68,6 +68,9 @@ const API = (() => {
         headers['X-Device-ID'] = getDeviceID();
         if (accessToken) {
             headers.Authorization = `Bearer ${accessToken}`;
+        }
+        if (extraHeaders && typeof extraHeaders === 'object') {
+            Object.assign(headers, extraHeaders);
         }
 
         const opts = { method, headers };
@@ -94,10 +97,11 @@ const API = (() => {
             || path === '/auth/confirm-email'
             || path === '/auth/verify-2fa'
             || path === '/auth/2fa/send-email'
-            || path === '/auth/forgot-password';
+            || path === '/auth/forgot-password'
+            || path.startsWith('/auth/login-approval/');
         if (res.status === 401 && !isRetry && refreshToken && !isPublicAuth) {
             const refreshed = await tryRefresh();
-            if (refreshed) return request(method, path, body, true, rlRetries);
+            if (refreshed) return request(method, path, body, true, rlRetries, extraHeaders);
             clearAuth();
             window.location.hash = '#/login';
             throw new Error('Session expired');
@@ -105,7 +109,7 @@ const API = (() => {
 
         if (res.status === 429 && rlRetries > 0) {
             await new Promise((r) => setTimeout(r, 400));
-            return request(method, path, body, isRetry, rlRetries - 1);
+            return request(method, path, body, isRetry, rlRetries - 1, extraHeaders);
         }
 
         const data = await res.json().catch(() => ({}));
@@ -271,7 +275,14 @@ const API = (() => {
 
     const auth = {
         login: (email, password) => request('POST', '/auth/login', { email, password }),
-        pollLoginApproval: (id, token) => request('GET', `/auth/login-approval/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`),
+        pollLoginApproval: (id, token) => request(
+            'GET',
+            `/auth/login-approval/${encodeURIComponent(id)}`,
+            null,
+            false,
+            2,
+            { 'X-Login-Approval-Token': token },
+        ),
         verify2FA: (challenge_id, code) => request('POST', '/auth/verify-2fa', { challenge_id, code }),
         send2FAEmail: (challenge_id) => request('POST', '/auth/2fa/send-email', { challenge_id }),
         register: (email, username, password, invite_code) => request('POST', '/auth/register', { email, username, password, invite_code }),

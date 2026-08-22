@@ -473,20 +473,11 @@ impl ApiClient {
     ) -> AppResult<serde_json::Value> {
         let base = server_url.trim_end_matches('/');
         let http = reqwest::Client::new();
-        let encoded = challenge_token
-            .bytes()
-            .map(|b| match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    (b as char).to_string()
-                }
-                _ => format!("%{:02X}", b),
-            })
-            .collect::<String>();
-        let url = format!(
-            "{}/api/v1/auth/login-approval/{}?token={}",
-            base, challenge_id, encoded
-        );
-        let res = apply_device_headers(http.get(url)).send().await?;
+        let url = format!("{}/api/v1/auth/login-approval/{}", base, challenge_id);
+        let res = apply_device_headers(http.get(url))
+            .header("X-Login-Approval-Token", challenge_token)
+            .send()
+            .await?;
         let status = res.status();
         let text = res.text().await?;
         if !status.is_success() {

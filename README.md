@@ -388,18 +388,30 @@ To make the GHCR package publicly pullable without login: GitHub → **Packages*
 
 `docker-compose.yml` pulls `marcinx98x/freedrive:latest` from Docker Hub, runs a single `freedrive` service, and maps a host folder to `/app/data` through a bind mount. To use GHCR instead, set `image: ghcr.io/marcinx98x/freedrive:latest` in the compose file.
 
-Before the first start, edit `docker-compose.yml`: set a strong `FREEDRIVE_ADMIN_PASSWORD` (and `FREEDRIVE_ADMIN_EMAIL`), adjust the published port if needed, and change the bind-mount path (`/volume2/docker/freedrive/data`) to a folder that exists on your host.
+**Create a `.env` file in the same directory as `docker-compose.yml`** (Compose loads it automatically). Copy from [`.env.example`](.env.example) and set at least:
+
+- `FREEDRIVE_ADMIN_PASSWORD` (required by compose; used only on first boot when the data volume has no users)
+- `FREEDRIVE_DATA_PATH` if your data folder is not `/volume2/docker/freedrive/data`
+- `FREEDRIVE_UID=0` and `FREEDRIVE_GID=0` on Synology when the bind mount needs root
+- `FREEDRIVE_TRUSTED_PROXIES` only if FreeDrive sits behind a reverse proxy you control
+
+Do not put passwords in `docker-compose.yml`. Leave `FREEDRIVE_JWT_SECRET` empty so the existing `jwt_secret.key` in the data volume is reused.
 
 ```bash
+# example: /volume2/docker/freedrive/.env next to docker-compose.yml
+cp .env.example .env
+# edit .env — set a strong FREEDRIVE_ADMIN_PASSWORD
+
 docker compose pull
 docker compose up -d
+docker compose logs -f --tail=50
 ```
 
 Open:
 
 - `http://localhost:8080`
 
-Runtime data (the `freedrive.db` database, encrypted `blobs/`, and `jwt_secret.key`) lives in the host folder you mapped to `/app/data`, so it survives container recreation and image updates.
+Runtime data (the `freedrive.db` database, encrypted `blobs/`, and `jwt_secret.key`) lives in the host folder you mapped to `/app/data`, so it survives container recreation and image updates. On an existing install, log in with your current account password — not necessarily the value in `FREEDRIVE_ADMIN_PASSWORD`.
 
 ### Automatic Updates (Watchtower, optional)
 
@@ -423,14 +435,16 @@ ls -la /volume1/<your-path>/freedrive/data
 
 **Method A (recommended): run FreeDrive as a Project (compose) with a bind mount to your folder.**
 
-The shipped `docker-compose.yml` already uses a host bind mount, so the mapping lives in the file and can never be dropped. Point it at a folder on your NAS:
+The shipped `docker-compose.yml` already uses a host bind mount via `FREEDRIVE_DATA_PATH` in `.env` (default `/volume2/docker/freedrive/data`). Set that path in `.env` next to the compose file — do not hard-code secrets in `docker-compose.yml`.
 
-```yaml
-    volumes:
-      - /volume1/<your-path>/freedrive/data:/app/data
+```env
+FREEDRIVE_DATA_PATH=/volume1/<your-path>/freedrive/data
+FREEDRIVE_UID=0
+FREEDRIVE_GID=0
+FREEDRIVE_ADMIN_PASSWORD=change-me-to-a-strong-password
 ```
 
-Update from the Project view via pull + up (`docker compose pull && docker compose up -d`). Because the mapping lives in the file, every recreation reuses the exact same data folder.
+Update from the Project view via pull + up (`docker compose pull && docker compose up -d`). Because the mapping lives in compose + `.env`, every recreation reuses the exact same data folder.
 
 **Method B (optional): add Watchtower for automatic updates — the mapping can never be lost.**
 
@@ -503,16 +517,19 @@ Note: current systemd template runs service as `root`. For hardened production s
 
 ## Configuration
 
-Environment variables loaded by `internal/config/config.go`:
+Environment variables loaded by `internal/config/config.go` (and compose-only helpers in `docker-compose.yml` / `.env`):
 
 | Variable | Description | Default |
 |---|---|---|
-| `FREEDRIVE_PORT` | HTTP port | `8080` |
-| `FREEDRIVE_DATA_DIR` | Data directory (DB, blobs, keys) | `./data` |
-| `FREEDRIVE_JWT_SECRET` | JWT signing secret | auto-generated if empty |
+| `FREEDRIVE_PORT` | HTTP port (host publish via compose) | `8080` |
+| `FREEDRIVE_DATA_DIR` | Data directory inside the container | `/app/data` (compose) / `./data` (binary) |
+| `FREEDRIVE_DATA_PATH` | Host bind-mount path (compose only) | `/volume2/docker/freedrive/data` |
+| `FREEDRIVE_UID` / `FREEDRIVE_GID` | Container user (compose only) | `1000` / `1000` (use `0`/`0` on Synology if needed) |
+| `FREEDRIVE_JWT_SECRET` | JWT signing secret | auto-generated if empty (≥32 chars if set) |
 | `FREEDRIVE_MAX_UPLOAD_MB` | Max upload size (MB) | `5120` |
-| `FREEDRIVE_ADMIN_EMAIL` | Initial admin email | `admin@freedrive.local` |
-| `FREEDRIVE_ADMIN_PASSWORD` | Initial admin password | `admin123` |
+| `FREEDRIVE_ADMIN_EMAIL` | Initial admin email (first boot only) | `admin@freedrive.local` |
+| `FREEDRIVE_ADMIN_PASSWORD` | Initial admin password (first boot; required by compose) | empty (must set for first start) |
+| `FREEDRIVE_TRUSTED_PROXIES` | Proxy IPs/CIDRs trusted for `X-Forwarded-For` | empty |
 
 ---
 
@@ -627,8 +644,8 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 
 ### Public (no auth)
 
-- `GET /public/share/{token}` — share link metadata (`?password=` if protected)
-- `GET /public/share/{token}/download` — download file via share link (`?password=` if protected)
+- `GET /public/share/{token}` — share link metadata (send `X-Share-Password` if protected)
+- `GET /public/share/{token}/download` — download file via share link (send `X-Share-Password` if protected)
 
 ### Admin (Requires `admin` role)
 

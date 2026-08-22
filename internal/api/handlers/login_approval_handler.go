@@ -21,12 +21,13 @@ func NewLoginApprovalHandler(svc *service.LoginApprovalService) *LoginApprovalHa
 	return &LoginApprovalHandler{svc: svc}
 }
 
-// Poll handles GET /api/v1/auth/login-approval/{id}?token=
+// Poll handles GET /api/v1/auth/login-approval/{id}
+// Challenge token: prefer X-Login-Approval-Token (query ?token= accepted for older clients).
 func (h *LoginApprovalHandler) Poll(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	token := strings.TrimSpace(r.Header.Get("X-Login-Approval-Token"))
 	if token == "" {
-		token = strings.TrimSpace(r.Header.Get("X-Login-Approval-Token"))
+		token = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
 	a, tokens, user, err := h.svc.PublicView(r.Context(), id, token)
 	if err == service.ErrLoginApprovalPending {

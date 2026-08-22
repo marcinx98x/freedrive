@@ -42,10 +42,13 @@ func NewRateLimiter(rate, burst int) *RateLimiter {
 	return rl
 }
 
-// Limit returns rate limiting middleware.
+// Limit returns rate limiting middleware keyed by ClientIP (trusted proxies only).
 func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
+		ip := ClientIP(r)
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
 
 		rl.mu.Lock()
 		v, exists := rl.visitors[ip]
