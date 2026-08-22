@@ -113,7 +113,7 @@ FreeDrive is ideal for:
 
 ### 4. In-browser editors & Open with
 
-- **Docs** — Google Docs-style rich-text editor (Quill) for `.txt`, `.md`, and `.html` (toolbar, page canvas, autosave)
+- **Docs** — Google Docs-style rich-text editor in the web UI ([Quill](https://quilljs.com/) snow via CDN) for `.txt`, `.md`, `.html`, and `.htm`: formatting toolbar, page canvas, autosave every 30s, and Save / Undo / Redo in the editor shell; content is stored as HTML (UTF-8) and remains compatible with files saved by the previous Docs editor; legacy ANSI/Windows-1250 text is auto-detected on open and re-saved as UTF-8; other text/code files stay in a plain textarea
 - **Photos** — Google Photos-style image editor (top icon toolbar, crop/draw/rotate, Adjustments and Filters panels)
 - **Sheets** — Google Sheets-style grid for `.xlsx`, `.xls`, and `.csv` (formula bar, sheet tabs, search); saves only changed cells so untouched formulas and formatting stay intact
 - **PDF / video / audio / JSON** — dedicated viewers and players
@@ -768,7 +768,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Create FAB** — on Files / Folder screens, actions nearest the `+` are Folder, then Upload, Spreadsheet, Document (camera stub reserved)
 - **Encrypted upload** — multi-file picker → AES-GCM → cache file → upload; payloads **> 32 MiB** use resumable chunked `PUT /uploads/sessions/{id}` (8 MiB chunks, Cloudflare-safe); smaller files use native multipart `POST /files/upload` / content replace
 - **New folder** — `POST /api/v1/folders` from the FAB dialog
-- **New Document / Spreadsheet** — creates encrypted `Document.txt` / `Spreadsheet.xlsx`; Document opens in the text editor; Spreadsheet opens the in-app sheet grid
+- **New Document / Spreadsheet** — creates encrypted `Document.txt` / `Spreadsheet.xlsx`; on mobile, Document opens the in-app plain-text preview/editor (Quill Docs is web-only); Spreadsheet opens the in-app sheet grid
 - **Branding** — app icon, splash, and SVG icons match the desktop FreeDrive logo and Material-style glyphs
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
 - **Profile menu** — storage bar (`{used} of {total} used`) from `/me/storage`, Manage storage (web), Sign out

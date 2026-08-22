@@ -493,6 +493,71 @@ const FileManager = (() => {
         return name.slice(idx + 1).toLowerCase();
     }
 
+    // Windows-1250 (CP1250) code points for bytes 0x80–0xFF (Encoding Standard).
+    const WINDOWS_1250_HIGH = [
+        0x20AC, 0xFFFD, 0x201A, 0xFFFD, 0x201E, 0x2026, 0x2020, 0x2021,
+        0xFFFD, 0x2030, 0x0160, 0x2039, 0x015A, 0x0164, 0x017D, 0x0179,
+        0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0xFFFD, 0x2122, 0x0161, 0x203A, 0x015B, 0x0165, 0x017E, 0x017A,
+        0x00A0, 0x02C7, 0x02D8, 0x0141, 0x00A4, 0x0104, 0x00A6, 0x00A7,
+        0x00A8, 0x00A9, 0x015E, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x017B,
+        0x00B0, 0x00B1, 0x02DB, 0x0142, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+        0x00B8, 0x0105, 0x015F, 0x00BB, 0x013D, 0x02DD, 0x013E, 0x017C,
+        0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7,
+        0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E,
+        0x0110, 0x0143, 0x0147, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x00D7,
+        0x0158, 0x016E, 0x00DA, 0x0170, 0x00DC, 0x00DD, 0x0162, 0x00DF,
+        0x0155, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x013A, 0x0107, 0x00E7,
+        0x010D, 0x00E9, 0x0119, 0x00EB, 0x011B, 0x00ED, 0x00EE, 0x010F,
+        0x0111, 0x0144, 0x0148, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x00F7,
+        0x0159, 0x016F, 0x00FA, 0x0171, 0x00FC, 0x00FD, 0x0163, 0x02D9,
+    ];
+
+    function decodeWindows1250Bytes(bytes) {
+        const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        try {
+            return new TextDecoder('windows-1250').decode(u8);
+        } catch (_) {
+            let out = '';
+            for (let i = 0; i < u8.length; i += 1) {
+                const b = u8[i];
+                out += b < 0x80
+                    ? String.fromCharCode(b)
+                    : String.fromCodePoint(WINDOWS_1250_HIGH[b - 0x80] || 0xFFFD);
+            }
+            return out;
+        }
+    }
+
+    function scoreDecodedText(s) {
+        const text = String(s || '');
+        const bad = (text.match(/\uFFFD/g) || []).length;
+        const pl = (text.match(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g) || []).length;
+        return pl * 10 - bad * 50;
+    }
+
+    /** Decode text blob as UTF-8; fall back to Windows-1250 when UTF-8 is invalid/garbled. */
+    async function decodeTextBlob(blob) {
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        if (!buf.length) return '';
+        try {
+            return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+        } catch (_) {
+            const utf8 = new TextDecoder('utf-8').decode(buf);
+            const cp1250 = decodeWindows1250Bytes(buf);
+            return scoreDecodedText(cp1250) > scoreDecodedText(utf8) ? cp1250 : utf8;
+        }
+    }
+
+    function ensureHtmlUtf8Meta(html) {
+        const s = String(html || '');
+        if (/<meta[^>]+charset\s*=/i.test(s)) return s;
+        if (/<head[\s>]/i.test(s)) {
+            return s.replace(/<head([^>]*)>/i, '<head$1><meta charset="utf-8">');
+        }
+        return `<meta charset="utf-8">${s}`;
+    }
+
     function isJsonMimeOrName(mime, name) {
         const mt = String(mime || '').toLowerCase();
         const ext = getFileExtension(name);
@@ -5535,7 +5600,7 @@ const FileManager = (() => {
     async function openTextEditor(file) {
         Components.toast('Loading file...', 'info');
         const blob = await decryptFileBlob(file);
-        const text = await blob.text();
+        const text = await decodeTextBlob(blob);
         const shell = openEditorShell(file);
 
         const ext = getFileExtension(file.name);
@@ -5690,8 +5755,15 @@ const FileManager = (() => {
 
         const doSave = async () => {
             const fileName = document.getElementById('editor-file-name').value.trim() || file.name;
-            const content = getEditorValue();
-            const mimeType = isRichText ? 'text/html' : (file.mime_type || 'text/plain');
+            let content = getEditorValue();
+            let mimeType;
+            if (isRichText) {
+                content = ensureHtmlUtf8Meta(content);
+                mimeType = 'text/html;charset=utf-8';
+            } else {
+                const base = file.mime_type || 'text/plain';
+                mimeType = /charset=/i.test(base) ? base : `${base};charset=utf-8`;
+            }
             const saveBlob = new Blob([content], { type: mimeType });
             const ok = await saveBlobToExistingFile(file, saveBlob, mimeType, fileName);
             if (ok) {
