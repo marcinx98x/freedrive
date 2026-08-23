@@ -2358,9 +2358,11 @@ const FileManager = (() => {
                 ? `<a class="home-location-cell" data-folder="${esc(item.folder_id || '')}" href="#/files${item.folder_id ? `/${item.folder_id}` : ''}">${folderIconSvg}<span class="home-location-text">${esc(locationText)}</span></a>`
                 : sizeText}</div>
             <div class="file-cell file-actions">
-                <button class="btn-icon action-share" title="Share"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg></button>
-                <button class="btn-icon action-download" title="Download"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
-                <button class="btn-icon action-more" title="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
+                <button type="button" class="btn-icon action-share" title="Share" aria-label="Share"><span class="material-icons-outlined">person_add</span></button>
+                <button type="button" class="btn-icon action-download" title="Download" aria-label="Download"><span class="material-icons-outlined">download</span></button>
+                <button type="button" class="btn-icon action-rename" title="Rename" aria-label="Rename"><span class="material-icons-outlined">drive_file_rename_outline</span></button>
+                <button type="button" class="btn-icon action-star" title="Add to Starred" aria-label="Add to Starred"><span class="material-icons-outlined">star_outline</span></button>
+                <button type="button" class="btn-icon action-more" title="More" aria-label="More"><span class="material-icons-outlined">more_vert</span></button>
             </div>
         `;
 
@@ -2440,6 +2442,8 @@ const FileManager = (() => {
         const moreBtn = container.querySelector('.action-more');
         const shareBtn = container.querySelector('.action-share');
         const downloadBtn = container.querySelector('.action-download');
+        const renameBtn = container.querySelector('.action-rename');
+        const starBtn = container.querySelector('.action-star');
 
         checkbox?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2447,7 +2451,7 @@ const FileManager = (() => {
         });
 
         container.addEventListener('click', (e) => {
-            if (e.target.closest('.action-more,.action-share,.action-download,.file-checkbox')) return;
+            if (e.target.closest('.action-more,.action-share,.action-download,.action-rename,.action-star,.file-checkbox')) return;
 
             // Recent page should open items with a single click.
             if (currentPage === 'recent') {
@@ -2502,6 +2506,16 @@ const FileManager = (() => {
         downloadBtn?.addEventListener('click', async (e) => {
             e.stopPropagation();
             await downloadPayloadAsZip({ type, data: item });
+        });
+
+        renameBtn?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await renamePrompt(type, item);
+        });
+
+        starBtn?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await toggleStar(type, item);
         });
 
         container.addEventListener('dragstart', (e) => {

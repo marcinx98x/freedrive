@@ -93,6 +93,7 @@ FreeDrive is ideal for:
 - Global live search in the top bar on every page
 - Advanced search panel (Drive-style filters: type, owner, location, modified, trash, starred, approvals, and more)
 - Context menus clamp to the viewport; Drive-style flyouts on hover for **Open with…** (apps), **Share** (Share + Copy link), and **Organise** (Move to, Add to Starred, Add to Offline, Make a copy); keyboard shortcuts
+- List-view row hover actions use the same Material Icons as the context menu: **Share**, **Download**, **Rename**, **Add to Starred**, plus **More** (narrow screens show More only)
 - File/Folder information side panel: Details tab shows preview, Who has access (Manage access), then properties (Owner/Modified use `me` / `by me` for your own items); history icon on Modified opens Manage versions for writable files; Activity tab for comments/approvals — no duplicate Share/Download/Rename/Delete actions in the panel
 
 ### 2. Sidebar: My Drive & Computers
@@ -190,7 +191,7 @@ In the Drive UI, users with the `admin` role see a Security-style shield icon in
 Admin chrome:
 
 - Top bar title **Admin Panel**; the in-page header shows the active section name (Dashboard, Manage Users, Storage, …)
-- **Dashboard** shows live FreeDrive metrics: user count, encrypted file storage (with disk free as context), file count (+ created today), storage-by-type donut, and recent auth activity — no fake time-series or bandwidth tracking
+- **Dashboard** shows live FreeDrive metrics: user count, encrypted file storage (with disk free as context), file count (+ created today), a 30-day storage growth chart (cumulative from file upload dates), and recent auth activity — type breakdown lives under Storage
 - Sidebar matches Drive nav styling; **Back to Drive** at the bottom returns to `/#/files`
 - Security nav icon matches the top-bar Security icon
 
@@ -677,7 +678,7 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 - `GET /admin/backup/download/{filename}`
 - `POST /admin/backup/restore`
 - `DELETE /admin/backup/{filename}`
-- `GET /admin/storage/breakdown` — instance-wide (or `?user_id=`) file-type size breakdown plus `total_size`, `total_files`, `files_today`
+- `GET /admin/storage/breakdown` — instance-wide (or `?user_id=`) file-type size breakdown plus `total_size`, `total_files`, `files_today`, and `trend` (30-day cumulative size from file `created_at`)
 - `POST /admin/storage/purge-trash?days=30` — permanently delete trashed files (blobs + rows) and folder rows older than N days; `days=0` purges all trash. Response: `{ removed_files, removed_folders, freed_bytes }`. Background auto-empty uses the `storage.trash_auto_empty` setting (7 / 30 / 90 / never).
 - `GET /admin/storage/duplicates`
 - `POST /admin/storage/duplicates/purge`

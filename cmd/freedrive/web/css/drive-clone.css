@@ -1492,7 +1492,9 @@ body {
   }
 
   .app:not(.admin-mode) .file-row .file-actions .action-share,
-  .app:not(.admin-mode) .file-row .file-actions .action-download {
+  .app:not(.admin-mode) .file-row .file-actions .action-download,
+  .app:not(.admin-mode) .file-row .file-actions .action-rename,
+  .app:not(.admin-mode) .file-row .file-actions .action-star {
     display: none !important;
   }
 
@@ -1734,14 +1736,18 @@ body {
 }
 
 .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row .file-actions .action-share,
-.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row .file-actions .action-download {
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row .file-actions .action-download,
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row .file-actions .action-rename,
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row .file-actions .action-star {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
 }
 
 .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover .file-actions .action-share,
-.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover .file-actions .action-download {
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover .file-actions .action-download,
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover .file-actions .action-rename,
+.app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover .file-actions .action-star {
   opacity: 1;
   pointer-events: auto;
 }

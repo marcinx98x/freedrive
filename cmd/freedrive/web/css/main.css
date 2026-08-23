@@ -862,7 +862,7 @@ svg {
 }
 .file-row:hover .file-actions { opacity: 1; }
 .file-row.selected .file-actions { opacity: 1; }
-.action-share, .action-download, .action-more, .action-delete {
+.action-share, .action-download, .action-rename, .action-star, .action-more, .action-delete {
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -875,7 +875,13 @@ svg {
   cursor: pointer;
   transition: background 0.1s;
 }
-.action-share:hover, .action-download:hover, .action-more:hover { background: rgba(60,64,67,.12); }
+.action-share:hover, .action-download:hover, .action-rename:hover, .action-star:hover, .action-more:hover { background: rgba(60,64,67,.12); }
+.file-actions .material-icons-outlined {
+  font-size: 18px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+}
 .home-size-cell { font-size: 13px; color: var(--gray-text); justify-content: flex-end; }
 
 /* ── Grid view cards ── */

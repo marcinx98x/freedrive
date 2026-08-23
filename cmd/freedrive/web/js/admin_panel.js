@@ -97,6 +97,7 @@ const AdminPanel = (() => {
         drawerBreakdown: null,
         storageBreakdown: null,
         storageTotals: { total_size: 0, total_files: 0, files_today: 0 },
+        storageTrend: [],
         storageUserPage: 1,
         storageUserPerPage: 25,
         activityFilters: {
@@ -565,6 +566,7 @@ const AdminPanel = (() => {
                     total_files: asNumber(breakdownRes?.total_files, 0),
                     files_today: asNumber(breakdownRes?.files_today, 0),
                 };
+                state.storageTrend = Array.isArray(breakdownRes?.trend) ? breakdownRes.trend : [];
                 break;
             }
             default:
@@ -702,6 +704,37 @@ const AdminPanel = (() => {
         return emptyFileTypeBuckets();
     }
 
+    function buildStorageLineChart(trend) {
+        const points = (Array.isArray(trend) && trend.length
+            ? trend
+            : [{ date: new Date().toISOString().slice(0, 10), size: 0 }]
+        ).map((p) => {
+            const d = new Date(`${p.date}T00:00:00Z`);
+            return {
+                value: asNumber(p.size, 0) / (1024 ** 3),
+                label: Number.isNaN(d.getTime())
+                    ? String(p.date || '')
+                    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+            };
+        });
+        const lineMin = Math.min(...points.map((p) => p.value));
+        const lineMax = Math.max(...points.map((p) => p.value));
+        const chartW = 760;
+        const chartH = 250;
+        const padX = 32;
+        const padY = 20;
+        const usableW = chartW - (padX * 2);
+        const usableH = chartH - (padY * 2);
+        const range = Math.max(1e-9, lineMax - lineMin);
+        const linePoints = points.map((p, idx) => {
+            const x = padX + ((idx / Math.max(1, points.length - 1)) * usableW);
+            const y = chartH - padY - (((p.value - lineMin) / range) * usableH);
+            return { ...p, x, y };
+        });
+        const linePath = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+        return { chartW, chartH, padY, linePoints, linePath };
+    }
+
     function renderDashboardSection() {
         const users = state.users || [];
         const totalUsers = users.length;
@@ -721,25 +754,7 @@ const AdminPanel = (() => {
         const today = new Date().toDateString();
         const usersToday = users.filter((u) => new Date(u.created_at || 0).toDateString() === today).length;
 
-        const breakdown = [
-            { label: 'Images', ...(buckets.Images || { size: 0, count: 0, color: '#1967D2' }) },
-            { label: 'Videos', ...(buckets.Videos || { size: 0, count: 0, color: '#188038' }) },
-            { label: 'Documents', ...(buckets.Documents || { size: 0, count: 0, color: '#E37400' }) },
-            { label: 'Audio', ...(buckets.Audio || { size: 0, count: 0, color: '#F59E0B' }) },
-            { label: 'Archives', ...(buckets.Archives || { size: 0, count: 0, color: '#E53935' }) },
-            { label: 'Other', ...(buckets.Other || { size: 0, count: 0, color: '#5F6368' }) },
-        ];
-        const pieTotal = breakdown.reduce((sum, b) => sum + b.size, 0) || 1;
-        const nonZeroBreakdown = breakdown.filter((b) => b.size > 0);
-
-        let angle = 0;
-        const donutStops = (nonZeroBreakdown.length ? nonZeroBreakdown : [{ label: 'Empty', size: 1, color: '#DADCE0' }]).map((b) => {
-            const span = (b.size / pieTotal) * 360;
-            const start = angle;
-            angle += span;
-            return `${b.color} ${start.toFixed(2)}deg ${angle.toFixed(2)}deg`;
-        }).join(', ');
-
+        const { chartW, chartH, padY, linePoints, linePath } = buildStorageLineChart(state.storageTrend);
         const recent = (state.activities || []).filter((a) => isAuthActivity(a.action)).slice(0, 5);
 
         return `
@@ -786,22 +801,22 @@ const AdminPanel = (() => {
                     <div class="gd-card" style="flex: 2; min-width: 400px;">
                         <div class="gd-card-header">
                             <div class="gd-card-title-area">
-                                <h3>Storage by type</h3>
+                                <h3>Storage usage over time</h3>
+                                <p style="margin:4px 0 0;font-size:12px;color:#5f6368;font-weight:400;">Cumulative FreeDrive data from file upload dates (last 30 days)</p>
                             </div>
                         </div>
-                        <div class="gd-dashboard-donut-wrap">
-                            <div class="gd-dashboard-donut" style="background: conic-gradient(${donutStops});" role="img" aria-label="Storage by file type"></div>
-                            <div class="gd-meter-legend gd-dashboard-donut-legend">
-                                ${(nonZeroBreakdown.length ? nonZeroBreakdown : breakdown).map((b) => `
-                                    <div class="gd-legend-item">
-                                        <div class="gd-legend-dot" style="background-color: ${b.color}"></div>
-                                        <div class="gd-legend-text">
-                                            <span class="gd-legend-label">${esc(b.label)}</span>
-                                            <span class="gd-legend-size">${Components.formatSize(b.size)} · ${asNumber(b.count, 0)}</span>
-                                        </div>
-                                    </div>
-                                `).join('')}
-                            </div>
+                        <div class="admin-chart-wrap" style="height: 250px; overflow: hidden; position: relative;">
+                            <svg class="admin-line-chart" viewBox="0 0 ${chartW} ${chartH}" style="width: 100%; height: 100%;">
+                                <path d="${linePath}" fill="none" stroke="#1A73E8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                                <defs>
+                                    <linearGradient id="chartFade" x1="0" x2="0" y1="0" y2="1">
+                                        <stop offset="0%" stop-color="rgba(26,115,232,0.2)"/>
+                                        <stop offset="100%" stop-color="rgba(26,115,232,0)"/>
+                                    </linearGradient>
+                                </defs>
+                                ${linePoints.length > 0 ? `<path d="${linePath} L ${linePoints[linePoints.length - 1].x} ${chartH - padY} L ${linePoints[0].x} ${chartH - padY} Z" fill="url(#chartFade)" opacity="0.5" />` : ''}
+                                ${linePoints.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#1A73E8" class="gd-chart-dot"><title>${esc(p.label)}: ${p.value.toFixed(2)} GB</title></circle>`).join('')}
+                            </svg>
                         </div>
                     </div>
 

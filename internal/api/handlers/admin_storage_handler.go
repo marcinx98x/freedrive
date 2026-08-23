@@ -108,7 +108,50 @@ func (h *AdminHandler) StorageBreakdown(w http.ResponseWriter, r *http.Request) 
 		"total_size":  totalSize,
 		"total_files": len(metas),
 		"files_today": filesToday,
+		"trend":       buildStorageTrend(metas, now, 30),
 	})
+}
+
+type storageTrendPoint struct {
+	Date string `json:"date"`
+	Size int64  `json:"size"`
+}
+
+// buildStorageTrend reconstructs cumulative encrypted storage over the last
+// days days from file created_at (still-present files only).
+func buildStorageTrend(metas []domain.FileMeta, now time.Time, days int) []storageTrendPoint {
+	if days < 1 {
+		days = 30
+	}
+	now = now.UTC()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	windowStart := startOfToday.AddDate(0, 0, -(days - 1))
+
+	dayInc := make(map[string]int64, days)
+	var beforeWindow int64
+	for _, m := range metas {
+		created := m.CreatedAt.UTC()
+		if created.IsZero() {
+			beforeWindow += m.EncryptedSize
+			continue
+		}
+		dayKey := time.Date(created.Year(), created.Month(), created.Day(), 0, 0, 0, 0, time.UTC)
+		if dayKey.Before(windowStart) {
+			beforeWindow += m.EncryptedSize
+			continue
+		}
+		dayInc[dayKey.Format("2006-01-02")] += m.EncryptedSize
+	}
+
+	out := make([]storageTrendPoint, 0, days)
+	running := beforeWindow
+	for i := 0; i < days; i++ {
+		d := windowStart.AddDate(0, 0, i)
+		key := d.Format("2006-01-02")
+		running += dayInc[key]
+		out = append(out, storageTrendPoint{Date: key, Size: running})
+	}
+	return out
 }
 
 // adminStorageCategory maps a file into one of six admin Storage legend buckets.
