@@ -92,7 +92,7 @@ FreeDrive is ideal for:
 - Owner column shows avatar + `me` for your own items, or avatar + owner name for others
 - Global live search in the top bar on every page
 - Advanced search panel (Drive-style filters: type, owner, location, modified, trash, starred, approvals, and more)
-- Context menus and keyboard shortcuts
+- Context menus clamp to the viewport; Drive-style flyouts on hover for **Open with…** (apps), **Share** (Share + Copy link), and **Organise** (Move to, Add to Starred, Add to Offline, Make a copy); keyboard shortcuts
 - File/Folder information side panel: Details tab shows preview, Who has access (Manage access), then properties (Owner/Modified use `me` / `by me` for your own items); history icon on Modified opens Manage versions for writable files; Activity tab for comments/approvals — no duplicate Share/Download/Rename/Delete actions in the panel
 
 ### 2. Sidebar: My Drive & Computers
@@ -118,7 +118,7 @@ FreeDrive is ideal for:
 - **Photos** — Google Photos-style image editor (top icon toolbar, crop/draw/rotate, Adjustments and Filters panels)
 - **Sheets** — Google Sheets-style grid for `.xlsx`, `.xls`, and `.csv` (formula bar, sheet tabs, search); saves only changed cells so untouched formulas and formatting stay intact
 - **PDF / video / audio / JSON** — dedicated viewers and players
-- **Open with…** — context menu lists FreeDrive apps for the file type (recommended app highlighted); unsupported types offer download
+- **Open with…** — context-menu flyout lists FreeDrive apps for the file type (same list as the Open with dialog; unsupported types offer download)
 
 ### 5. Versioning Support
 

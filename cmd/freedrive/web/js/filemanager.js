@@ -204,12 +204,12 @@ const FileManager = (() => {
     function bindListControls() {
         document.addEventListener('click', (e) => {
             if (!e.target.closest('#context-menu')) {
-                document.getElementById('context-menu')?.classList.add('hidden');
+                hideContextMenu();
             }
         });
 
         document.getElementById('content-area')?.addEventListener('scroll', (e) => {
-            document.getElementById('context-menu')?.classList.add('hidden');
+            hideContextMenu();
             const el = e.target;
             if (!el || folderFilesLoadingMore || !folderFilesHasMore) return;
             if (currentPage !== 'files' && currentPage !== 'computers') return;
@@ -266,13 +266,147 @@ const FileManager = (() => {
         document.getElementById('share-link-role')?.addEventListener('change', renderShareModalState);
     }
 
+    let contextSubmenuHideTimer = null;
+
+    function hideAllContextSubmenus() {
+        if (contextSubmenuHideTimer) {
+            clearTimeout(contextSubmenuHideTimer);
+            contextSubmenuHideTimer = null;
+        }
+        document.querySelectorAll('#context-menu .context-submenu').forEach((sub) => {
+            sub.classList.add('hidden');
+        });
+    }
+
+    function hideContextMenu() {
+        hideAllContextSubmenus();
+        document.getElementById('context-menu')?.classList.add('hidden');
+    }
+
+    function positionContextSubmenu(host, submenu) {
+        const menu = document.getElementById('context-menu');
+        if (!menu) return;
+        const margin = 8;
+        submenu.classList.remove('hidden');
+        submenu.style.left = '0px';
+        submenu.style.top = '0px';
+
+        const menuRect = menu.getBoundingClientRect();
+        const hostRect = host.getBoundingClientRect();
+        const subRect = submenu.getBoundingClientRect();
+        const subW = subRect.width;
+        const subH = subRect.height;
+
+        let viewportLeft = hostRect.right - 4;
+        if (viewportLeft + subW > window.innerWidth - margin) {
+            viewportLeft = hostRect.left - subW + 4;
+        }
+        viewportLeft = Math.max(margin, Math.min(viewportLeft, window.innerWidth - margin - subW));
+
+        let viewportTop = hostRect.top;
+        if (viewportTop + subH > window.innerHeight - margin) {
+            viewportTop = window.innerHeight - margin - subH;
+        }
+        viewportTop = Math.max(margin, viewportTop);
+
+        // .context-menu uses transform, so fixed children are relative to the menu box
+        submenu.style.left = `${viewportLeft - menuRect.left}px`;
+        submenu.style.top = `${viewportTop - menuRect.top}px`;
+    }
+
+    function populateOpenWithSubmenu(submenu, file) {
+        const apps = getOpenWithApps(file);
+        submenu.innerHTML = apps.map((app) => `
+            <button type="button" class="context-item" data-open-app="${esc(app.id)}">
+                <span class="context-item-icon material-icons-outlined">${app.icon}</span>
+                <span class="context-item-label">${esc(app.label)}</span>
+            </button>
+        `).join('');
+        submenu.querySelectorAll('[data-open-app]').forEach((btn) => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const app = apps.find((candidate) => candidate.id === btn.dataset.openApp);
+                hideContextMenu();
+                if (!app) return;
+                try {
+                    await app.action();
+                } catch (err) {
+                    console.error('Failed to open file with selected app:', err);
+                    Components.toast('Failed to open file: ' + (err.message || 'Unknown error'), 'error');
+                }
+            });
+        });
+    }
+
+    function showContextSubmenu(host) {
+        if (contextSubmenuHideTimer) {
+            clearTimeout(contextSubmenuHideTimer);
+            contextSubmenuHideTimer = null;
+        }
+        const kind = host.dataset.submenu;
+        const submenu = host.querySelector('.context-submenu');
+        if (!submenu) return;
+
+        document.querySelectorAll('#context-menu .context-submenu').forEach((sub) => {
+            if (sub !== submenu) sub.classList.add('hidden');
+        });
+
+        if (kind === 'open_with') {
+            if (!contextTarget || contextTarget.type !== 'file') return;
+            populateOpenWithSubmenu(submenu, contextTarget.data);
+        }
+
+        positionContextSubmenu(host, submenu);
+    }
+
+    function scheduleHideContextSubmenu(host) {
+        if (contextSubmenuHideTimer) clearTimeout(contextSubmenuHideTimer);
+        contextSubmenuHideTimer = setTimeout(() => {
+            const submenu = host.querySelector('.context-submenu');
+            if (!submenu) return;
+            if (host.matches(':hover') || submenu.matches(':hover') || host.contains(document.activeElement)) {
+                return;
+            }
+            submenu.classList.add('hidden');
+            contextSubmenuHideTimer = null;
+        }, 160);
+    }
+
     function bindContextMenu() {
         document.querySelectorAll('#context-menu .context-item[data-action]').forEach((el) => {
             el.addEventListener('click', async () => {
-                document.getElementById('context-menu')?.classList.add('hidden');
+                hideContextMenu();
                 if (!contextTarget) return;
                 await handleContextAction(el.dataset.action, contextTarget);
             });
+        });
+
+        document.querySelectorAll('#context-menu .context-item.has-submenu').forEach((host) => {
+            host.addEventListener('mouseenter', () => showContextSubmenu(host));
+            host.addEventListener('mouseleave', () => scheduleHideContextSubmenu(host));
+            host.addEventListener('focusin', () => showContextSubmenu(host));
+            host.addEventListener('click', (e) => {
+                if (e.target.closest('.context-submenu')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                showContextSubmenu(host);
+            });
+            const submenu = host.querySelector('.context-submenu');
+            submenu?.addEventListener('mouseenter', () => {
+                if (contextSubmenuHideTimer) {
+                    clearTimeout(contextSubmenuHideTimer);
+                    contextSubmenuHideTimer = null;
+                }
+            });
+            submenu?.addEventListener('mouseleave', () => scheduleHideContextSubmenu(host));
+        });
+
+        document.getElementById('context-menu')?.addEventListener('click', async (e) => {
+            const subBtn = e.target.closest('[data-subaction]');
+            if (!subBtn || !contextTarget) return;
+            e.stopPropagation();
+            hideContextMenu();
+            await handleContextAction(subBtn.dataset.subaction, contextTarget);
         });
     }
 
@@ -2516,8 +2650,10 @@ const FileManager = (() => {
         restoreContextMenuOrder(menu);
 
         const actionMap = {};
-        menu.querySelectorAll('.context-item[data-action]').forEach((item) => {
-            actionMap[item.dataset.action] = item;
+        menu.querySelectorAll('.context-item[data-action], .context-item[data-submenu]').forEach((item) => {
+            const key = item.dataset.action || item.dataset.submenu;
+            if (!key) return;
+            actionMap[key] = item;
             item.style.display = '';
         });
         menu.querySelectorAll('.context-divider').forEach((divider) => {
@@ -2533,7 +2669,7 @@ const FileManager = (() => {
             : null;
 
         Object.entries(actionMap).forEach(([action, item]) => {
-            const show = inTrash ? allowed.has(action) : action !== 'restore';
+            const show = inTrash ? allowed.has(action) : action !== 'restore' && action !== 'get_link';
             setElementHidden(item, !show);
             item.style.display = show ? '' : 'none';
         });
@@ -2571,7 +2707,7 @@ const FileManager = (() => {
 
         const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
         if (computerEntry) {
-            ['move', 'share', 'get_link', 'request_approval', 'copy', 'rename', 'offline', 'open_with', 'star', 'download', 'versions'].forEach((action) => {
+            ['organise', 'share', 'get_link', 'request_approval', 'rename', 'open_with', 'download', 'versions'].forEach((action) => {
                 if (actionMap[action]) {
                     setElementHidden(actionMap[action], true);
                     actionMap[action].style.display = 'none';
@@ -2613,10 +2749,25 @@ const FileManager = (() => {
     function showContextMenu(x, y) {
         const menu = document.getElementById('context-menu');
         if (!menu) return;
+        hideAllContextSubmenus();
         configureContextMenu();
-        menu.style.left = `${Math.min(x, window.innerWidth - 250)}px`;
-        menu.style.top = `${Math.min(y, window.innerHeight - 320)}px`;
+        const margin = 8;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
         menu.classList.remove('hidden');
+        const rect = menu.getBoundingClientRect();
+        let left = x;
+        let top = y;
+        if (left + rect.width > window.innerWidth - margin) {
+            left = window.innerWidth - margin - rect.width;
+        }
+        if (top + rect.height > window.innerHeight - margin) {
+            top = window.innerHeight - margin - rect.height;
+        }
+        left = Math.max(margin, left);
+        top = Math.max(margin, top);
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
     }
 
     function syncSelectionStyles() {
@@ -4423,9 +4574,7 @@ const FileManager = (() => {
         }
     }
 
-    function showOpenWithDialog(file) {
-        document.querySelector('.open-with-overlay')?.remove();
-
+    function getOpenWithApps(file) {
         const group = getMimeGroup(file.mime_type, 'file', file.name);
         const apps = [];
         const addApp = (id, label, description, icon, action, recommended = false) => {
@@ -4452,6 +4601,14 @@ const FileManager = (() => {
         if (!apps.length) {
             addApp('download', 'Download', 'Download and open on this device', 'download', () => downloadFile(file), true);
         }
+
+        return apps;
+    }
+
+    function showOpenWithDialog(file) {
+        document.querySelector('.open-with-overlay')?.remove();
+
+        const apps = getOpenWithApps(file);
 
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay open-with-overlay';
@@ -7075,6 +7232,11 @@ const FileManager = (() => {
 
         // --- Escape ---
         if (e.key === 'Escape') {
+            const ctxMenu = document.getElementById('context-menu');
+            if (ctxMenu && !ctxMenu.classList.contains('hidden')) {
+                hideContextMenu();
+                return;
+            }
             clearSelection();
             hideDetailsPanel();
             document.getElementById('shortcuts-modal-overlay')?.classList.add('hidden');

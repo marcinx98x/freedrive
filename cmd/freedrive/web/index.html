@@ -490,16 +490,36 @@
     </div>
 
     <div class="context-menu hidden" id="context-menu">
-        <button class="context-item" data-action="open_with"><span class="context-item-icon material-icons-outlined">open_with</span><span class="context-item-label">Open with...</span></button>
+        <div class="context-item has-submenu" data-submenu="open_with" role="menuitem" tabindex="0">
+            <span class="context-item-icon material-icons-outlined">open_with</span>
+            <span class="context-item-label">Open with...</span>
+            <span class="context-item-chevron material-icons-outlined" aria-hidden="true">chevron_right</span>
+            <div class="context-submenu hidden" id="ctx-submenu-open-with" role="menu"></div>
+        </div>
         <div class="context-divider"></div>
-        <button class="context-item" data-action="share"><span class="context-item-icon material-icons-outlined">person_add</span><span class="context-item-label">Share</span></button>
-        <button class="context-item" data-action="get_link"><span class="context-item-icon material-icons-outlined">link</span><span class="context-item-label">Get link</span></button>
+        <div class="context-item has-submenu" data-submenu="share" role="menuitem" tabindex="0">
+            <span class="context-item-icon material-icons-outlined">person_add</span>
+            <span class="context-item-label">Share</span>
+            <span class="context-item-chevron material-icons-outlined" aria-hidden="true">chevron_right</span>
+            <div class="context-submenu hidden" id="ctx-submenu-share" role="menu">
+                <button type="button" class="context-item" data-subaction="share"><span class="context-item-icon material-icons-outlined">person_add</span><span class="context-item-label">Share</span></button>
+                <button type="button" class="context-item" data-subaction="get_link"><span class="context-item-icon material-icons-outlined">link</span><span class="context-item-label">Copy link</span></button>
+            </div>
+        </div>
+        <div class="context-item has-submenu" data-submenu="organise" role="menuitem" tabindex="0">
+            <span class="context-item-icon material-icons-outlined">create_new_folder</span>
+            <span class="context-item-label">Organise</span>
+            <span class="context-item-chevron material-icons-outlined" aria-hidden="true">chevron_right</span>
+            <div class="context-submenu hidden" id="ctx-submenu-organise" role="menu">
+                <button type="button" class="context-item" data-subaction="move"><span class="context-item-icon material-icons-outlined">drive_file_move</span><span class="context-item-label">Move to</span></button>
+                <button type="button" class="context-item" data-subaction="star"><span class="context-item-icon material-icons-outlined">star_outline</span><span class="context-item-label">Add to Starred</span></button>
+                <button type="button" class="context-item" data-subaction="offline"><span class="context-item-icon material-icons-outlined">offline_pin</span><span class="context-item-label">Add to Offline</span></button>
+                <button type="button" class="context-item" data-subaction="copy"><span class="context-item-icon material-icons-outlined">content_copy</span><span class="context-item-label">Make a copy</span></button>
+            </div>
+        </div>
+        <button class="context-item" data-action="get_link" hidden><span class="context-item-icon material-icons-outlined">link</span><span class="context-item-label">Get link</span></button>
         <button class="context-item" data-action="request_approval"><span class="context-item-icon material-icons-outlined">fact_check</span><span class="context-item-label">Request approval</span></button>
         <div class="context-divider"></div>
-        <button class="context-item" data-action="move"><span class="context-item-icon material-icons-outlined">drive_file_move</span><span class="context-item-label">Move to</span></button>
-        <button class="context-item" data-action="star"><span class="context-item-icon material-icons-outlined">star_outline</span><span class="context-item-label">Add to Starred</span></button>
-        <button class="context-item" data-action="offline"><span class="context-item-icon material-icons-outlined">offline_pin</span><span class="context-item-label">Add to Offline</span></button>
-        <button class="context-item" data-action="copy"><span class="context-item-icon material-icons-outlined">content_copy</span><span class="context-item-label">Make a copy</span></button>
         <button class="context-item" data-action="rename"><span class="context-item-icon material-icons-outlined">drive_file_rename_outline</span><span class="context-item-label">Rename</span></button>
         <div class="context-divider"></div>
         <button class="context-item" data-action="info"><span class="context-item-icon material-icons-outlined">info</span><span class="context-item-label">File information</span></button>
