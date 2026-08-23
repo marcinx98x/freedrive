@@ -1220,11 +1220,7 @@ const App = (() => {
         document.getElementById('free-space-btn')?.addEventListener('click', () => FileManager.showLargestFiles());
 
         document.getElementById('details-close')?.addEventListener('click', () => FileManager.hideDetailsPanel());
-        document.getElementById('details-share-btn')?.addEventListener('click', () => FileManager.shareSelectedItem());
         document.getElementById('details-share-btn2')?.addEventListener('click', () => FileManager.shareSelectedItem());
-        document.getElementById('details-download-btn')?.addEventListener('click', () => FileManager.downloadSelected());
-        document.getElementById('details-rename-btn')?.addEventListener('click', () => FileManager.renameSelected());
-        document.getElementById('details-delete-btn')?.addEventListener('click', () => FileManager.deleteSelected());
 
         document.getElementById('share-modal-close')?.addEventListener('click', () => FileManager.closeShareModal());
         document.getElementById('share-done')?.addEventListener('click', async () => {

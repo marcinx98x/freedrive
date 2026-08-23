@@ -1532,10 +1532,6 @@ body {
     max-width: 100vw !important;
     z-index: 320 !important;
   }
-
-  .app:not(.admin-mode) .details-actions-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
 }
 
 @media (max-width: 520px) {
@@ -1862,29 +1858,8 @@ body {
   background: #f7f9fc !important;
 }
 
-.app:not(.admin-mode) .details-actions-row {
-  display: grid !important;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-  gap: 6px !important;
-  padding: 12px 8px !important;
-  border-bottom: none !important;
-}
-
-.app:not(.admin-mode) .details-action-btn {
-  min-height: 72px !important;
-  border: 1px solid #e0e3e7 !important;
-  border-radius: 4px !important;
-  font-size: 11px !important;
-  flex-direction: column !important;
-  justify-content: center !important;
-  align-items: center !important;
-}
-
-.app:not(.admin-mode) .details-action-btn svg {
-  width: 18px !important;
-  height: 18px !important;
-  padding: 0 !important;
-  background: transparent !important;
+.app:not(.admin-mode) #details-properties .details-preview-container {
+  margin: 0 10px 12px !important;
 }
 
 .app:not(.admin-mode) .m3-details-access {
@@ -1892,6 +1867,10 @@ body {
   border: 1px solid #e0e3e7 !important;
   border-radius: 12px !important;
   background: #fbfcff !important;
+}
+
+.app:not(.admin-mode) #details-properties-body {
+  padding: 0 4px 8px !important;
 }
 
 .app:not(.admin-mode) .m3-manage-access-btn {

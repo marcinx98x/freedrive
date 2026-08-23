@@ -93,6 +93,7 @@ FreeDrive is ideal for:
 - Global live search in the top bar on every page
 - Advanced search panel (Drive-style filters: type, owner, location, modified, trash, starred, approvals, and more)
 - Context menus and keyboard shortcuts
+- File/Folder information side panel: Details tab shows preview, Who has access (Manage access), then properties; Activity tab for comments/approvals — no duplicate Share/Download/Rename/Delete actions in the panel (use context menu or selection bar)
 
 ### 2. Sidebar: My Drive & Computers
 

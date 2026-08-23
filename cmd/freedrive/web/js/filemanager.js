@@ -2493,17 +2493,6 @@ const FileManager = (() => {
         setElementHidden(document.getElementById('bulk-move'), trashMode);
         setElementHidden(document.getElementById('bulk-restore'), !trashMode);
 
-        const detailsDeleteBtn = document.getElementById('details-delete-btn');
-        if (detailsDeleteBtn) {
-            const label = trashMode ? TrashCopy.deleteForever : 'Delete';
-            detailsDeleteBtn.title = trashMode ? TrashCopy.deleteForever : TrashCopy.moveToTrash;
-            detailsDeleteBtn.setAttribute('aria-label', label);
-            const textNode = detailsDeleteBtn.lastChild;
-            if (textNode?.nodeType === Node.TEXT_NODE) {
-                textNode.textContent = label;
-            }
-        }
-
         configureContextMenu(target);
     }
 
@@ -3725,20 +3714,13 @@ const FileManager = (() => {
             }
         }
 
-        // hide delete/rename for read-only shared items
+        // hide actions for read-only / trash shared items
         const isOwned = !data.shared_by_name;
         const isTrash = isTrashMode(payload);
-        const detailsShareBtn = document.getElementById('details-share-btn');
         const detailsShareBtn2 = document.getElementById('details-share-btn2');
-        document.getElementById('details-rename-btn')?.style.setProperty('display', isOwned && !isTrash ? '' : 'none');
-        document.getElementById('details-delete-btn')?.style.setProperty('display', isOwned ? '' : 'none');
         if (!isOwned) nameInput.setAttribute('readonly', '');
-        if (detailsShareBtn) detailsShareBtn.style.setProperty('display', isTrash ? 'none' : '');
         if (detailsShareBtn2) detailsShareBtn2.style.setProperty('display', isTrash ? 'none' : '');
         syncTrashActionLabels(payload);
-
-        // hide download for folders
-        document.getElementById('details-download-btn')?.style.setProperty('display', type === 'folder' ? 'none' : '');
 
         renderAccessAvatars(data.id, type);
         renderDetailsProperties(payload);
@@ -3798,7 +3780,7 @@ const FileManager = (() => {
     }
 
     function renderDetailsProperties(payload) {
-        const box = document.getElementById('details-properties');
+        const box = document.getElementById('details-properties-body') || document.getElementById('details-properties');
         if (!box) return;
         const { data, type } = payload;
         const desc = meta.descriptions[data.id] || '';

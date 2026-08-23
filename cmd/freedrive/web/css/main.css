@@ -1115,7 +1115,7 @@ svg {
 }
 .details-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .details-preview-icon { display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 2px 6px rgba(0,0,0,.15)); }
-/* details-actions-row, details-action-btn, m3-details-access, m3-manage-access-btn → see components.css */
+/* m3-details-access, m3-manage-access-btn → see components.css */
 .m3-details-access h4 { font-size: 13px; font-weight: 500; margin: 0 0 8px; color: var(--dark-text); }
 .access-avatars { display: flex; gap: 4px; margin-bottom: 6px; }
 .access-desc { font-size: 12px; color: var(--gray-text); margin-bottom: 10px; }

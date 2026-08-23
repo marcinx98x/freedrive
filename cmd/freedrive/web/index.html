@@ -455,42 +455,25 @@
             </div>
 
             <div class="details-panel-body">
-                <div class="details-preview-container">
-                    <div class="details-preview" id="details-preview"></div>
-                </div>
-
-                <div class="details-actions-row" id="details-actions-row">
-                    <button class="details-action-btn" id="details-share-btn" title="Share">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg>
-                        Share
-                    </button>
-                    <button class="details-action-btn" id="details-download-btn" title="Download">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zm-8 2V5h2v6h1.17L12 13.17 9.83 11H11zm-6 7h14v2H5v-2z"/></svg>
-                        Download
-                    </button>
-                    <button class="details-action-btn" id="details-rename-btn" title="Rename">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                        Rename
-                    </button>
-                    <button class="details-action-btn" id="details-delete-btn" title="Move to trash" aria-label="Delete">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                        Delete
-                    </button>
-                </div>
-
-                <div class="m3-details-access">
-                    <h4>Who has access</h4>
-                    <div class="access-avatars" id="access-avatars"></div>
-                    <div class="access-desc" id="access-desc">Only you (admin) have access</div>
-                    <button class="btn m3-manage-access-btn" id="details-share-btn2">Manage access</button>
-                </div>
-
                 <div class="m3-details-tabs">
                     <button class="tab-btn active" data-tab="properties">Details</button>
                     <button class="tab-btn" data-tab="activity">Activity</button>
                 </div>
 
-                <div class="tab-body" id="details-properties"></div>
+                <div class="tab-body" id="details-properties">
+                    <div class="details-preview-container">
+                        <div class="details-preview" id="details-preview"></div>
+                    </div>
+
+                    <div class="m3-details-access">
+                        <h4>Who has access</h4>
+                        <div class="access-avatars" id="access-avatars"></div>
+                        <div class="access-desc" id="access-desc">Only you (admin) have access</div>
+                        <button class="btn m3-manage-access-btn" id="details-share-btn2">Manage access</button>
+                    </div>
+
+                    <div id="details-properties-body"></div>
+                </div>
                 <div class="tab-body hidden" id="details-activity"></div>
             </div>
         </aside>
