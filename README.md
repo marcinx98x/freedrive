@@ -92,10 +92,10 @@ FreeDrive is ideal for:
 - Owner column shows avatar + `me` for your own items, or avatar + owner name for others
 - Global live search in the top bar on every page
 - Advanced search panel (Drive-style filters: type, owner, location, modified, trash, starred, approvals, and more)
-- Context menus clamp to the viewport; Drive-style flyouts on hover for **Open with…** (apps), **Share** (Share + Copy link), and **Organise** (Move to, Add to Starred, Add to Offline, Make a copy); keyboard shortcuts
+- Context menus clamp to the viewport; order includes **Download** above **Share**; Drive-style flyouts on hover for **Open with…** (apps), **Share** (Share + Copy link), and **Organise** (Move to, Add to Starred, Add to Offline, Make a copy); keyboard shortcuts (`Shift+?` — gray rows are browser-only) covering navigation, selection, clipboard cut/copy/paste, undo, and system chords
 - List-view row hover actions use the same Material Icons as the context menu: **Share**, **Download**, **Rename**, **Add to Starred**, plus **More** (narrow screens show More only)
 - File/Folder information side panel: Details tab shows preview, Who has access (Manage access), then properties (Owner/Modified use `me` / `by me` for your own items); history icon on Modified opens Manage versions for writable files; Activity tab for comments/approvals — no duplicate Share/Download/Rename/Delete actions in the panel
-
+- **Trash:** Restore appears only in Trash (selection bar and context menu), using the same history icon as Manage versions
 ### 2. Sidebar: My Drive & Computers
 
 - **My Drive** — primary file space with an expandable sidebar folder tree (lazy-loaded folders, expand/collapse chevrons, path sync on navigation)

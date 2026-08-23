@@ -28,6 +28,11 @@ const FileManager = (() => {
     let editorState = null;
     let dragPayload = null;
     let insecureUploadNoticeShown = false;
+    /** @type {{ mode: 'copy'|'cut'|null, items: Array<{type:string,data:object}> }} */
+    let itemClipboard = { mode: null, items: [] };
+    /** @type {Array<{ label: string, undo: () => Promise<void> }>} */
+    let undoStack = [];
+    const UNDO_STACK_MAX = 10;
     const folderStatsCache = new Map();
     const folderStatsPending = new Map();
     const folderNameCache = new Map();
@@ -2612,8 +2617,10 @@ const FileManager = (() => {
         if (!el) return;
         if (hidden) {
             el.setAttribute('hidden', '');
+            el.classList.add('hidden');
         } else {
             el.removeAttribute('hidden');
+            el.classList.remove('hidden');
         }
     }
 
@@ -2785,9 +2792,13 @@ const FileManager = (() => {
     }
 
     function syncSelectionStyles() {
+        const cutIds = itemClipboard.mode === 'cut'
+            ? new Set(itemClipboard.items.map((x) => x.data?.id).filter(Boolean))
+            : new Set();
         document.querySelectorAll('.file-row, .file-card').forEach((el) => {
             const selected = selectedItems.has(el.dataset.id);
             el.classList.toggle('selected', selected);
+            el.classList.toggle('is-cut', cutIds.has(el.dataset.id));
             const cb = el.querySelector('.file-checkbox');
             if (cb) cb.checked = selected;
         });
@@ -3054,19 +3065,26 @@ const FileManager = (() => {
         if (currentPage === 'offline') refresh();
     }
 
-    async function makeCopy(type, data) {
+    async function makeCopy(type, data, targetFolderId, options = {}) {
+        const quiet = Boolean(options.quiet);
+        const dest = targetFolderId !== undefined ? targetFolderId : (data.folder_id || data.parent_id || currentFolderId || null);
         if (type === 'folder') {
-            await API.folders.create(`Copy of ${data.name}`, data.parent_id || null);
-            Components.toast('Folder copy created', 'success');
-            refresh();
-            return;
+            const created = await API.folders.create(`Copy of ${data.name}`, dest || null);
+            if (!quiet) {
+                Components.toast('Folder copy created', 'success');
+                refresh();
+            }
+            return created;
         }
 
         const blob = await decryptFileBlob(data);
         const copyName = `Copy of ${data.name}`;
-        await uploadEncryptedBlob(blob, copyName, data.mime_type || blob.type, data.folder_id || currentFolderId);
-        Components.toast('Copy created', 'success');
-        refresh();
+        const created = await uploadEncryptedBlob(blob, copyName, data.mime_type || blob.type, dest);
+        if (!quiet) {
+            Components.toast('Copy created', 'success');
+            refresh();
+        }
+        return created;
     }
 
     function showFileInfo(type, data) {
@@ -3135,16 +3153,20 @@ const FileManager = (() => {
             await API.folders.delete(data.id);
         }
 
+        pushUndo({
+            label: 'Move to trash',
+            undo: async () => {
+                if (type === 'file') await API.files.restore(data.id);
+                else await API.folders.restore(data.id);
+                refresh();
+            },
+        });
+
         Components.toast(TrashCopy.movedToTrashToast, 'success', {
             actionText: 'Undo',
             onAction: async () => {
                 try {
-                    if (type === 'file') {
-                        await API.files.restore(data.id);
-                    } else {
-                        await API.folders.restore(data.id);
-                    }
-                    refresh();
+                    await performUndo();
                 } catch {
                     Components.toast('Undo failed', 'error');
                 }
@@ -3669,15 +3691,31 @@ const FileManager = (() => {
         if (!ids.length) return;
         const folderId = await Components.prompt('Move selected to folder ID', currentFolderId || '');
         if (folderId === null) return;
+        const snapshots = [];
         for (const id of ids) {
             const payload = findSelectedPayload(id);
             if (!payload) continue;
+            snapshots.push({
+                type: payload.type,
+                id,
+                prevFolderId: payload.type === 'file' ? (payload.data.folder_id || '') : (payload.data.parent_id || ''),
+            });
             if (payload.type === 'file') {
                 await API.files.update(id, { folder_id: folderId || '' });
             } else {
                 await API.folders.update(id, { parent_id: folderId || '' });
             }
         }
+        pushUndo({
+            label: 'Move',
+            undo: async () => {
+                for (const s of snapshots) {
+                    if (s.type === 'file') await API.files.update(s.id, { folder_id: s.prevFolderId });
+                    else await API.folders.update(s.id, { parent_id: s.prevFolderId });
+                }
+                refresh();
+            },
+        });
         Components.toast('Moved selected items', 'success');
         refresh();
     }
@@ -3735,9 +3773,11 @@ const FileManager = (() => {
             TrashCopy.moveToTrashButton,
         );
         if (!ok) return;
+        const trashed = [];
         for (const id of ids) {
             const payload = findSelectedPayload(id);
             if (!payload) continue;
+            trashed.push({ type: payload.type, id });
             if (payload.type === 'file') {
                 await API.files.delete(id);
             } else {
@@ -3745,7 +3785,27 @@ const FileManager = (() => {
             }
         }
         clearSelection();
-        Components.toast(TrashCopy.movedToTrashToast, 'success');
+        pushUndo({
+            label: 'Move to trash',
+            undo: async () => {
+                for (const item of trashed) {
+                    if (item.type === 'folder') await API.folders.restore(item.id);
+                    else await API.files.restore(item.id);
+                }
+                refresh();
+            },
+        });
+        Components.toast(TrashCopy.movedToTrashToast, 'success', {
+            actionText: 'Undo',
+            onAction: async () => {
+                try {
+                    await performUndo();
+                } catch {
+                    Components.toast('Undo failed', 'error');
+                }
+            },
+            duration: 4000,
+        });
         refresh();
         if (currentPage === 'files') SidebarTree.refresh(currentFolderId || null);
     }
@@ -5267,11 +5327,15 @@ const FileManager = (() => {
             e.preventDefault();
             document.getElementById('editor-save')?.click();
         }
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
             e.preventDefault();
             document.getElementById('editor-undo')?.click();
         }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+            e.preventDefault();
+            document.getElementById('editor-redo')?.click();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'z') {
             e.preventDefault();
             document.getElementById('editor-redo')?.click();
         }
@@ -6995,82 +7059,297 @@ const FileManager = (() => {
         }
     }
 
+    function pushUndo(entry) {
+        if (!entry || typeof entry.undo !== 'function') return;
+        undoStack.push(entry);
+        if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+    }
+
+    async function performUndo() {
+        const entry = undoStack.pop();
+        if (!entry) {
+            Components.toast('Nothing to undo', 'info');
+            return;
+        }
+        await entry.undo();
+        Components.toast(`Undid: ${entry.label || 'action'}`, 'success');
+    }
+
+    function isTypingTarget(target) {
+        if (!target) return false;
+        const tag = target.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+    }
+
+    function isAdminMode() {
+        return document.body.classList.contains('admin-mode')
+            || document.getElementById('app')?.classList.contains('admin-mode');
+    }
+
+    function isFileBrowserPage() {
+        return ['home', 'files', 'computers', 'recent', 'starred', 'shared-with', 'trash', 'storage', 'offline', 'search'].includes(currentPage);
+    }
+
+    async function goUpOneFolder() {
+        if (!currentFolderId) return;
+        try {
+            const data = await API.folders.breadcrumb(currentFolderId);
+            const crumbs = data.breadcrumb || [];
+            if (crumbs.length <= 1) {
+                window.location.hash = currentPage === 'computers' ? '#/computers' : '#/files';
+                return;
+            }
+            const parent = crumbs[crumbs.length - 2];
+            if (parent?.id) {
+                window.location.hash = folderNavHash(parent.id);
+            } else {
+                window.location.hash = currentPage === 'computers' ? '#/computers' : '#/files';
+            }
+        } catch {
+            window.location.hash = currentPage === 'computers' ? '#/computers' : '#/files';
+        }
+    }
+
+    function gridColumnCount() {
+        const grid = document.getElementById('file-grid');
+        if (!grid || !grid.classList.contains('grid-view')) return 1;
+        const card = grid.querySelector('.file-card');
+        if (!card) return 1;
+        const gridWidth = grid.clientWidth || 1;
+        const cardWidth = card.getBoundingClientRect().width || 1;
+        return Math.max(1, Math.floor(gridWidth / cardWidth));
+    }
+
+    function moveSelectionBy(delta, extend) {
+        const items = getVisibleItemPayloads();
+        if (!items.length) return;
+        let idx = selectedPrimary
+            ? items.findIndex((x) => x.id === selectedPrimary.data.id)
+            : -1;
+        if (idx < 0) idx = 0;
+        else idx = Math.max(0, Math.min(items.length - 1, idx + delta));
+        const next = items[idx];
+        if (!next) return;
+        if (extend) {
+            if (!selectionAnchor) selectionAnchor = selectedPrimary?.data?.id || next.id;
+            selectRange(selectionAnchor, next.id);
+        } else {
+            selectedItems.clear();
+            selectedItems.add(next.id);
+            selectedPrimary = next;
+            selectionAnchor = next.id;
+        }
+        syncSelectionStyles();
+        document.querySelector(`.file-row[data-id="${next.id}"], .file-card[data-id="${next.id}"]`)
+            ?.scrollIntoView({ block: 'nearest' });
+    }
+
+    function toggleSpaceSelection() {
+        const items = getVisibleItemPayloads();
+        if (!items.length) return;
+        if (!selectedPrimary) {
+            const first = items[0];
+            selectedItems.add(first.id);
+            selectedPrimary = first;
+            selectionAnchor = first.id;
+            syncSelectionStyles();
+            return;
+        }
+        const id = selectedPrimary.data.id;
+        if (selectedItems.has(id) && selectedItems.size === 1) {
+            // keep at least focus: Drive toggles off — allow empty
+            selectedItems.delete(id);
+            selectedPrimary = null;
+        } else if (selectedItems.has(id)) {
+            selectedItems.delete(id);
+            const remaining = Array.from(selectedItems);
+            selectedPrimary = remaining.length
+                ? findSelectedPayload(remaining[remaining.length - 1])
+                : null;
+        } else {
+            selectedItems.add(id);
+        }
+        syncSelectionStyles();
+    }
+
+    function clipboardFromSelection() {
+        const items = Array.from(selectedItems)
+            .map((id) => findSelectedPayload(id))
+            .filter(Boolean)
+            .map((p) => ({ type: p.type, data: { ...p.data } }));
+        return items;
+    }
+
+    function copySelectionToClipboard() {
+        const items = clipboardFromSelection();
+        if (!items.length) return;
+        itemClipboard = { mode: 'copy', items };
+        syncSelectionStyles();
+        Components.toast(items.length === 1 ? 'Copied' : `Copied ${items.length} items`, 'success');
+    }
+
+    function cutSelectionToClipboard() {
+        if (inTrashView() || !canAcceptUploads()) return;
+        const items = clipboardFromSelection();
+        if (!items.length) return;
+        itemClipboard = { mode: 'cut', items };
+        syncSelectionStyles();
+        Components.toast(items.length === 1 ? 'Cut' : `Cut ${items.length} items`, 'success');
+    }
+
+    async function pasteClipboard() {
+        if (!itemClipboard.mode || !itemClipboard.items.length) {
+            Components.toast('Clipboard is empty', 'info');
+            return;
+        }
+        if (!canAcceptUploads() || inTrashView()) {
+            Components.toast('Cannot paste here', 'warning');
+            return;
+        }
+        const dest = currentFolderId || null;
+        const mode = itemClipboard.mode;
+        const items = itemClipboard.items.slice();
+
+        if (mode === 'copy') {
+            const created = [];
+            for (const item of items) {
+                try {
+                    const result = await makeCopy(item.type, item.data, dest, { quiet: true });
+                    if (result?.id) created.push({ type: item.type, id: result.id });
+                } catch (err) {
+                    Components.toast(err?.message || 'Paste failed', 'error');
+                }
+            }
+            pushUndo({
+                label: 'Paste',
+                undo: async () => {
+                    for (const c of created) {
+                        if (c.type === 'folder') await API.folders.delete(c.id);
+                        else await API.files.delete(c.id);
+                    }
+                    refresh();
+                },
+            });
+            Components.toast('Pasted', 'success');
+            refresh();
+            return;
+        }
+
+        // cut → move
+        const snapshots = items.map((item) => ({
+            type: item.type,
+            id: item.data.id,
+            prev: item.type === 'file' ? (item.data.folder_id || '') : (item.data.parent_id || ''),
+        }));
+        for (const item of items) {
+            if (item.type === 'file') {
+                await API.files.update(item.data.id, { folder_id: dest || '' });
+            } else {
+                await API.folders.update(item.data.id, { parent_id: dest || '' });
+            }
+        }
+        itemClipboard = { mode: null, items: [] };
+        pushUndo({
+            label: 'Paste (move)',
+            undo: async () => {
+                for (const s of snapshots) {
+                    if (s.type === 'file') await API.files.update(s.id, { folder_id: s.prev });
+                    else await API.folders.update(s.id, { parent_id: s.prev });
+                }
+                refresh();
+            },
+        });
+        Components.toast('Moved', 'success');
+        syncSelectionStyles();
+        refresh();
+    }
+
+    function openSelectedLikeDblclick() {
+        if (!selectedPrimary) return;
+        if (selectedPrimary.type === 'folder' || selectedPrimary.type === 'suggested-folder') {
+            window.location.hash = folderNavHash(selectedPrimary.data.id);
+            return;
+        }
+        openFile(selectedPrimary.data);
+    }
+
     function showShortcuts() {
         const data = [
             {
                 title: 'Navigation',
                 items: [
-                    ['n', 'New folder'],
-                    ['u', 'Upload file'],
-                    ['/', 'Search'],
-                    ['g then h', 'Go to Home'],
-                    ['g then d', 'Go to My Drive'],
-                    ['g then r', 'Go to Recent'],
-                    ['g then t', 'Go to Trash'],
-                    ['g then s', 'Go to Storage'],
-                    ['Backspace', 'Go up one folder'],
+                    ['n', 'New folder', true],
+                    ['u', 'Upload file', true],
+                    ['/', 'Search', true],
+                    ['Ctrl + K', 'Search', true],
+                    ['g then h', 'Go to Home', true],
+                    ['g then d', 'Go to My Drive', true],
+                    ['g then r', 'Go to Recent', true],
+                    ['g then t', 'Go to Trash', true],
+                    ['g then s', 'Go to Storage', true],
+                    ['Backspace', 'Go up one folder (or delete when selected)', true],
                 ],
             },
             {
                 title: 'Selection',
                 items: [
-                    ['a', 'Select all'],
-                    ['Ctrl + A', 'Select all (alternative)'],
-                    ['Esc', 'Deselect all / Close panel'],
-                    ['↑ / ↓', 'Move selection up / down'],
-                    ['← / →', 'Move selection left / right'],
-                    ['Shift + Click', 'Range select'],
-                    ['Ctrl + Click', 'Multi-select'],
-                    ['Space', 'Toggle item selection'],
+                    ['a', 'Select all', true],
+                    ['Ctrl + A', 'Select all (alternative)', true],
+                    ['Esc', 'Deselect all / Close panel', true],
+                    ['↑ / ↓', 'Move selection up / down', true],
+                    ['← / →', 'Move selection left / right', true],
+                    ['Shift + Click', 'Range select', true],
+                    ['Ctrl + Click', 'Multi-select', true],
+                    ['Space', 'Toggle item selection', true],
                 ],
             },
             {
                 title: 'Actions',
                 items: [
-                    ['Enter', 'Open selected item'],
-                    ['Del / Backspace', inTrashView() ? 'Delete forever' : 'Move to trash'],
-                    ['s', 'Toggle star'],
-                    ['.', 'Share selected'],
-                    ['d', 'Download selected'],
-                    ['Ctrl + Z', 'Undo last action'],
-                    ['Ctrl + C', 'Copy selected'],
-                    ['Ctrl + X', 'Cut selected'],
-                    ['Ctrl + V', 'Paste'],
-                    ['F2', 'Rename selected'],
-                    ['m', 'Move to…'],
+                    ['Enter', 'Open selected item', true],
+                    ['Del / Backspace', inTrashView() ? 'Delete forever' : 'Move to trash', true],
+                    ['s', 'Toggle star', true],
+                    ['.', 'Share selected', true],
+                    ['d', 'Download selected', true],
+                    ['Ctrl + Z', 'Undo last action', true],
+                    ['Ctrl + C', 'Copy selected', true],
+                    ['Ctrl + X', 'Cut selected', true],
+                    ['Ctrl + V', 'Paste', true],
+                    ['F2', 'Rename selected', true],
+                    ['m', 'Move to…', true],
                 ],
             },
             {
                 title: 'Views',
                 items: [
-                    ['1', 'List view'],
-                    ['2', 'Grid view'],
-                    ['i', 'Toggle details panel'],
-                    ['p', 'Preview selected'],
-                    ['Ctrl + Shift + L', 'Toggle sidebar'],
+                    ['1', 'List view', true],
+                    ['2', 'Grid view', true],
+                    ['i', 'Toggle details panel', true],
+                    ['p', 'Preview selected', true],
+                    ['Ctrl + Shift + L', 'Toggle sidebar', true],
                 ],
             },
             {
                 title: 'File Editing',
                 items: [
-                    ['Ctrl + S', 'Save file'],
-                    ['Ctrl + Z', 'Undo edit'],
-                    ['Ctrl + Shift + Z', 'Redo edit'],
-                    ['Ctrl + B', 'Bold text'],
-                    ['Ctrl + I', 'Italic text'],
-                    ['Ctrl + U', 'Underline text'],
-                    ['Ctrl + K', 'Insert link'],
+                    ['Ctrl + S', 'Save file (in editor)', true],
+                    ['Ctrl + Z', 'Undo edit (in editor)', true],
+                    ['Ctrl + Y / Ctrl + Shift + Z', 'Redo edit (in editor)', true],
+                    ['Ctrl + B', 'Bold text (in editor)', true],
+                    ['Ctrl + I', 'Italic text (in editor)', true],
+                    ['Ctrl + U', 'Underline text (in editor)', true],
+                    ['Ctrl + K', 'Insert link (in editor when focused)', true],
                 ],
             },
             {
                 title: 'System',
                 items: [
-                    ['Shift + ?', 'Show keyboard shortcuts'],
-                    ['Ctrl + F', 'Find in page'],
-                    ['Alt + N', 'Notifications'],
-                    ['Ctrl + ,', 'Settings'],
-                    ['Ctrl + Shift + H', 'Activity log'],
-                    ['F11', 'Toggle fullscreen'],
+                    ['Shift + ?', 'Show keyboard shortcuts', true],
+                    ['Ctrl + F', 'Find in page', false],
+                    ['Alt + N', 'Notifications', true],
+                    ['Ctrl + ,', 'Settings', true],
+                    ['Ctrl + Shift + H', 'Activity log', true],
+                    ['F11', 'Toggle fullscreen', false],
                 ],
             },
         ];
@@ -7079,7 +7358,11 @@ const FileManager = (() => {
         container.innerHTML = data.map((g) => `
             <div class="shortcut-group">
                 <h4>${g.title}</h4>
-                ${g.items.map((it) => `<div class="shortcut-item"><span>${it[1]}</span><span class="shortcut-key">${it[0]}</span></div>`).join('')}
+                ${g.items.map((it) => {
+                    const implemented = it[2] !== false;
+                    const note = implemented ? '' : ' <em class="shortcut-disabled-note">(browser)</em>';
+                    return `<div class="shortcut-item${implemented ? '' : ' shortcut-item--disabled'}"><span>${it[1]}${note}</span><span class="shortcut-key">${it[0]}</span></div>`;
+                }).join('')}
             </div>
         `).join('');
 
@@ -7090,162 +7373,82 @@ const FileManager = (() => {
     let _gKeyTimer = null;
 
     function handleShortcut(e) {
-        const target = e.target;
-        const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (editorState) return;
 
+        const typing = isTypingTarget(e.target);
         if (typing && e.key !== 'Escape') return;
+
+        const key = e.key;
+        const lower = key.length === 1 ? key.toLowerCase() : key;
+        const mod = e.ctrlKey || e.metaKey;
+        const admin = isAdminMode();
+        const trash = inTrashView();
+        const filePage = isFileBrowserPage();
+
+        // System chords that work everywhere
+        if (key === '?' && e.shiftKey) {
+            e.preventDefault();
+            showShortcuts();
+            return;
+        }
+        if (lower === 'n' && e.altKey) {
+            e.preventDefault();
+            toggleNotificationsPanel();
+            return;
+        }
+        if (mod && key === ',') {
+            e.preventDefault();
+            if (typeof App !== 'undefined' && App.openDriveSettings) App.openDriveSettings();
+            else document.getElementById('topbar-settings')?.click();
+            return;
+        }
+        if (mod && e.shiftKey && lower === 'h') {
+            e.preventDefault();
+            window.location.hash = '#/activity';
+            return;
+        }
+        if (mod && e.shiftKey && lower === 'l') {
+            e.preventDefault();
+            if (window.matchMedia('(max-width: 820px)').matches) {
+                document.getElementById('sidebar-toggle')?.click();
+            } else {
+                document.getElementById('sidebar')?.classList.toggle('collapsed');
+                document.body.classList.toggle('sidebar-collapsed');
+            }
+            return;
+        }
 
         // --- "g then X" navigation sequences ---
         if (_gKeyPending) {
             _gKeyPending = false;
             clearTimeout(_gKeyTimer);
-            const k = e.key.toLowerCase();
             e.preventDefault();
-            if (k === 'h') { window.location.hash = '#/home'; return; }
-            if (k === 'd') { window.location.hash = '#/files'; return; }
-            if (k === 'r') { window.location.hash = '#/recent'; return; }
-            if (k === 't') { window.location.hash = '#/trash'; return; }
-            if (k === 's') { window.location.hash = '#/storage'; return; }
+            if (lower === 'h') { window.location.hash = '#/home'; return; }
+            if (lower === 'd') { window.location.hash = '#/files'; return; }
+            if (lower === 'r') { window.location.hash = '#/recent'; return; }
+            if (lower === 't') { window.location.hash = '#/trash'; return; }
+            if (lower === 's') { window.location.hash = '#/storage'; return; }
             return;
         }
 
-        if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (lower === 'g' && !mod && !e.altKey) {
             _gKeyPending = true;
             _gKeyTimer = setTimeout(() => { _gKeyPending = false; }, 800);
             return;
         }
 
-        // --- Views ---
-        if (e.key === '1') {
-            e.preventDefault();
-            setView('list');
-        }
-        if (e.key === '2') {
-            e.preventDefault();
-            setView('grid');
-        }
-
-        // --- Search ---
-        if (e.key === '/') {
+        if (key === '/') {
             e.preventDefault();
             document.getElementById('search-input')?.focus();
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-            e.preventDefault();
-            document.getElementById('search-input')?.focus();
-        }
-
-        // --- New folder ---
-        if (e.key.toLowerCase() === 'n' && !e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            createFolder();
-        }
-
-        // --- Upload ---
-        if (e.key.toLowerCase() === 'u' && !e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            document.getElementById('file-input')?.click();
-        }
-
-        // --- Select all ---
-        if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            selectAllVisible();
             return;
         }
-        if (e.key.toLowerCase() === 'a' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (mod && lower === 'k') {
             e.preventDefault();
-            selectAllVisible();
+            document.getElementById('search-input')?.focus();
+            return;
         }
 
-        // --- Delete / Backspace ---
-        if (e.key === 'Delete' && selectedItems.size) {
-            e.preventDefault();
-            bulkDelete();
-        }
-        if (e.key === 'Backspace' && !selectedItems.size) {
-            // Go up one folder
-            e.preventDefault();
-            if (currentFolderId) {
-                // Try to go to parent — reload files root
-                window.location.hash = '#/files';
-            }
-        }
-
-        // --- Star ---
-        if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && selectedItems.size) {
-            e.preventDefault();
-            const id = Array.from(selectedItems)[0];
-            const payload = findSelectedPayload(id);
-            if (payload) toggleStar(payload.type, payload.data);
-        }
-
-        // --- Share ---
-        if (e.key === '.' && selectedItems.size) {
-            e.preventDefault();
-            bulkShare();
-        }
-
-        // --- Download ---
-        if (e.key.toLowerCase() === 'd' && !e.ctrlKey && !e.metaKey && selectedItems.size) {
-            e.preventDefault();
-            downloadSelected();
-        }
-
-        // --- Move ---
-        if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && selectedItems.size) {
-            e.preventDefault();
-            bulkMove();
-        }
-
-        // --- Rename (F2) ---
-        if (e.key === 'F2' && selectedItems.size) {
-            e.preventDefault();
-            renameSelected();
-        }
-
-        // --- Enter — open selected ---
-        if (e.key === 'Enter' && selectedPrimary) {
-            e.preventDefault();
-            if (selectedPrimary.type === 'folder') {
-                loadFolder(selectedPrimary.data.id);
-            } else {
-                // Trigger details panel or file open
-                openDetailsPanel(selectedPrimary);
-            }
-        }
-
-        // --- Toggle details panel (i) ---
-        if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            const panel = document.getElementById('details-panel');
-            if (panel && !panel.classList.contains('hidden')) {
-                hideDetailsPanel();
-            } else if (selectedPrimary) {
-                openDetailsPanel(selectedPrimary);
-            }
-        }
-
-        // --- Preview (p) ---
-        if (e.key.toLowerCase() === 'p' && !e.ctrlKey && !e.metaKey && selectedPrimary) {
-            e.preventDefault();
-            openDetailsPanel(selectedPrimary);
-        }
-
-        // --- Notifications (Alt+N) ---
-        if (e.key.toLowerCase() === 'n' && e.altKey) {
-            e.preventDefault();
-            toggleNotificationsPanel();
-        }
-
-        // --- Shift+? — show shortcuts ---
-        if (e.key === '?' && e.shiftKey) {
-            e.preventDefault();
-            showShortcuts();
-        }
-
-        // --- Escape ---
-        if (e.key === 'Escape') {
+        if (key === 'Escape') {
             const ctxMenu = document.getElementById('context-menu');
             if (ctxMenu && !ctxMenu.classList.contains('hidden')) {
                 hideContextMenu();
@@ -7256,6 +7459,172 @@ const FileManager = (() => {
             document.getElementById('shortcuts-modal-overlay')?.classList.add('hidden');
             document.getElementById('notifications-panel')?.classList.add('hidden');
             document.getElementById('share-modal-overlay')?.classList.add('hidden');
+            return;
+        }
+
+        if (admin) return;
+        if (!filePage) return;
+
+        // Undo (file manager)
+        if (mod && lower === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            performUndo().catch(() => Components.toast('Undo failed', 'error'));
+            return;
+        }
+
+        // Clipboard
+        if (mod && lower === 'c' && selectedItems.size && !trash) {
+            e.preventDefault();
+            copySelectionToClipboard();
+            return;
+        }
+        if (mod && lower === 'x' && selectedItems.size && !trash) {
+            e.preventDefault();
+            cutSelectionToClipboard();
+            return;
+        }
+        if (mod && lower === 'v' && !trash) {
+            e.preventDefault();
+            pasteClipboard().catch((err) => Components.toast(err?.message || 'Paste failed', 'error'));
+            return;
+        }
+
+        // Views
+        if (key === '1') {
+            e.preventDefault();
+            setView('list');
+            return;
+        }
+        if (key === '2') {
+            e.preventDefault();
+            setView('grid');
+            return;
+        }
+
+        // Selection movement
+        if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight') {
+            e.preventDefault();
+            const cols = gridColumnCount();
+            let delta = 0;
+            if (key === 'ArrowUp') delta = currentView === 'grid' ? -cols : -1;
+            if (key === 'ArrowDown') delta = currentView === 'grid' ? cols : 1;
+            if (key === 'ArrowLeft') delta = -1;
+            if (key === 'ArrowRight') delta = 1;
+            moveSelectionBy(delta, e.shiftKey);
+            return;
+        }
+        if (key === ' ' || key === 'Spacebar') {
+            e.preventDefault();
+            toggleSpaceSelection();
+            return;
+        }
+
+        // Select all
+        if (lower === 'a' && mod) {
+            e.preventDefault();
+            selectAllVisible();
+            return;
+        }
+        if (lower === 'a' && !mod && !e.altKey) {
+            e.preventDefault();
+            selectAllVisible();
+            return;
+        }
+
+        // Delete / Backspace
+        if (key === 'Delete' && selectedItems.size) {
+            e.preventDefault();
+            bulkDelete();
+            return;
+        }
+        if (key === 'Backspace') {
+            e.preventDefault();
+            if (selectedItems.size) bulkDelete();
+            else goUpOneFolder();
+            return;
+        }
+
+        // Create / upload
+        if (lower === 'n' && !mod && !e.altKey) {
+            if (!trash && canAcceptUploads()) {
+                e.preventDefault();
+                createFolder();
+            }
+            return;
+        }
+        if (lower === 'u' && !mod) {
+            if (!trash && canAcceptUploads()) {
+                e.preventDefault();
+                document.getElementById('file-input')?.click();
+            }
+            return;
+        }
+
+        if (trash) {
+            // allowed below: download, enter, details, views already handled
+            if (lower === 'd' && !mod && selectedItems.size) {
+                e.preventDefault();
+                downloadSelected();
+            }
+            if (key === 'Enter' && selectedPrimary) {
+                e.preventDefault();
+                openSelectedLikeDblclick();
+            }
+            if (lower === 'i' && !mod) {
+                e.preventDefault();
+                const panel = document.getElementById('details-panel');
+                if (panel && !panel.classList.contains('hidden')) hideDetailsPanel();
+                else if (selectedPrimary) openDetailsPanel(selectedPrimary);
+            }
+            if (lower === 'p' && !mod && selectedPrimary) {
+                e.preventDefault();
+                openDetailsPanel(selectedPrimary);
+            }
+            return;
+        }
+
+        if (lower === 's' && !mod && selectedItems.size) {
+            e.preventDefault();
+            const id = Array.from(selectedItems)[0];
+            const payload = findSelectedPayload(id);
+            if (payload) toggleStar(payload.type, payload.data);
+            return;
+        }
+        if (key === '.' && selectedItems.size) {
+            e.preventDefault();
+            bulkShare();
+            return;
+        }
+        if (lower === 'd' && !mod && selectedItems.size) {
+            e.preventDefault();
+            downloadSelected();
+            return;
+        }
+        if (lower === 'm' && !mod && selectedItems.size) {
+            e.preventDefault();
+            bulkMove();
+            return;
+        }
+        if (key === 'F2' && selectedItems.size) {
+            e.preventDefault();
+            renameSelected();
+            return;
+        }
+        if (key === 'Enter' && selectedPrimary) {
+            e.preventDefault();
+            openSelectedLikeDblclick();
+            return;
+        }
+        if (lower === 'i' && !mod) {
+            e.preventDefault();
+            const panel = document.getElementById('details-panel');
+            if (panel && !panel.classList.contains('hidden')) hideDetailsPanel();
+            else if (selectedPrimary) openDetailsPanel(selectedPrimary);
+            return;
+        }
+        if (lower === 'p' && !mod && selectedPrimary) {
+            e.preventDefault();
+            openDetailsPanel(selectedPrimary);
         }
     }
 
@@ -7422,10 +7791,23 @@ const FileManager = (() => {
 
     async function renameSelected() {
         if (!selectedPrimary) return;
-        const newName = await Components.prompt('Rename', selectedPrimary.data.name, 'New name');
-        if (!newName || newName === selectedPrimary.data.name) return;
+        const prevName = selectedPrimary.data.name;
+        const newName = await Components.prompt('Rename', prevName, 'New name');
+        if (!newName || newName === prevName) return;
+        const payload = { type: selectedPrimary.type, id: selectedPrimary.data.id };
         try {
             await renameItem(selectedPrimary, newName);
+            pushUndo({
+                label: 'Rename',
+                undo: async () => {
+                    const p = findSelectedPayload(payload.id) || {
+                        type: payload.type,
+                        data: { id: payload.id, name: newName },
+                    };
+                    await renameItem(p, prevName);
+                    refresh();
+                },
+            });
             Components.toast('Renamed', 'success');
             refresh();
         } catch (err) {

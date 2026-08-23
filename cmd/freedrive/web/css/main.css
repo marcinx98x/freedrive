@@ -709,7 +709,7 @@ svg {
 /* ── File list header ── */
 .file-list-header {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(100px, 1fr) minmax(120px, 1fr) 100px 80px;
+  grid-template-columns: minmax(0, 3fr) minmax(100px, 1fr) minmax(120px, 1fr) 100px 160px;
   align-items: center;
   height: 36px;
   padding: 0 16px;
@@ -770,7 +770,7 @@ svg {
 /* ── File list rows ── */
 .file-row {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(100px, 1fr) minmax(120px, 1fr) 100px 80px;
+  grid-template-columns: minmax(0, 3fr) minmax(100px, 1fr) minmax(120px, 1fr) 100px 160px;
   align-items: center;
   height: 36px;
   padding: 0 16px;

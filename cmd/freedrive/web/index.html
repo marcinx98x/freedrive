@@ -376,7 +376,7 @@
                         <button class="btn-icon" id="bulk-share" title="Share" aria-label="Share"><span class="material-icons-outlined">person_add</span></button>
                         <button class="btn-icon" id="bulk-download" title="Download" aria-label="Download"><span class="material-icons-outlined">download</span></button>
                         <button class="btn-icon" id="bulk-move" title="Move to" aria-label="Move to"><span class="material-icons-outlined">drive_file_move</span></button>
-                        <button class="btn-icon" id="bulk-restore" title="Restore" aria-label="Restore" hidden><span class="material-icons-outlined">restore_from_trash</span></button>
+                        <button class="btn-icon hidden" id="bulk-restore" title="Restore" aria-label="Restore" hidden><span class="material-icons-outlined">history</span></button>
                         <button class="btn-icon danger-icon" id="bulk-delete" title="Delete" aria-label="Delete"><span class="material-icons-outlined">delete</span></button>
                     </div>
                 </div>
@@ -507,6 +507,7 @@
             <div class="context-submenu hidden" id="ctx-submenu-open-with" role="menu"></div>
         </div>
         <div class="context-divider"></div>
+        <button class="context-item" data-action="download"><span class="context-item-icon material-icons-outlined">download</span><span class="context-item-label">Download</span></button>
         <div class="context-item has-submenu" data-submenu="share" role="menuitem" tabindex="0">
             <span class="context-item-icon material-icons-outlined">person_add</span>
             <span class="context-item-label">Share</span>
@@ -534,8 +535,7 @@
         <div class="context-divider"></div>
         <button class="context-item" data-action="info"><span class="context-item-icon material-icons-outlined">info</span><span class="context-item-label">File information</span></button>
         <button class="context-item" data-action="versions"><span class="context-item-icon material-icons-outlined">history</span><span class="context-item-label">Manage versions</span></button>
-        <button class="context-item" data-action="download"><span class="context-item-icon material-icons-outlined">download</span><span class="context-item-label">Download</span></button>
-        <button class="context-item" data-action="restore" id="ctx-restore" hidden aria-label="Restore"><span class="context-item-icon material-icons-outlined">restore_from_trash</span><span class="context-item-label">Restore</span></button>
+        <button class="context-item" data-action="restore" id="ctx-restore" hidden aria-label="Restore"><span class="context-item-icon material-icons-outlined">history</span><span class="context-item-label">Restore</span></button>
         <div class="context-divider"></div>
         <button class="context-item danger" data-action="delete" id="ctx-delete" aria-label="Move to trash"><span class="context-item-icon material-icons-outlined">delete</span><span class="context-item-label">Move to trash</span></button>
     </div>

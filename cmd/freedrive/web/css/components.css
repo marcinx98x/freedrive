@@ -600,6 +600,40 @@
     border-bottom: none;
 }
 
+.shortcut-item--disabled {
+    opacity: 0.45;
+    color: #80868b;
+    pointer-events: none;
+}
+
+.shortcut-item--disabled .shortcut-key {
+    color: #80868b;
+    border-color: #e0e0e0;
+    background: #f8f9fa;
+    box-shadow: none;
+}
+
+.shortcut-disabled-note {
+    font-style: normal;
+    font-size: 11px;
+    color: #80868b;
+    margin-left: 4px;
+}
+
+.file-row.is-cut,
+.file-card.is-cut {
+    opacity: 0.55;
+}
+
+body.sidebar-collapsed #sidebar,
+#sidebar.collapsed {
+    display: none;
+}
+
+body.sidebar-collapsed #sidebar-resizer {
+    display: none;
+}
+
 .shortcut-key {
     min-width: 44px;
     text-align: center;

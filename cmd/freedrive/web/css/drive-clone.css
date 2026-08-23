@@ -1046,6 +1046,11 @@ body {
   color: #001d35 !important;
 }
 
+.app:not(.admin-mode) .selection-bar .selection-actions .btn-icon[hidden],
+.app:not(.admin-mode) .selection-bar .selection-actions .btn-icon.hidden {
+  display: none !important;
+}
+
 .app:not(.admin-mode) .selection-bar .selection-actions .btn-icon.danger-icon {
   color: #d93025 !important;
 }
@@ -1652,7 +1657,7 @@ body {
 .app:not(.admin-mode) .file-list-header {
   background: #fff !important;
   border-bottom: 1px solid #e0e0e0 !important;
-  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 80px !important;
+  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 160px !important;
   height: 40px !important;
   padding: 0 14px !important;
   margin: 0 !important;
@@ -1684,7 +1689,7 @@ body {
 }
 
 .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row {
-  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 80px !important;
+  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 160px !important;
   min-height: 48px !important;
   height: 48px !important;
   border-radius: 0 !important;
@@ -1913,7 +1918,7 @@ body {
   height: 40px !important;
   background: transparent !important;
   border-bottom: 1px solid #e0e0e0 !important;
-  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 80px !important;
+  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 160px !important;
   display: grid;
   align-items: center;
 }
@@ -1937,7 +1942,7 @@ body {
 
 .app:not(.admin-mode) .gd-home-recent-list .file-row {
   display: grid !important;
-  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 80px !important;
+  grid-template-columns: minmax(280px, 1fr) 180px 160px 140px 160px !important;
   min-height: 48px !important;
   height: 48px !important;
   border-radius: 0 !important;

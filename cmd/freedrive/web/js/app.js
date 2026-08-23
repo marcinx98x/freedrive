@@ -1493,6 +1493,7 @@ const App = (() => {
         showAuth,
         showApp,
         handleRoute,
+        openDriveSettings,
     };
 })();
 
