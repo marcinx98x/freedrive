@@ -1,6 +1,12 @@
 const FileManager = (() => {
     const META_KEY = 'fd_meta_v4';
     const HOME_WARNING_DISMISS_KEY = 'fd_home_warning_dismiss_until';
+    const DEFAULT_FOLDER_COLOR = '#5f6368';
+    const FOLDER_COLORS = [
+        '#ac725e', '#d06b64', '#f83a22', '#fa573c', '#ff7537', '#ffad46', '#fad165', '#fbe983',
+        '#4986e7', '#9fc6e7', '#9fe1e7', '#92e1c0', '#7bd148', '#16a765', '#b3dc6c', '#42d692',
+        '#5f6368', '#c2c2c2', '#cabdbf', '#cca6ac', '#f691b2', '#cd74e6', '#a47ae2', '#b99aff',
+    ];
 
     let currentFolderId = null;
     let currentPage = 'files';
@@ -343,6 +349,65 @@ const FileManager = (() => {
         });
     }
 
+    function resolveFolderColor(color) {
+        const value = String(color || '').trim();
+        if (/^#[0-9a-fA-F]{3,8}$/.test(value)) return value;
+        return DEFAULT_FOLDER_COLOR;
+    }
+
+    function syncFolderColorLocal(folderId, color) {
+        const apply = (list) => {
+            const hit = list.find((f) => f.id === folderId);
+            if (hit) hit.color = color;
+        };
+        apply(allFolders);
+        apply(filteredFolders);
+        if (contextTarget?.type === 'folder' && contextTarget.data?.id === folderId) {
+            contextTarget.data.color = color;
+        }
+        if (selectedPrimary?.type === 'folder' && selectedPrimary.data?.id === folderId) {
+            selectedPrimary.data.color = color;
+        }
+    }
+
+    function populateFolderColorPicker(folder) {
+        const section = document.getElementById('ctx-folder-color');
+        const grid = document.getElementById('ctx-folder-color-grid');
+        if (!section || !grid) return;
+
+        const show = !!(folder && !isTrashMode({ type: 'folder', data: folder }) && !isComputerListEntry(folder));
+        setElementHidden(section, !show);
+        if (!show) return;
+
+        const current = resolveFolderColor(folder.color).toLowerCase();
+        grid.innerHTML = FOLDER_COLORS.map((hex) => {
+            const selected = hex.toLowerCase() === current ? ' is-selected' : '';
+            return `<button type="button" class="folder-color-swatch${selected}" data-folder-color="${esc(hex)}" style="background-color:${esc(hex)}" title="${esc(hex)}" aria-label="Set folder colour ${esc(hex)}" aria-pressed="${selected ? 'true' : 'false'}"></button>`;
+        }).join('');
+
+        grid.querySelectorAll('[data-folder-color]').forEach((btn) => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const color = btn.dataset.folderColor || DEFAULT_FOLDER_COLOR;
+                const storeColor = color.toLowerCase() === DEFAULT_FOLDER_COLOR.toLowerCase() ? '' : color;
+                hideContextMenu();
+                try {
+                    await API.folders.update(folder.id, { color: storeColor });
+                    syncFolderColorLocal(folder.id, storeColor);
+                    renderItems(filteredFolders, filteredFiles, {
+                        keepSelection: true,
+                        isTrash: currentPage === 'trash',
+                    });
+                    if (selectedPrimary?.type === 'folder' && selectedPrimary.data?.id === folder.id) {
+                        openDetailsPanel(selectedPrimary);
+                    }
+                } catch (err) {
+                    Components.toast(err?.message || 'Failed to update folder colour', 'error');
+                }
+            });
+        });
+    }
+
     function showContextSubmenu(host) {
         if (contextSubmenuHideTimer) {
             clearTimeout(contextSubmenuHideTimer);
@@ -359,6 +424,11 @@ const FileManager = (() => {
         if (kind === 'open_with') {
             if (!contextTarget || contextTarget.type !== 'file') return;
             populateOpenWithSubmenu(submenu, contextTarget.data);
+        }
+        if (kind === 'organise') {
+            populateFolderColorPicker(
+                contextTarget?.type === 'folder' ? contextTarget.data : null
+            );
         }
 
         positionContextSubmenu(host, submenu);
@@ -766,9 +836,10 @@ const FileManager = (() => {
         return 'Other';
     }
 
-    function getIcon(type, mime, name = '') {
+    function getIcon(type, mime, name = '', color = '') {
         const group = getMimeGroup(mime, type, name);
         const ext = getFileExtension(name);
+        const folderFill = resolveFolderColor(color);
         // #11 - Colored icons by file type
         if (type === 'file' && ['yaml', 'yml', 'nix', 'patch'].includes(ext)) {
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="#6f7378"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="#fff"/><path d="M8 12h8v1.4H8zm0 2.8h8v1.4H8zm0 2.8h5v1.4H8z" fill="#fff"/></svg>';
@@ -789,7 +860,7 @@ const FileManager = (() => {
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6h-2v2h2v2h-2v2h-2v-2h2v-2h-2v-2h2v-2h-2V8h2v2h2v2z"/></svg>';
         }
         const icons = {
-            folder: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>',
+            folder: `<svg viewBox="0 0 24 24" width="20" height="20" fill="${folderFill}"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>`,
             image: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#34a853"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5A1.5 1.5 0 1 1 8.5 8a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z"/></svg>',
             video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#ea4335"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z"/></svg>',
             audio: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#a142f4"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z"/></svg>',
@@ -1744,7 +1815,7 @@ const FileManager = (() => {
                 const loc = resolveHomeLocationName(f.folder_id);
                 return `
                     <button type="button" class="gd-sr-row" data-id="${esc(f.id)}" data-type="${type}" data-folder="${esc(f.folder_id || '')}">
-                        <span class="gd-sr-icon">${getIcon(type, f.mime_type, f.name)}</span>
+                        <span class="gd-sr-icon">${getIcon(type, f.mime_type, f.name, type === 'folder' ? f.color : '')}</span>
                         <span class="gd-sr-main">
                             <span class="gd-sr-name">${highlightMatch(f.name, qLower)}</span>
                             <span class="gd-sr-owner">${esc(itemOwner(f))}</span>
@@ -2348,7 +2419,7 @@ const FileManager = (() => {
         row.innerHTML = `
             <div class="file-cell file-name">
                 <input type="checkbox" class="file-checkbox" aria-label="Select">
-                <span class="file-icon">${getIcon(type, item.mime_type, item.name)}</span>
+                <span class="file-icon">${getIcon(type, item.mime_type, item.name, type === 'folder' ? item.color : '')}</span>
                 <span class="file-label">${esc(item.name)}</span>
                 ${sharedBadge}
                 ${lockBadge}
@@ -2392,7 +2463,7 @@ const FileManager = (() => {
         if (type === 'folder') {
             const folderSharedBadge = showSharedBadgeForItem(item) ? renderSharedBadge() : '';
             card.innerHTML = `
-                <span class="folder-chip-icon">${getIcon('folder', item.mime_type, item.name)}</span>
+                <span class="folder-chip-icon">${getIcon('folder', item.mime_type, item.name, item.color)}</span>
                 <span class="folder-chip-name" title="${esc(item.name)}">${esc(item.name)}</span>${folderSharedBadge}
                 <button class="btn-icon action-more card-more-btn" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
             `;
@@ -2720,15 +2791,15 @@ const FileManager = (() => {
             setElementHidden(actionMap.open_with, !showOpenWith);
             actionMap.open_with.style.display = showOpenWith ? '' : 'none';
         }
-        if (actionMap.versions) {
-            const showVersions = !inTrash && target && target.type === 'file' && canWriteFileItem(target.data);
-            setElementHidden(actionMap.versions, !showVersions);
-            actionMap.versions.style.display = showVersions ? '' : 'none';
+        if (actionMap.copy) {
+            const showCopy = !inTrash && target && target.type === 'file';
+            setElementHidden(actionMap.copy, !showCopy);
+            actionMap.copy.style.display = showCopy ? '' : 'none';
         }
 
         const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
         if (computerEntry) {
-            ['organise', 'share', 'get_link', 'request_approval', 'rename', 'open_with', 'download', 'versions'].forEach((action) => {
+            ['organise', 'share', 'get_link', 'request_approval', 'rename', 'open_with', 'download', 'copy'].forEach((action) => {
                 if (actionMap[action]) {
                     setElementHidden(actionMap[action], true);
                     actionMap[action].style.display = 'none';
@@ -3834,10 +3905,11 @@ const FileManager = (() => {
         return null;
     }
 
-    function getIconLarge(type, mime, name = '') {
+    function getIconLarge(type, mime, name = '', color = '') {
         const group = getMimeGroup(mime, type, name);
+        const folderFill = resolveFolderColor(color);
         const colors = {
-            folder:   ['#5f6368', '#5f6368'],
+            folder:   [folderFill, folderFill],
             image:    ['#34a853', '#2d9248'],
             video:    ['#ea4335', '#d33427'],
             audio:    ['#a142f4', '#8e35d9'],
@@ -3911,10 +3983,10 @@ const FileManager = (() => {
         nameInput.removeAttribute('readonly');
 
         const headerIcon = document.getElementById('details-header-icon');
-        if (headerIcon) headerIcon.innerHTML = getIcon(type, data.mime_type, data.name);
+        if (headerIcon) headerIcon.innerHTML = getIcon(type, data.mime_type, data.name, type === 'folder' ? data.color : '');
 
         // show large icon initially
-        preview.innerHTML = getIconLarge(type, data.mime_type, data.name);
+        preview.innerHTML = getIconLarge(type, data.mime_type, data.name, type === 'folder' ? data.color : '');
         
         // Ensure old listeners are cleared by cloning and replacing
         const newPreview = preview.cloneNode(true);

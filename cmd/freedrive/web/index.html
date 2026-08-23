@@ -508,6 +508,9 @@
         </div>
         <div class="context-divider"></div>
         <button class="context-item" data-action="download"><span class="context-item-icon material-icons-outlined">download</span><span class="context-item-label">Download</span></button>
+        <button class="context-item" data-action="rename"><span class="context-item-icon material-icons-outlined">drive_file_rename_outline</span><span class="context-item-label">Rename</span></button>
+        <button class="context-item" data-action="copy"><span class="context-item-icon material-icons-outlined">content_copy</span><span class="context-item-label">Make a copy</span></button>
+        <div class="context-divider"></div>
         <div class="context-item has-submenu" data-submenu="share" role="menuitem" tabindex="0">
             <span class="context-item-icon material-icons-outlined">person_add</span>
             <span class="context-item-label">Share</span>
@@ -525,16 +528,17 @@
                 <button type="button" class="context-item" data-subaction="move"><span class="context-item-icon material-icons-outlined">drive_file_move</span><span class="context-item-label">Move to</span></button>
                 <button type="button" class="context-item" data-subaction="star"><span class="context-item-icon material-icons-outlined">star_outline</span><span class="context-item-label">Add to Starred</span></button>
                 <button type="button" class="context-item" data-subaction="offline"><span class="context-item-icon material-icons-outlined">offline_pin</span><span class="context-item-label">Add to Offline</span></button>
-                <button type="button" class="context-item" data-subaction="copy"><span class="context-item-icon material-icons-outlined">content_copy</span><span class="context-item-label">Make a copy</span></button>
+                <div class="folder-color-section" id="ctx-folder-color" hidden>
+                    <div class="context-divider"></div>
+                    <div class="folder-color-label">Folder colour</div>
+                    <div class="folder-color-grid" id="ctx-folder-color-grid" role="group" aria-label="Folder colour"></div>
+                </div>
             </div>
         </div>
         <button class="context-item" data-action="get_link" hidden><span class="context-item-icon material-icons-outlined">link</span><span class="context-item-label">Get link</span></button>
         <button class="context-item" data-action="request_approval"><span class="context-item-icon material-icons-outlined">fact_check</span><span class="context-item-label">Request approval</span></button>
         <div class="context-divider"></div>
-        <button class="context-item" data-action="rename"><span class="context-item-icon material-icons-outlined">drive_file_rename_outline</span><span class="context-item-label">Rename</span></button>
-        <div class="context-divider"></div>
         <button class="context-item" data-action="info"><span class="context-item-icon material-icons-outlined">info</span><span class="context-item-label">File information</span></button>
-        <button class="context-item" data-action="versions"><span class="context-item-icon material-icons-outlined">history</span><span class="context-item-label">Manage versions</span></button>
         <button class="context-item" data-action="restore" id="ctx-restore" hidden aria-label="Restore"><span class="context-item-icon material-icons-outlined">history</span><span class="context-item-label">Restore</span></button>
         <div class="context-divider"></div>
         <button class="context-item danger" data-action="delete" id="ctx-delete" aria-label="Move to trash"><span class="context-item-icon material-icons-outlined">delete</span><span class="context-item-label">Move to trash</span></button>
