@@ -107,6 +107,9 @@ type FileRepository interface {
 	GetVersions(ctx context.Context, fileID string) ([]domain.FileVersion, error)
 	GetVersion(ctx context.Context, fileID string, version int) (*domain.FileVersion, error)
 	DeleteOldVersions(ctx context.Context, fileID string, keepCount int) ([]domain.FileVersion, error)
+	DeleteVersionsOlderThan(ctx context.Context, fileID string, days int) ([]domain.FileVersion, error)
+	ListVersionsOlderThan(ctx context.Context, days int) ([]domain.FileVersionOwner, error)
+	DeleteVersionsByIDs(ctx context.Context, ids []string) error
 }
 
 // ComputerRepository defines data access for registered desktop devices.

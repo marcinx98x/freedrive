@@ -129,6 +129,24 @@ func KeepVersions() int {
 	return n
 }
 
+// VersionRetainDays returns how many days to keep historical versions; 0 means never expire by age.
+// Missing setting defaults to 30 days; explicit "never" disables age-based expiry.
+func VersionRetainDays() int {
+	raw, ok := storage(load())["version_retain_days"]
+	if !ok || raw == nil {
+		return 30
+	}
+	v := strings.ToLower(strings.TrimSpace(asString(raw)))
+	if v == "" || v == "never" {
+		return 0
+	}
+	n := asInt(v, 30)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 // TotalCapacityBytes returns server-wide storage cap from settings (0 = unlimited).
 func TotalCapacityBytes() int64 {
 	gb := asInt(storage(load())["total_capacity_gb"], 0)

@@ -123,8 +123,8 @@ FreeDrive is ideal for:
 ### 5. Versioning Support
 
 - File version records are kept when content is updated (can be disabled in admin settings)
-- Configurable `keep_versions` retention per file
-- List versions per file (context menu Manage versions, or history control in the details panel Modified row)
+- Configurable `keep_versions` count and `version_retain_days` (never / 7 / 30 / 90) — older versions are pruned on save and by a background job
+- List versions per file (Manage versions modal: policy blurb from admin settings, upload new version, Download / Restore from ⋮)
 - Restore an earlier version
 
 ### 6. User Profile & Security
@@ -230,7 +230,7 @@ Admin settings are enforced at runtime (not UI-only):
 
 - **IP blocklist / allowlist** — applied on login, register, refresh, reset-password, and 2FA verification
 - **Require 2FA for all users** — forces authenticator or email verification at sign-in (no admin exemption)
-- **Versioning** — enable/disable file versioning and set `keep_versions`
+- **Versioning** — enable/disable file versioning, `keep_versions` count, and `version_retain_days` (never / 7 / 30 / 90)
 - **Total capacity** — server-wide storage cap blocks uploads and content updates when exceeded
 - **Allowed file types** — extension whitelist in General settings; enable **Without limits** to accept any file type
 
@@ -612,7 +612,8 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 - `DELETE /files/{id}`
 - `POST /files/{id}/restore`
 - `DELETE /files/{id}/permanent`
-- `GET /files/{id}/versions`
+- `GET /files/{id}/versions` — list + `policy` (`versioning`, `keep_versions`, `version_retain_days`)
+- `GET /files/{id}/versions/{version}/download`
 - `POST /files/{id}/versions/{version}/restore`
 
 #### Resumable uploads (Cloudflare-safe)

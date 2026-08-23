@@ -52,6 +52,7 @@ const AdminPanel = (() => {
             trash_auto_empty: '30',
             versioning: true,
             keep_versions: 20,
+            version_retain_days: '30',
         },
         backup: {
             auto_backup: true,
@@ -1751,6 +1752,12 @@ const AdminPanel = (() => {
                 <div class="admin-form-group">
                     <label>Keep last versions</label>
                     <input class="admin-input" type="number" min="1" data-setting="storage.keep_versions" value="${esc(s.keep_versions)}">
+                </div>
+                <div class="admin-form-group">
+                    <label>Keep versions for</label>
+                    <select class="admin-input" data-setting="storage.version_retain_days">
+                        ${[['never', 'Never'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days']].map(([v, l]) => `<option value="${v}" ${String(s.version_retain_days || '30') === v ? 'selected' : ''}>${l}</option>`).join('')}
+                    </select>
                 </div>
             </div>
             <label class="live-toggle">

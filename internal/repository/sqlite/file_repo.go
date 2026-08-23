@@ -675,3 +675,78 @@ func (r *FileRepo) DeleteOldVersions(ctx context.Context, fileID string, keepCou
 	}
 	return old, nil
 }
+
+func (r *FileRepo) DeleteVersionsOlderThan(ctx context.Context, fileID string, days int) ([]domain.FileVersion, error) {
+	if days <= 0 {
+		return nil, nil
+	}
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT id, blob_path FROM file_versions
+		 WHERE file_id = ? AND created_at < datetime('now', ?)`,
+		fileID, fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var old []domain.FileVersion
+	for rows.Next() {
+		var v domain.FileVersion
+		if err := rows.Scan(&v.ID, &v.BlobPath); err != nil {
+			return nil, err
+		}
+		old = append(old, v)
+	}
+	if len(old) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(old))
+	for _, v := range old {
+		ids = append(ids, v.ID)
+	}
+	if err := r.DeleteVersionsByIDs(ctx, ids); err != nil {
+		return nil, err
+	}
+	return old, nil
+}
+
+func (r *FileRepo) ListVersionsOlderThan(ctx context.Context, days int) ([]domain.FileVersionOwner, error) {
+	if days <= 0 {
+		return nil, nil
+	}
+	rows, err := r.reader.QueryContext(ctx,
+		`SELECT fv.id, fv.file_id, fv.version, fv.size, fv.blob_path, fv.iv, fv.created_at, fv.created_by, f.owner_id
+		 FROM file_versions fv
+		 JOIN files f ON f.id = fv.file_id
+		 WHERE fv.created_at < datetime('now', ?)`,
+		fmt.Sprintf("-%d days", days))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.FileVersionOwner
+	for rows.Next() {
+		var v domain.FileVersionOwner
+		if err := rows.Scan(&v.ID, &v.FileID, &v.Version, &v.Size, &v.BlobPath, &v.IV, &v.CreatedAt, &v.CreatedBy, &v.OwnerID); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (r *FileRepo) DeleteVersionsByIDs(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	_, err := r.writer.ExecContext(ctx,
+		`DELETE FROM file_versions WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	return err
+}

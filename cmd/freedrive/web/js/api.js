@@ -273,6 +273,20 @@ const API = (() => {
         };
     }
 
+    async function downloadBlobVersion(fileId, version) {
+        const res = await fetch(`${BASE}/files/${fileId}/versions/${encodeURIComponent(version)}/download`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!res.ok) throw new Error('Download failed');
+        const blob = await res.blob();
+        return {
+            blob,
+            iv: res.headers.get('X-File-IV') || '',
+            mime: res.headers.get('X-File-Mime') || blob.type,
+            originalSize: Number(res.headers.get('X-Original-Size') || 0),
+        };
+    }
+
     const auth = {
         login: (email, password) => request('POST', '/auth/login', { email, password }),
         pollLoginApproval: (id, token) => request(
@@ -526,5 +540,6 @@ const API = (() => {
         uploadFile: uploadXHR.bind(null, '/files/upload'),
         uploadBytes,
         downloadBlob,
+        downloadBlobVersion,
     };
 })();

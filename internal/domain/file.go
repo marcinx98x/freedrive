@@ -49,6 +49,12 @@ type FileVersion struct {
 	CreatedBy string    `json:"created_by"`
 }
 
+// FileVersionOwner is a version row joined with the owning user for purge/quota.
+type FileVersionOwner struct {
+	FileVersion
+	OwnerID string
+}
+
 // FileListOptions contains filters for listing files.
 type FileListOptions struct {
 	FolderID  *string

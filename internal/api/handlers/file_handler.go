@@ -286,12 +286,69 @@ func (h *FileHandler) PermanentDelete(w http.ResponseWriter, r *http.Request) {
 // GetVersions handles GET /api/v1/files/{id}/versions
 func (h *FileHandler) GetVersions(w http.ResponseWriter, r *http.Request) {
 	fileID := chi.URLParam(r, "id")
+	userID := middleware.GetUserID(r.Context())
+	if _, err := h.fileService.Get(r.Context(), fileID, userID); err != nil {
+		writeError(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	versions, err := h.fileRepo.GetVersions(r.Context(), fileID)
 	if err != nil {
 		writeError(w, "failed to get versions", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"versions": versions})
+	if versions == nil {
+		versions = []domain.FileVersion{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"versions": versions,
+		"policy": map[string]interface{}{
+			"versioning":           adminsettings.VersioningEnabled(),
+			"keep_versions":        adminsettings.KeepVersions(),
+			"version_retain_days":  adminsettings.VersionRetainDays(),
+		},
+	})
+}
+
+// DownloadVersion handles GET /api/v1/files/{id}/versions/{version}/download
+func (h *FileHandler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
+	fileID := chi.URLParam(r, "id")
+	userID := middleware.GetUserID(r.Context())
+	version, _ := strconv.Atoi(chi.URLParam(r, "version"))
+	if version < 1 {
+		writeError(w, "invalid version", http.StatusBadRequest)
+		return
+	}
+
+	file, ver, getReader, err := h.fileService.DownloadVersion(r.Context(), fileID, userID, version)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	readerIface, err := getReader()
+	if err != nil {
+		log.Printf("version download blob missing file_id=%s version=%d: %v", fileID, version, err)
+		writeError(w, "blob missing", http.StatusNotFound)
+		return
+	}
+	reader := readerIface.(io.ReadCloser)
+	defer reader.Close()
+
+	size := ver.Size
+	if h.storage != nil {
+		if sz, szErr := h.storage.Size(ver.BlobPath); szErr == nil {
+			size = sz
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("X-File-IV", ver.IV)
+	w.Header().Set("X-File-Mime", file.MimeType)
+	w.Header().Set("X-Original-Size", strconv.FormatInt(ver.Size, 10))
+
+	io.Copy(w, reader)
 }
 
 // UpdateContent handles POST /api/v1/files/{id}/content

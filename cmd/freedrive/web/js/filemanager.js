@@ -6596,36 +6596,191 @@ const FileManager = (() => {
         };
     }
 
+    async function decryptDownloadedBlob(file, { blob, iv, mime }) {
+        const cryptoModule = window.CryptoModule;
+        if (!cryptoModule?.getKey || !cryptoModule?.decryptFile || !iv) {
+            return new Blob([blob], { type: mime || file.mime_type || blob.type });
+        }
+        const key = await (window.CryptoSync?.ensureFileKey
+            ? CryptoSync.ensureFileKey(file.id)
+            : cryptoModule.getKey(file.id));
+        if (!key) {
+            throw new Error(
+                window.CryptoSync?.describeFileKeyError
+                    ? CryptoSync.describeFileKeyError({ code: CryptoSync.ERR_UNLOCK_REQUIRED })
+                    : 'Sign out and sign in again with your password.',
+            );
+        }
+        const encrypted = await blob.arrayBuffer();
+        const plain = await cryptoModule.decryptFile(encrypted, key, cryptoModule.base64ToUint8(iv));
+        return new Blob([plain], { type: mime || file.mime_type || blob.type });
+    }
+
+    async function downloadFileVersion(file, version) {
+        try {
+            const payload = version == null
+                ? await API.downloadBlob(file.id)
+                : await API.downloadBlobVersion(file.id, version);
+            const plain = await decryptDownloadedBlob(file, payload);
+            const url = URL.createObjectURL(plain);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1200);
+            Components.toast('Download started', 'info');
+        } catch (err) {
+            const message = window.CryptoSync?.describeFileKeyError
+                ? CryptoSync.describeFileKeyError(err)
+                : (err?.message || 'Download failed');
+            Components.toast(`Download failed: ${message}`, 'error');
+        }
+    }
+
+    function buildVersionsPolicyMessage(fileName, policy = {}) {
+        const name = esc(fileName || 'this file');
+        if (policy.versioning === false) {
+            return `Versioning is disabled by the administrator. Uploading a new version will replace the current content of '${name}' without keeping history.`;
+        }
+        const keep = Number(policy.keep_versions) > 0 ? Number(policy.keep_versions) : null;
+        const days = Number(policy.version_retain_days) > 0 ? Number(policy.version_retain_days) : null;
+        let limitText = '';
+        if (days && keep) {
+            limitText = `after <strong>${days} days</strong> or after <strong>${keep} versions</strong> are stored`;
+        } else if (days) {
+            limitText = `after <strong>${days} days</strong>`;
+        } else if (keep) {
+            limitText = `after <strong>${keep} versions</strong> are stored`;
+        } else {
+            limitText = 'according to administrator retention settings';
+        }
+        return `Temporary versions of '${name}' may be deleted automatically ${limitText}. Versions are listed newest first.`;
+    }
+
+    function versionsPersonLabel(userIdOrName) {
+        const me = getCurrentUser();
+        if (!userIdOrName) return 'Unknown';
+        if (userIdOrName === me.id) return 'me';
+        const lower = String(userIdOrName).toLowerCase();
+        if (lower === 'me' || lower === 'you') return 'me';
+        if (me.username && lower === String(me.username).toLowerCase()) return 'me';
+        if (me.email && lower === String(me.email).toLowerCase()) return 'me';
+        if (String(userIdOrName).includes('-') && userIdOrName.length > 8) {
+            return lookupUserLabel(userIdOrName);
+        }
+        return userIdOrName;
+    }
+
     async function openVersionHistory(file) {
         try {
             const resp = await API.files.versions(file.id);
             const versions = resp.versions || [];
-            if (!versions.length) {
-                Components.toast('No previous versions', 'info');
-                return;
-            }
+            const policy = resp.policy || {};
+            const canUpload = canWriteFileItem(file);
+            const iconHtml = getIcon('file', file.mime_type, file.name);
+            const currentBy = versionsPersonLabel(file.owner_id);
+
+            const historyRows = versions.map((v) => {
+                const by = versionsPersonLabel(v.created_by);
+                return `
+                    <div class="versions-row" data-version-row="${esc(String(v.version))}">
+                        <span class="versions-row-icon">${iconHtml}</span>
+                        <div class="versions-row-main">
+                            <div class="versions-row-title">Version ${esc(String(v.version))} <span class="versions-row-name">${esc(file.name)}</span></div>
+                            <div class="versions-row-meta">${Components.formatAbsoluteDate(v.created_at)} · ${esc(by)}${v.size ? ` · ${Components.formatSize(v.size)}` : ''}</div>
+                        </div>
+                        <div class="versions-row-menu-wrap">
+                            <button type="button" class="btn-icon versions-more-btn" data-version-menu="${esc(String(v.version))}" title="More actions" aria-label="More actions">
+                                <span class="material-icons-outlined">more_vert</span>
+                            </button>
+                            <div class="versions-menu hidden" data-version-popup="${esc(String(v.version))}">
+                                <button type="button" class="versions-menu-item" data-version-download="${esc(String(v.version))}">
+                                    <span class="material-icons-outlined">download</span> Download
+                                </button>
+                                <button type="button" class="versions-menu-item" data-version-restore="${esc(String(v.version))}">
+                                    <span class="material-icons-outlined">history</span> Restore
+                                </button>
+                            </div>
+                        </div>
+                    </div>`;
+            }).join('');
 
             const body = `
-                <p style="margin:0 0 12px;color:#5f6368;font-size:13px;">Restore a previous version. The current content is kept in history when versioning is enabled.</p>
-                <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;">
-                    ${versions.map((v) => `
-                        <div class="share-existing-entry" style="grid-template-columns:1fr 110px 90px;">
-                            <div>
-                                <div style="font-weight:500;">Version ${esc(String(v.version))}</div>
-                                <div style="font-size:12px;color:#5f6368;">${Components.formatDate(v.created_at)}</div>
+                <div class="versions-modal">
+                    <p class="versions-policy">${buildVersionsPolicyMessage(file.name, policy)}</p>
+                    ${canUpload ? `
+                        <button type="button" class="versions-upload-btn" id="versions-upload-btn">
+                            <span class="material-icons-outlined">upload</span>
+                            Upload new version
+                        </button>
+                        <input type="file" id="versions-upload-input" hidden>
+                    ` : ''}
+                    <div class="versions-divider"></div>
+                    <div class="versions-list">
+                        <div class="versions-row" data-version-row="current">
+                            <span class="versions-row-icon">${iconHtml}</span>
+                            <div class="versions-row-main">
+                                <div class="versions-row-title"><strong>Current version</strong> <span class="versions-row-name">${esc(file.name)}</span></div>
+                                <div class="versions-row-meta">${Components.formatAbsoluteDate(file.updated_at || file.created_at)} · ${esc(currentBy)}</div>
                             </div>
-                            <span>${Components.formatSize(v.size)}</span>
-                            <button class="btn btn-secondary btn-sm" data-version="${esc(String(v.version))}">Restore</button>
+                            <div class="versions-row-menu-wrap">
+                                <button type="button" class="btn-icon versions-more-btn" data-version-menu="current" title="More actions" aria-label="More actions">
+                                    <span class="material-icons-outlined">more_vert</span>
+                                </button>
+                                <div class="versions-menu hidden" data-version-popup="current">
+                                    <button type="button" class="versions-menu-item" data-version-download="current">
+                                        <span class="material-icons-outlined">download</span> Download
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                    `).join('')}
+                        ${historyRows}
+                    </div>
                 </div>
             `;
 
-            Components.showModal('Manage versions', body, [{ text: 'Close' }]);
+            Components.showModal('Manage versions', body, [{ text: 'Close', class: 'btn-primary' }]);
+
             setTimeout(() => {
-                document.querySelectorAll('[data-version]').forEach((btn) => {
-                    btn.addEventListener('click', async () => {
-                        const version = btn.dataset.version;
+                const modalRoot = document.querySelector('#modal-body .versions-modal');
+                if (!modalRoot) return;
+
+                const closeMenus = () => {
+                    modalRoot.querySelectorAll('.versions-menu').forEach((m) => m.classList.add('hidden'));
+                };
+
+                modalRoot.querySelectorAll('[data-version-menu]').forEach((btn) => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const key = btn.dataset.versionMenu;
+                        const popup = modalRoot.querySelector(`[data-version-popup="${key}"]`);
+                        const wasOpen = popup && !popup.classList.contains('hidden');
+                        closeMenus();
+                        if (popup && !wasOpen) popup.classList.remove('hidden');
+                    });
+                });
+
+                document.getElementById('modal-overlay')?.addEventListener('click', (e) => {
+                    if (!e.target.closest('.versions-row-menu-wrap')) closeMenus();
+                }, { once: true });
+
+                modalRoot.querySelectorAll('[data-version-download]').forEach((btn) => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        closeMenus();
+                        const key = btn.dataset.versionDownload;
+                        if (key === 'current') await downloadFileVersion(file, null);
+                        else await downloadFileVersion(file, key);
+                    });
+                });
+
+                modalRoot.querySelectorAll('[data-version-restore]').forEach((btn) => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        closeMenus();
+                        const version = btn.dataset.versionRestore;
                         try {
                             await API.files.restoreVersion(file.id, version);
                             Components.toast('Version restored', 'success');
@@ -6635,12 +6790,33 @@ const FileManager = (() => {
                                 try {
                                     const updated = await API.files.get(file.id);
                                     if (updated) openFile(updated);
-                                } catch { /* ignore reopen errors */ }
+                                } catch { /* ignore */ }
                             }
                         } catch (err) {
                             Components.toast(`Restore failed: ${err.message}`, 'error');
                         }
                     });
+                });
+
+                const uploadBtn = document.getElementById('versions-upload-btn');
+                const uploadInput = document.getElementById('versions-upload-input');
+                uploadBtn?.addEventListener('click', () => uploadInput?.click());
+                uploadInput?.addEventListener('change', async () => {
+                    const picked = uploadInput.files?.[0];
+                    uploadInput.value = '';
+                    if (!picked) return;
+                    try {
+                        Components.toast('Uploading new version…', 'info');
+                        const ok = await saveBlobToExistingFile(file, picked, picked.type || file.mime_type, file.name);
+                        if (!ok) return;
+                        Components.toast('New version uploaded', 'success');
+                        const updated = await API.files.get(file.id);
+                        Components.hideModal();
+                        refresh();
+                        await openVersionHistory(updated || file);
+                    } catch (err) {
+                        Components.toast(err?.message || 'Upload failed', 'error');
+                    }
                 });
             }, 30);
         } catch {

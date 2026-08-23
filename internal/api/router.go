@@ -156,6 +156,7 @@ func NewRouter(
 				r.Post("/{id}/restore", fileHandler.Restore)
 				r.Delete("/{id}/permanent", fileHandler.PermanentDelete)
 				r.Get("/{id}/versions", fileHandler.GetVersions)
+				r.Get("/{id}/versions/{version}/download", fileHandler.DownloadVersion)
 				r.Post("/{id}/versions/{version}/restore", fileHandler.RestoreVersion)
 				r.Get("/{id}/encryption-key", cryptoHandler.GetFileEncryptionKey)
 				r.Put("/{id}/encryption-key", cryptoHandler.PutFileEncryptionKey)

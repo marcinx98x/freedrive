@@ -761,17 +761,32 @@ func contentReplaceDeltas(oldEncrypted, newEncrypted int64, versionKept bool) (q
 	return newEncrypted - oldEncrypted, newEncrypted - oldEncrypted
 }
 
-// pruneFileVersions drops versions beyond KeepVersions and frees their blobs + quota.
+// pruneFileVersions drops versions beyond KeepVersions / age retention and frees their blobs + quota.
 func (s *FileService) pruneFileVersions(ctx context.Context, userID, fileID string) {
 	if !adminsettings.VersioningEnabled() {
 		return
 	}
-	removed, err := s.fileRepo.DeleteOldVersions(ctx, fileID, adminsettings.KeepVersions())
-	if err != nil || len(removed) == 0 {
+	var removed []domain.FileVersion
+	byCount, err := s.fileRepo.DeleteOldVersions(ctx, fileID, adminsettings.KeepVersions())
+	if err == nil {
+		removed = append(removed, byCount...)
+	}
+	if days := adminsettings.VersionRetainDays(); days > 0 {
+		byAge, ageErr := s.fileRepo.DeleteVersionsOlderThan(ctx, fileID, days)
+		if ageErr == nil {
+			removed = append(removed, byAge...)
+		}
+	}
+	if len(removed) == 0 {
 		return
 	}
 	var freed int64
+	seen := map[string]bool{}
 	for _, v := range removed {
+		if v.BlobPath == "" || seen[v.BlobPath] {
+			continue
+		}
+		seen[v.BlobPath] = true
 		if sz, szErr := s.storage.Size(v.BlobPath); szErr == nil {
 			freed += sz
 		}
@@ -780,6 +795,86 @@ func (s *FileService) pruneFileVersions(ctx context.Context, userID, fileID stri
 	if freed > 0 {
 		_ = s.userRepo.UpdateUsedBytes(ctx, userID, -freed)
 	}
+}
+
+// DownloadVersion streams a historical version blob (same access rules as Download).
+func (s *FileService) DownloadVersion(ctx context.Context, fileID, userID string, version int) (*domain.File, *domain.FileVersion, func() (interface{}, error), error) {
+	if err := s.access.CanReadFile(ctx, fileID, userID); err != nil {
+		return nil, nil, nil, err
+	}
+	file, err := s.fileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if file == nil {
+		return nil, nil, nil, fmt.Errorf("file not found")
+	}
+	v, err := s.fileRepo.GetVersion(ctx, fileID, version)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if v == nil {
+		return nil, nil, nil, fmt.Errorf("version not found")
+	}
+	getReader := func() (interface{}, error) {
+		return s.storage.Get(v.BlobPath)
+	}
+	return file, v, getReader, nil
+}
+
+func (s *FileService) freeVersionBlobs(ctx context.Context, items []domain.FileVersionOwner) {
+	deltas := map[string]int64{}
+	ids := make([]string, 0, len(items))
+	for _, v := range items {
+		ids = append(ids, v.ID)
+		if v.BlobPath == "" {
+			continue
+		}
+		sz := v.Size
+		if real, err := s.storage.Size(v.BlobPath); err == nil {
+			sz = real
+		}
+		deltas[v.OwnerID] += sz
+		_ = s.storage.Delete(v.BlobPath)
+	}
+	_ = s.fileRepo.DeleteVersionsByIDs(ctx, ids)
+	for owner, freed := range deltas {
+		if freed > 0 {
+			_ = s.userRepo.UpdateUsedBytes(ctx, owner, -freed)
+		}
+	}
+}
+
+// StartVersionPurge periodically removes historical versions past VersionRetainDays.
+func (s *FileService) StartVersionPurge(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !adminsettings.VersioningEnabled() {
+					continue
+				}
+				days := adminsettings.VersionRetainDays()
+				if days <= 0 {
+					continue
+				}
+				items, err := s.fileRepo.ListVersionsOlderThan(ctx, days)
+				if err != nil {
+					log.Printf("version age purge list error: %v", err)
+					continue
+				}
+				if len(items) == 0 {
+					continue
+				}
+				s.freeVersionBlobs(ctx, items)
+				log.Printf("purged %d expired file versions", len(items))
+			}
+		}
+	}()
 }
 
 func (s *FileService) checkServerCapacity(ctx context.Context, additionalBytes int64) error {

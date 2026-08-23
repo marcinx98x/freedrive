@@ -92,6 +92,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fileService.StartTrashPurge(ctx)
+	fileService.StartVersionPurge(ctx)
 	adminsettings.StartBackupScheduler(ctx)
 
 	router := api.NewRouter(
