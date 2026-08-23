@@ -387,7 +387,7 @@ svg {
 .nav-tree-folder-link svg {
   width: 18px;
   height: 18px;
-  fill: #5f6368;
+  fill: currentColor;
   flex-shrink: 0;
 }
 .nav-tree-folder.active .nav-tree-folder-link svg { fill: currentColor; }

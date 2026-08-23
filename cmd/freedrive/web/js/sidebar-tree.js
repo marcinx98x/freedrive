@@ -7,7 +7,19 @@ const SidebarTree = (() => {
     let currentFolderId = null;
     let renderToken = 0;
 
-    const FOLDER_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+    const DEFAULT_FOLDER_COLOR = '#5f6368';
+
+    function resolveFolderColor(color) {
+        let value = String(color || '').trim();
+        if (/^[0-9a-fA-F]{3,8}$/.test(value)) value = `#${value}`;
+        if (/^#[0-9a-fA-F]{3,8}$/.test(value)) return value;
+        return DEFAULT_FOLDER_COLOR;
+    }
+
+    function folderIconHtml(color) {
+        const fill = resolveFolderColor(color);
+        return `<svg viewBox="0 0 24 24" fill="currentColor" style="color:${esc(fill)}"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" style="fill:${esc(fill)}"/></svg>`;
+    }
 
     function esc(text) {
         return Components?.escapeHtml ? Components.escapeHtml(text) : String(text || '');
@@ -92,7 +104,7 @@ const SidebarTree = (() => {
         const link = document.createElement('a');
         link.href = `#/files/${folder.id}`;
         link.className = 'nav-tree-folder-link';
-        link.innerHTML = `${FOLDER_ICON}<span>${esc(folder.name)}</span>`;
+        link.innerHTML = `${folderIconHtml(folder.color)}<span>${esc(folder.name)}</span>`;
         row.appendChild(link);
 
         const childrenEl = document.createElement('div');
@@ -241,6 +253,7 @@ const SidebarTree = (() => {
         init,
         syncWithRoute,
         refresh,
+        invalidateCache,
         invalidateAll,
     };
 })();
