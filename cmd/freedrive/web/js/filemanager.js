@@ -382,37 +382,39 @@ const FileManager = (() => {
 
         const current = resolveFolderColor(folder.color).toLowerCase();
         grid.innerHTML = FOLDER_COLORS.map((hex) => {
+            const raw = hex.replace(/^#/, '');
             const selected = hex.toLowerCase() === current ? ' is-selected' : '';
-            return `<button type="button" class="folder-color-swatch${selected}" data-folder-color="${esc(hex)}" style="background-color:${esc(hex)}" title="${esc(hex)}" aria-label="Set folder colour ${esc(hex)}" aria-pressed="${selected ? 'true' : 'false'}"></button>`;
+            return `<button type="button" class="folder-color-swatch${selected}" data-folder-color="${esc(raw)}" style="background-color:#${esc(raw)}" title="#${esc(raw)}" aria-label="Set folder colour #${esc(raw)}" aria-pressed="${selected ? 'true' : 'false'}"></button>`;
         }).join('');
+    }
 
-        grid.querySelectorAll('[data-folder-color]').forEach((btn) => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const color = btn.dataset.folderColor || DEFAULT_FOLDER_COLOR;
-                const storeColor = color.toLowerCase() === DEFAULT_FOLDER_COLOR.toLowerCase() ? '' : color;
-                hideContextMenu();
-                try {
-                    const updated = await API.folders.update(folder.id, { color: storeColor });
-                    const next = updated?.color || storeColor || '';
-                    syncFolderColorLocal(folder.id, next);
-                    renderItems(filteredFolders, filteredFiles, {
-                        keepSelection: true,
-                        isTrash: currentPage === 'trash',
-                    });
-                    if (selectedPrimary?.type === 'folder' && selectedPrimary.data?.id === folder.id) {
-                        openDetailsPanel(selectedPrimary);
-                    }
-                    if (typeof SidebarTree !== 'undefined' && SidebarTree.refresh) {
-                        const parentId = folder.parent_id || null;
-                        SidebarTree.invalidateCache?.(parentId);
-                        await SidebarTree.refresh(parentId);
-                    }
-                } catch (err) {
-                    Components.toast(err?.message || 'Failed to update folder colour', 'error');
-                }
+    async function applyFolderColourFromSwatch(btn) {
+        if (!btn || !contextTarget || contextTarget.type !== 'folder') return;
+        const folder = contextTarget.data;
+        if (!folder?.id) return;
+        const raw = String(btn.dataset.folderColor || '').replace(/^#/, '');
+        const color = resolveFolderColor(raw ? `#${raw}` : '');
+        const storeColor = color.toLowerCase() === DEFAULT_FOLDER_COLOR.toLowerCase() ? '' : color;
+        hideContextMenu();
+        try {
+            const updated = await API.folders.update(folder.id, { color: storeColor });
+            const next = updated?.color || storeColor || '';
+            syncFolderColorLocal(folder.id, next);
+            renderItems(filteredFolders, filteredFiles, {
+                keepSelection: true,
+                isTrash: currentPage === 'trash',
             });
-        });
+            if (selectedPrimary?.type === 'folder' && selectedPrimary.data?.id === folder.id) {
+                openDetailsPanel(selectedPrimary);
+            }
+            if (typeof SidebarTree !== 'undefined' && SidebarTree.refresh) {
+                const parentId = folder.parent_id || null;
+                SidebarTree.invalidateCache?.(parentId);
+                await SidebarTree.refresh(parentId);
+            }
+        } catch (err) {
+            Components.toast(err?.message || 'Failed to update folder colour', 'error');
+        }
     }
 
     function showContextSubmenu(host) {
@@ -484,12 +486,19 @@ const FileManager = (() => {
         });
 
         document.getElementById('context-menu')?.addEventListener('click', async (e) => {
+            const colorBtn = e.target.closest('[data-folder-color]');
+            if (colorBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                await applyFolderColourFromSwatch(colorBtn);
+                return;
+            }
             const subBtn = e.target.closest('[data-subaction]');
             if (!subBtn || !contextTarget) return;
             e.stopPropagation();
             hideContextMenu();
             await handleContextAction(subBtn.dataset.subaction, contextTarget);
-        });
+        }, true);
     }
 
     function bindActivityControls() {

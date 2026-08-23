@@ -60,6 +60,7 @@
 
 .context-item.has-submenu {
     position: relative;
+    overflow: visible !important;
 }
 
 .context-submenu {

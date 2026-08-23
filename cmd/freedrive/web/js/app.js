@@ -1458,8 +1458,11 @@ const App = (() => {
 
         function attachRipple(el) {
             if (el._rippleBound) return;
+            // Submenu hosts must stay overflow:visible or flyouts (e.g. Folder colour) get clipped.
+            if (el.classList?.contains('has-submenu')) return;
             el._rippleBound = true;
             el.addEventListener('pointerdown', (e) => {
+                if (e.target.closest('.context-submenu, .folder-color-swatch')) return;
                 const rect = el.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
@@ -1483,8 +1486,9 @@ const App = (() => {
 
         // also attach to dynamically added elements via delegation
         document.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('.context-submenu, .folder-color-swatch, .folder-color-section')) return;
             const el = e.target.closest(RIPPLE_SEL);
-            if (el) attachRipple(el);
+            if (el && !el.classList?.contains('has-submenu')) attachRipple(el);
         }, true);
     }
 
