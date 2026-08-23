@@ -394,9 +394,7 @@ const FileManager = (() => {
                 hideContextMenu();
                 try {
                     const updated = await API.folders.update(folder.id, { color: storeColor });
-                    const next = (updated && Object.prototype.hasOwnProperty.call(updated, 'color'))
-                        ? (updated.color || '')
-                        : storeColor;
+                    const next = updated?.color || storeColor || '';
                     syncFolderColorLocal(folder.id, next);
                     renderItems(filteredFolders, filteredFiles, {
                         keepSelection: true,
@@ -848,7 +846,8 @@ const FileManager = (() => {
     function getIcon(type, mime, name = '', color = '') {
         const group = getMimeGroup(mime, type, name);
         const ext = getFileExtension(name);
-        const folderFill = resolveFolderColor(color);
+        // color used by callers via --fd-folder-fill on wrappers; keep arg for API stability
+        void color;
         // #11 - Colored icons by file type
         if (type === 'file' && ['yaml', 'yml', 'nix', 'patch'].includes(ext)) {
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="#6f7378"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="#fff"/><path d="M8 12h8v1.4H8zm0 2.8h8v1.4H8zm0 2.8h5v1.4H8z" fill="#fff"/></svg>';
@@ -869,7 +868,7 @@ const FileManager = (() => {
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6h-2v2h2v2h-2v2h-2v-2h2v-2h-2v-2h2v-2h-2V8h2v2h2v2z"/></svg>';
         }
         const icons = {
-            folder: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" style="fill:${folderFill}"/></svg>`,
+            folder: `<svg class="fd-folder-icon" viewBox="0 0 24 24" width="20" height="20" fill="var(--fd-folder-fill, #5f6368)"><path fill="var(--fd-folder-fill, #5f6368)" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>`,
             image: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#34a853"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5A1.5 1.5 0 1 1 8.5 8a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z"/></svg>',
             video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#ea4335"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z"/></svg>',
             audio: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#a142f4"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z"/></svg>',
@@ -1824,7 +1823,7 @@ const FileManager = (() => {
                 const loc = resolveHomeLocationName(f.folder_id);
                 return `
                     <button type="button" class="gd-sr-row" data-id="${esc(f.id)}" data-type="${type}" data-folder="${esc(f.folder_id || '')}">
-                        <span class="gd-sr-icon"${type === 'folder' ? ` style="color:${esc(resolveFolderColor(f.color))}"` : ''}>${getIcon(type, f.mime_type, f.name, type === 'folder' ? f.color : '')}</span>
+                        <span class="gd-sr-icon"${type === 'folder' ? ` style="--fd-folder-fill:${esc(resolveFolderColor(f.color))}"` : ''}>${getIcon(type, f.mime_type, f.name, type === 'folder' ? f.color : '')}</span>
                         <span class="gd-sr-main">
                             <span class="gd-sr-name">${highlightMatch(f.name, qLower)}</span>
                             <span class="gd-sr-owner">${esc(itemOwner(f))}</span>
@@ -2428,7 +2427,7 @@ const FileManager = (() => {
         row.innerHTML = `
             <div class="file-cell file-name">
                 <input type="checkbox" class="file-checkbox" aria-label="Select">
-                <span class="file-icon"${type === 'folder' ? ` style="color:${esc(resolveFolderColor(item.color))}"` : ''}>${getIcon(type, item.mime_type, item.name, type === 'folder' ? item.color : '')}</span>
+                <span class="file-icon"${type === 'folder' ? ` style="--fd-folder-fill:${esc(resolveFolderColor(item.color))}"` : ''}>${getIcon(type, item.mime_type, item.name, type === 'folder' ? item.color : '')}</span>
                 <span class="file-label">${esc(item.name)}</span>
                 ${sharedBadge}
                 ${lockBadge}
@@ -2472,7 +2471,7 @@ const FileManager = (() => {
         if (type === 'folder') {
             const folderSharedBadge = showSharedBadgeForItem(item) ? renderSharedBadge() : '';
             card.innerHTML = `
-                <span class="folder-chip-icon" style="color:${esc(resolveFolderColor(item.color))}">${getIcon('folder', item.mime_type, item.name, item.color)}</span>
+                <span class="folder-chip-icon" style="--fd-folder-fill:${esc(resolveFolderColor(item.color))}">${getIcon('folder', item.mime_type, item.name, item.color)}</span>
                 <span class="folder-chip-name" title="${esc(item.name)}">${esc(item.name)}</span>${folderSharedBadge}
                 <button class="btn-icon action-more card-more-btn" title="More" aria-label="More"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
             `;
@@ -3930,7 +3929,7 @@ const FileManager = (() => {
         const c = colors[group] || colors.document;
 
         const svgs = {
-            folder: `<svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" style="fill:${c[0]}"/></svg>`,
+            folder: `<svg class="fd-folder-icon" viewBox="0 0 24 24" width="48" height="48" fill="var(--fd-folder-fill, #5f6368)"><path fill="var(--fd-folder-fill, #5f6368)" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>`,
             image:  `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5A1.5 1.5 0 1 1 8.5 10a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z" fill="${c[0]}"/></svg>`,
             video:  `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z" fill="${c[0]}"/></svg>`,
             audio:  `<svg viewBox="0 0 24 24" width="48" height="48"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z" fill="${c[0]}"/></svg>`,
@@ -3994,8 +3993,10 @@ const FileManager = (() => {
         const headerIcon = document.getElementById('details-header-icon');
         if (headerIcon) {
             if (type === 'folder') {
-                headerIcon.style.color = resolveFolderColor(data.color);
+                headerIcon.style.setProperty('--fd-folder-fill', resolveFolderColor(data.color));
+                headerIcon.style.color = '';
             } else {
+                headerIcon.style.removeProperty('--fd-folder-fill');
                 headerIcon.style.color = '';
             }
             headerIcon.innerHTML = getIcon(type, data.mime_type, data.name, type === 'folder' ? data.color : '');
@@ -4004,8 +4005,10 @@ const FileManager = (() => {
         // show large icon initially
         preview.innerHTML = getIconLarge(type, data.mime_type, data.name, type === 'folder' ? data.color : '');
         if (type === 'folder') {
-            preview.style.color = resolveFolderColor(data.color);
+            preview.style.setProperty('--fd-folder-fill', resolveFolderColor(data.color));
+            preview.style.color = '';
         } else {
+            preview.style.removeProperty('--fd-folder-fill');
             preview.style.color = '';
         }
         

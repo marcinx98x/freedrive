@@ -390,7 +390,7 @@ svg {
   fill: currentColor;
   flex-shrink: 0;
 }
-.nav-tree-folder.active .nav-tree-folder-link svg { fill: currentColor; }
+.nav-tree-folder.active .nav-tree-folder-link svg:not(.fd-folder-icon) { fill: currentColor; }
 
 .nav-divider {
   height: 1px;
@@ -831,6 +831,16 @@ svg {
   opacity: 0;
 }
 .file-icon svg { width: 20px; height: 20px; }
+
+/* Folder colour tint — beats fill: currentColor from nav/btn rules */
+svg.fd-folder-icon,
+svg.fd-folder-icon path {
+  fill: var(--fd-folder-fill, #5f6368) !important;
+}
+.nav-tree-folder-link svg.fd-folder-icon,
+.nav-tree-folder-link svg.fd-folder-icon path {
+  fill: var(--fd-folder-fill, #5f6368) !important;
+}
 .file-label {
   overflow: hidden;
   text-overflow: ellipsis;

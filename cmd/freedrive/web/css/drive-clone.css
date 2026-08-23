@@ -2600,7 +2600,6 @@ body {
 .app:not(.admin-mode) .folder-card .folder-chip-icon {
   flex: 0 0 auto;
   display: inline-flex;
-  color: inherit;
 }
 
 .app:not(.admin-mode) .folder-card .folder-chip-icon svg {
