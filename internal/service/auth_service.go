@@ -241,10 +241,38 @@ func (s *AuthService) ResetPasswordByEmail(ctx context.Context, email, newPasswo
 		return fmt.Errorf("hash password: %w", err)
 	}
 	user.PasswordHash = string(hash)
+	user.MustChangePassword = false
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return err
 	}
 	return s.RevokeAllUserSessions(ctx, user.ID)
+}
+
+// ChangePassword updates the password for an authenticated user and clears must_change_password.
+func (s *AuthService) ChangePassword(ctx context.Context, userID, currentPassword, newPassword, currentSessionID string) error {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return ErrInvalidCredentials
+	}
+	if err := s.CheckPassword(user, currentPassword); err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	user.PasswordHash = string(hash)
+	user.MustChangePassword = false
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return err
+	}
+	if currentSessionID != "" {
+		return s.RevokeOtherSessions(ctx, userID, currentSessionID)
+	}
+	return s.RevokeAllUserSessions(ctx, userID)
 }
 
 // ValidateAccessToken validates a JWT access token and returns the claims.

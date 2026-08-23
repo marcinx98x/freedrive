@@ -75,6 +75,8 @@ export const api = {
   getExplorerIntegrationStatus: () =>
     invoke<ExplorerIntegrationStatus>("get_explorer_integration_status"),
   getProfile: () => invoke<User>("get_profile"),
+  changePassword: (current_password: string, new_password: string) =>
+    invoke<{ status: string }>("change_password", { currentPassword: current_password, newPassword: new_password }),
   getStorageInfo: () => invoke<StorageInfo>("get_storage_info"),
   getSharedWithMe: () => invoke<SharedItem[]>("get_shared_with_me"),
   openServerUrl: (path?: string) => invoke<void>("open_server_url", { path }),

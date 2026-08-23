@@ -47,6 +47,13 @@ func Auth(authService *service.AuthService) func(next http.Handler) http.Handler
 				return
 			}
 
+			if user.MustChangePassword && !passwordChangeAllowedPath(r) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":"password change required","must_change_password":true}`))
+				return
+			}
+
 			deviceType := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Device-Type")))
 			if deviceType == domain.DeviceTypeMobile {
 				authService.SyncSessionDeviceMeta(r.Context(), claims.SessionID, service.DeviceInfo{
@@ -63,6 +70,24 @@ func Auth(authService *service.AuthService) func(next http.Handler) http.Handler
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+func passwordChangeAllowedPath(r *http.Request) bool {
+	path := r.URL.Path
+	switch {
+	case r.Method == http.MethodGet && path == "/api/v1/me":
+		return true
+	case r.Method == http.MethodPost && path == "/api/v1/me/password":
+		return true
+	case r.Method == http.MethodGet && path == "/api/v1/crypto/account":
+		return true
+	case r.Method == http.MethodPost && path == "/api/v1/crypto/account":
+		return true
+	case r.Method == http.MethodPut && path == "/api/v1/crypto/account":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -24,13 +24,14 @@ type User struct {
 	Suspended         bool       `json:"suspended"`
 	Email2FAEnabled   bool       `json:"email_2fa_enabled"`
 	LoginApprovalEnabled bool     `json:"login_approval_enabled"`
-	TotpEnabled       bool       `json:"totp_enabled"`
-	TotpSecret        string     `json:"-"`
-	TotpEnrolledAt    *time.Time `json:"totp_enrolled_at,omitempty"`
-	TwoFactorRequired bool       `json:"two_factor_required,omitempty" db:"-"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	TotpEnabled          bool       `json:"totp_enabled"`
+	TotpSecret           string     `json:"-"`
+	TotpEnrolledAt       *time.Time `json:"totp_enrolled_at,omitempty"`
+	MustChangePassword   bool       `json:"must_change_password"`
+	TwoFactorRequired    bool       `json:"two_factor_required,omitempty" db:"-"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	LastLoginAt          *time.Time `json:"last_login_at,omitempty"`
 }
 
 // RefreshToken stores a hashed refresh token for JWT rotation.

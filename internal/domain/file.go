@@ -27,6 +27,7 @@ type FileMeta struct {
 	MimeType      string
 	Name          string
 	EncryptedSize int64
+	CreatedAt     time.Time
 }
 
 // DuplicateGroup describes files sharing owner, name, and encrypted size.

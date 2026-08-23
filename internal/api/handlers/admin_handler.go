@@ -394,6 +394,23 @@ func (h *AdminHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// ForcePasswordResetAll handles POST /api/v1/admin/users/force-password-reset
+func (h *AdminHandler) ForcePasswordResetAll(w http.ResponseWriter, r *http.Request) {
+	n, err := h.userRepo.SetMustChangePasswordForAll(r.Context())
+	if err != nil {
+		writeError(w, "failed to force password reset", http.StatusInternalServerError)
+		return
+	}
+	if err := h.authService.RevokeAllSessions(r.Context()); err != nil {
+		writeError(w, "failed to revoke sessions", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":         "ok",
+		"users_affected": n,
+	})
+}
+
 // DeleteInvite handles DELETE /api/v1/admin/invites/{id}
 func (h *AdminHandler) DeleteInvite(w http.ResponseWriter, r *http.Request) {
 	inviteID := chi.URLParam(r, "id")

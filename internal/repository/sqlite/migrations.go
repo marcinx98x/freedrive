@@ -39,6 +39,7 @@ func runMigrations(db *sql.DB) error {
 		{16, migrationV16},
 		{17, migrationV17},
 		{18, migrationV18},
+		{19, migrationV19},
 	}
 
 	for _, m := range migrations {
@@ -480,4 +481,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(user_id, device_id);
 
 const migrationV18 = `
 ALTER TABLE users ADD COLUMN login_approval_enabled INTEGER NOT NULL DEFAULT 0;
+`
+
+const migrationV19 = `
+ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
 `

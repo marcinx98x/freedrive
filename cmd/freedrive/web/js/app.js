@@ -838,7 +838,12 @@ const App = (() => {
         if (API.isLoggedIn()) SidebarTree.init();
 
         if (API.isLoggedIn()) {
-            showApp();
+            const user = API.getUser();
+            if (user?.must_change_password) {
+                Auth.showForcePasswordForm();
+            } else {
+                showApp();
+            }
         } else {
             showAuth();
         }
@@ -1262,10 +1267,14 @@ const App = (() => {
     }
 
     async function showApp() {
+        const user = API.getUser();
+        if (user?.must_change_password) {
+            Auth.showForcePasswordForm();
+            return;
+        }
         document.getElementById('auth-screen').classList.add('hidden');
         document.getElementById('app').classList.remove('hidden');
 
-        const user = API.getUser();
         if (user) {
             // Prefer server profile over stale localStorage avatar/name cache.
             if (user.avatar_url) syncAvatarCache(user.avatar_url);

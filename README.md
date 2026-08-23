@@ -190,6 +190,7 @@ In the Drive UI, users with the `admin` role see a Security-style shield icon in
 Admin chrome:
 
 - Top bar title **Admin Panel**; the in-page header shows the active section name (Dashboard, Manage Users, Storage, …)
+- **Dashboard** shows live FreeDrive metrics: user count, encrypted file storage (with disk free as context), file count (+ created today), storage-by-type donut, and recent auth activity — no fake time-series or bandwidth tracking
 - Sidebar matches Drive nav styling; **Back to Drive** at the bottom returns to `/#/files`
 - Security nav icon matches the top-bar Security icon
 
@@ -222,7 +223,7 @@ Admin chrome:
 - Storage tools: purge trash (files + folders), list/purge duplicate blobs
 - Storage type breakdown across the instance (`images` / `videos` / `documents` / `audio` / `archives` / `other` by encrypted size); optional `?user_id=` for a single user
 - Trash auto-empty scheduler (`storage.trash_auto_empty`: 7 / 30 / 90 days or never)
-- Advanced (danger zone): reset all user sessions only — full data wipe is not available
+- Advanced (danger zone): reset all user sessions, or force a password reset for every user (they must set a new password at next sign-in); full data wipe is not available
 
 ### Security & Access Policy
 
@@ -554,8 +555,9 @@ Base path: `/api/v1`
 
 ### Protected (Authenticated)
 
-- `GET /me` — current user profile (includes `email_2fa_enabled`, `totp_enabled`)
+- `GET /me` — current user profile (includes `email_2fa_enabled`, `totp_enabled`, `must_change_password`)
 - `PATCH /me` — update username, avatar, or `email_2fa_enabled`
+- `POST /me/password` — change password (`current_password`, `new_password`; clears `must_change_password`)
 - `POST /me/totp/setup` — start authenticator enrollment (`secret`, `otpauth_url`, `qr`)
 - `POST /me/totp/confirm` — `{ code }` — enable TOTP and return one-time `backup_codes`
 - `POST /me/totp/disable` — `{ code }` or `{ password }` — disable authenticator
@@ -657,6 +659,7 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 - `PATCH /admin/users/{id}`
 - `DELETE /admin/users/{id}`
 - `POST /admin/users/{id}/reset-password`
+- `POST /admin/users/force-password-reset` — require all users to change password at next sign-in (revokes all sessions)
 - `POST /admin/users/{id}/revoke-sessions`
 - `POST /admin/users/send-2fa-reminder`
 - `POST /admin/sessions/revoke-all`
@@ -674,7 +677,7 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 - `GET /admin/backup/download/{filename}`
 - `POST /admin/backup/restore`
 - `DELETE /admin/backup/{filename}`
-- `GET /admin/storage/breakdown` — instance-wide (or `?user_id=`) file-type size breakdown
+- `GET /admin/storage/breakdown` — instance-wide (or `?user_id=`) file-type size breakdown plus `total_size`, `total_files`, `files_today`
 - `POST /admin/storage/purge-trash?days=30` — permanently delete trashed files (blobs + rows) and folder rows older than N days; `days=0` purges all trash. Response: `{ removed_files, removed_folders, freed_bytes }`. Background auto-empty uses the `storage.trash_auto_empty` setting (7 / 30 / 90 / never).
 - `GET /admin/storage/duplicates`
 - `POST /admin/storage/duplicates/purge`

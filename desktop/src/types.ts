@@ -39,6 +39,7 @@ export interface ExplorerIntegrationStatus {
 export type AppScreen =
   | "loading"
   | "signin"
+  | "force_password"
   | "welcome"
   | "wizard"
   | "main";
@@ -49,6 +50,7 @@ export interface User {
   username: string;
   role: string;
   avatar_url?: string;
+  must_change_password?: boolean;
 }
 
 export interface AuthState {

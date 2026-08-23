@@ -17,6 +17,7 @@ type UserRepository interface {
 	List(ctx context.Context) ([]domain.User, error)
 	UpdateUsedBytes(ctx context.Context, userID string, delta int64) error
 	Count(ctx context.Context) (int, error)
+	SetMustChangePasswordForAll(ctx context.Context) (int64, error)
 
 	// Refresh tokens
 	CreateRefreshToken(ctx context.Context, token *domain.RefreshToken) error

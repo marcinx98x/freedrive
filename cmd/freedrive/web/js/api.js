@@ -113,6 +113,15 @@ const API = (() => {
         }
 
         const data = await res.json().catch(() => ({}));
+        if (res.status === 403 && data.must_change_password) {
+            const user = getUser() || {};
+            user.must_change_password = true;
+            setUser(user);
+            if (typeof Auth !== 'undefined' && Auth.showForcePasswordForm) {
+                Auth.showForcePasswordForm();
+            }
+            throw new Error(data.error || 'password change required');
+        }
         if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
         return data;
     }
@@ -439,6 +448,7 @@ const API = (() => {
         revokeUserSessions: (id) => request('POST', `/admin/users/${id}/revoke-sessions`),
         sessions: () => request('GET', '/admin/sessions'),
         revokeAllSessions: () => request('POST', '/admin/sessions/revoke-all'),
+        forcePasswordResetAll: () => request('POST', '/admin/users/force-password-reset'),
         stats: () => request('GET', '/admin/stats'),
         createInvite: (data) => request('POST', '/admin/invites', data),
         resendInvite: (data) => request('POST', '/admin/invites/resend', data),
@@ -530,6 +540,11 @@ const API = (() => {
         myStorage,
         me,
         updateMe,
+        changePassword: (current_password, new_password, crypto_update) => request('POST', '/me/password', {
+            current_password,
+            new_password,
+            crypto_update: crypto_update || undefined,
+        }),
         loginApprovalStatus,
         totpSetup,
         totpConfirm,

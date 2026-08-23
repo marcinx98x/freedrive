@@ -551,6 +551,24 @@ impl ApiClient {
             .await
     }
 
+    pub async fn change_password(
+        &self,
+        current_password: &str,
+        new_password: &str,
+    ) -> AppResult<serde_json::Value> {
+        self.request_json(
+            reqwest::Method::POST,
+            "/me/password",
+            Some(serde_json::json!({
+                "current_password": current_password,
+                "new_password": new_password,
+            })),
+            false,
+            2,
+        )
+        .await
+    }
+
     pub async fn get_my_storage(&self) -> AppResult<StorageInfo> {
         self.request_json(reqwest::Method::GET, "/me/storage", None, false, 2)
             .await

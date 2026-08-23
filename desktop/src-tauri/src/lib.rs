@@ -115,6 +115,7 @@ pub fn run() {
             commands::open_drive_folder,
             commands::get_explorer_integration_status,
             commands::get_profile,
+            commands::change_password,
             commands::get_storage_info,
             commands::get_shared_with_me,
             commands::open_server_url,

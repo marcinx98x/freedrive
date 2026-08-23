@@ -84,6 +84,10 @@ func (h *AdminHandler) StorageBreakdown(w http.ResponseWriter, r *http.Request) 
 		"archives":  {Size: 0, Count: 0},
 		"other":     {Size: 0, Count: 0},
 	}
+	var totalSize int64
+	var filesToday int
+	now := time.Now().UTC()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	for _, m := range metas {
 		key := adminStorageCategory(m.MimeType, m.Name)
 		b := breakdown[key]
@@ -92,10 +96,18 @@ func (h *AdminHandler) StorageBreakdown(w http.ResponseWriter, r *http.Request) 
 		}
 		b.Size += m.EncryptedSize
 		b.Count++
+		totalSize += m.EncryptedSize
+		created := m.CreatedAt.UTC()
+		if !created.IsZero() && !created.Before(startOfDay) {
+			filesToday++
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"breakdown": breakdown,
+		"breakdown":   breakdown,
+		"total_size":  totalSize,
+		"total_files": len(metas),
+		"files_today": filesToday,
 	})
 }
 

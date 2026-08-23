@@ -17,6 +17,7 @@ export interface User {
   totp_enabled?: boolean;
   totp_enrolled_at?: string;
   two_factor_required?: boolean;
+  must_change_password?: boolean;
   created_at: string;
   updated_at: string;
   last_login_at?: string;

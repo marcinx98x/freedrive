@@ -96,6 +96,7 @@ const AdminPanel = (() => {
         drawerUserId: '',
         drawerBreakdown: null,
         storageBreakdown: null,
+        storageTotals: { total_size: 0, total_files: 0, files_today: 0 },
         storageUserPage: 1,
         storageUserPerPage: 25,
         activityFilters: {
@@ -559,6 +560,11 @@ const AdminPanel = (() => {
             case 'breakdown': {
                 const breakdownRes = await API.admin.storageBreakdown().catch(() => ({ breakdown: null }));
                 state.storageBreakdown = breakdownRes?.breakdown || null;
+                state.storageTotals = {
+                    total_size: asNumber(breakdownRes?.total_size, 0),
+                    total_files: asNumber(breakdownRes?.total_files, 0),
+                    files_today: asNumber(breakdownRes?.files_today, 0),
+                };
                 break;
             }
             default:
@@ -696,63 +702,35 @@ const AdminPanel = (() => {
         return emptyFileTypeBuckets();
     }
 
-    function generateStorageTrend() {
-        const now = Date.now();
-        const usedGb = asNumber(state.disk?.used_bytes || state.stats?.total_used, 0) / (1024 ** 3);
-        const result = [];
-        for (let i = 29; i >= 0; i -= 1) {
-            const t = new Date(now - i * 24 * 60 * 60 * 1000);
-            result.push({
-                date: t,
-                label: t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                value: Number(usedGb.toFixed(1)),
-            });
-        }
-        return result;
-    }
-
     function renderDashboardSection() {
         const users = state.users || [];
         const totalUsers = users.length;
         const buckets = estimateFileTypeBuckets() || {};
-        const totalFiles = Object.values(buckets).reduce((sum, b) => sum + asNumber(b.count, 0), 0);
-        
-        const totalUsed = asNumber(state.disk?.used_bytes || state.stats?.total_used, 0);
-        const totalCapacity = asNumber(state.disk?.total_bytes || state.stats?.total_quota, 0);
-        const storagePct = totalCapacity ? ((totalUsed / totalCapacity) * 100) : 0;
-        
+        const bucketSizeSum = Object.values(buckets).reduce((sum, b) => sum + asNumber(b.size, 0), 0);
+        const bucketCountSum = Object.values(buckets).reduce((sum, b) => sum + asNumber(b.count, 0), 0);
+
+        const totals = state.storageTotals || {};
+        const freedriveUsed = asNumber(totals.total_size, 0) || bucketSizeSum || asNumber(state.stats?.total_used, 0);
+        const totalFiles = asNumber(totals.total_files, 0) || bucketCountSum;
+        const filesToday = asNumber(totals.files_today, 0);
+
+        const diskTotal = asNumber(state.disk?.total_bytes, 0);
+        const diskFree = asNumber(state.disk?.free_bytes, 0);
+        const storagePct = diskTotal ? Math.min(100, (freedriveUsed / diskTotal) * 100) : 0;
+
         const today = new Date().toDateString();
         const usersToday = users.filter((u) => new Date(u.created_at || 0).toDateString() === today).length;
-        const filesToday = 0;
 
         const breakdown = [
-            { label: 'Images', ...(buckets.Images || {size:0, count:0, color:'#1967D2'}) },
-            { label: 'Videos', ...(buckets.Videos || {size:0, count:0, color:'#188038'}) },
-            { label: 'Documents', ...(buckets.Documents || {size:0, count:0, color:'#E37400'}) },
-            { label: 'Other', ...(buckets.Other || {size:0, count:0, color:'#5F6368'}) },
+            { label: 'Images', ...(buckets.Images || { size: 0, count: 0, color: '#1967D2' }) },
+            { label: 'Videos', ...(buckets.Videos || { size: 0, count: 0, color: '#188038' }) },
+            { label: 'Documents', ...(buckets.Documents || { size: 0, count: 0, color: '#E37400' }) },
+            { label: 'Audio', ...(buckets.Audio || { size: 0, count: 0, color: '#F59E0B' }) },
+            { label: 'Archives', ...(buckets.Archives || { size: 0, count: 0, color: '#E53935' }) },
+            { label: 'Other', ...(buckets.Other || { size: 0, count: 0, color: '#5F6368' }) },
         ];
         const pieTotal = breakdown.reduce((sum, b) => sum + b.size, 0) || 1;
         const nonZeroBreakdown = breakdown.filter((b) => b.size > 0);
-
-        let lineData = [];
-        try { lineData = generateStorageTrend() || []; } catch(e) {}
-        if(lineData.length === 0) lineData = [{value:0, label:'', x:0, y:0}];
-        
-        const lineMin = Math.min(...lineData.map((p) => p.value));
-        const lineMax = Math.max(...lineData.map((p) => p.value));
-        const chartW = 760;
-        const chartH = 250;
-        const padX = 32;
-        const padY = 20;
-        const usableW = chartW - (padX * 2);
-        const usableH = chartH - (padY * 2);
-        
-        const linePoints = lineData.map((p, idx) => {
-            const x = padX + ((idx / Math.max(1, lineData.length - 1)) * usableW);
-            const y = chartH - padY - (((p.value - lineMin) / Math.max(1, (lineMax - lineMin))) * usableH);
-            return { ...p, x, y };
-        });
-        const linePath = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${(p.x||0).toFixed(2)} ${(p.y||0).toFixed(2)}`).join(' ');
 
         let angle = 0;
         const donutStops = (nonZeroBreakdown.length ? nonZeroBreakdown : [{ label: 'Empty', size: 1, color: '#DADCE0' }]).map((b) => {
@@ -770,7 +748,7 @@ const AdminPanel = (() => {
                     <p class="gd-storage-hero-subtitle">Summary of your FreeDrive workspace.</p>
                 </div>
 
-                <div class="gd-overview-grid">
+                <div class="gd-overview-grid gd-overview-grid-3">
                     <div class="gd-card gd-overview-card">
                         <div class="gd-metric-icon" style="color: #1967D2; background: #E8F0FE;">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5s-3 1.34-3 3 1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.98 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
@@ -786,9 +764,10 @@ const AdminPanel = (() => {
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
                         </div>
                         <div class="gd-metric-content">
-                            <span class="gd-metric-label">Storage Used</span>
-                            <span class="gd-metric-value">${Components.formatSize(totalUsed)}</span>
-                            <div class="gd-mini-bar" style="margin-top:4px;"><div class="gd-mini-fill" style="width: ${Math.min(100, storagePct)}%; background:${storagePct > 80 ? '#D93025' : '#188038'};"></div></div>
+                            <span class="gd-metric-label">FreeDrive storage</span>
+                            <span class="gd-metric-value">${Components.formatSize(freedriveUsed)}</span>
+                            <div class="gd-mini-bar" style="margin-top:4px;"><div class="gd-mini-fill" style="width: ${storagePct}%; background:${storagePct > 80 ? '#D93025' : '#188038'};"></div></div>
+                            <span class="gd-metric-sub">${diskFree ? `${Components.formatSize(diskFree)} free on disk` : (diskTotal ? `of ${Components.formatSize(diskTotal)} disk capacity` : 'Encrypted file data')}</span>
                         </div>
                     </div>
                     <div class="gd-card gd-overview-card">
@@ -801,37 +780,28 @@ const AdminPanel = (() => {
                             <span class="gd-metric-sub">+${filesToday} today</span>
                         </div>
                     </div>
-                    <div class="gd-card gd-overview-card">
-                        <div class="gd-metric-icon" style="color: #D93025; background: #FCE8E6;">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M13 2.05v2.02A8.001 8.001 0 0 1 20 12h2c0-5-3.66-9.15-8.45-9.95zM11 2.05C6.22 2.86 2.56 7 2.56 12S6.22 21.14 11 21.95v-2.02A8.001 8.001 0 0 1 4.56 12 8.001 8.001 0 0 1 11 4.07V2.05zM12 8v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-                        </div>
-                        <div class="gd-metric-content">
-                            <span class="gd-metric-label">Bandwidth</span>
-                            <span class="gd-metric-value">—</span>
-                            <span class="gd-metric-sub">Not tracked yet</span>
-                        </div>
-                    </div>
                 </div>
 
                 <div class="gd-cards-layout" style="margin-top: 24px; flex-direction: row; flex-wrap: wrap;">
                     <div class="gd-card" style="flex: 2; min-width: 400px;">
                         <div class="gd-card-header">
                             <div class="gd-card-title-area">
-                                <h3>Storage usage over time</h3>
+                                <h3>Storage by type</h3>
                             </div>
                         </div>
-                        <div class="admin-chart-wrap" style="height: 250px; overflow: hidden; position: relative;">
-                            <svg class="admin-line-chart" viewBox="0 0 ${chartW} ${chartH}" style="width: 100%; height: 100%;">
-                                <path d="${linePath}" fill="none" stroke="#1A73E8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-                                <defs>
-                                    <linearGradient id="chartFade" x1="0" x2="0" y1="0" y2="1">
-                                        <stop offset="0%" stop-color="rgba(26,115,232,0.2)"/>
-                                        <stop offset="100%" stop-color="rgba(26,115,232,0)"/>
-                                    </linearGradient>
-                                </defs>
-                                ${linePoints.length > 0 ? `<path d="${linePath} L ${linePoints[linePoints.length-1].x} ${chartH-padY} L ${linePoints[0].x} ${chartH-padY} Z" fill="url(#chartFade)" opacity="0.5" />` : ''}
-                                ${linePoints.map((p) => `<circle cx="${p.x || 0}" cy="${p.y || 0}" r="4" fill="#1A73E8" class="gd-chart-dot" data-val="${p.label}: ${p.value}GB"><title>${p.label}: ${p.value}GB</title></circle>`).join('')}
-                            </svg>
+                        <div class="gd-dashboard-donut-wrap">
+                            <div class="gd-dashboard-donut" style="background: conic-gradient(${donutStops});" role="img" aria-label="Storage by file type"></div>
+                            <div class="gd-meter-legend gd-dashboard-donut-legend">
+                                ${(nonZeroBreakdown.length ? nonZeroBreakdown : breakdown).map((b) => `
+                                    <div class="gd-legend-item">
+                                        <div class="gd-legend-dot" style="background-color: ${b.color}"></div>
+                                        <div class="gd-legend-text">
+                                            <span class="gd-legend-label">${esc(b.label)}</span>
+                                            <span class="gd-legend-size">${Components.formatSize(b.size)} · ${asNumber(b.count, 0)}</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
                     </div>
 
@@ -1825,6 +1795,7 @@ const AdminPanel = (() => {
                 <p>These actions cannot be undone.</p>
                 <div class="danger-actions">
                     <button class="danger-outline-btn" data-admin-action="danger-reset-sessions">Reset all user sessions</button>
+                    <button class="danger-outline-btn" data-admin-action="danger-force-password-reset">Force password reset for all users</button>
                 </div>
             </div>
         `;
@@ -3018,6 +2989,31 @@ const AdminPanel = (() => {
                         Components.toast('All user sessions reset', 'success');
                     } catch (err) {
                         Components.toast(err?.message || 'Failed to reset sessions', 'error');
+                    }
+                    return;
+                }
+
+                if (action === 'danger-force-password-reset') {
+                    const ok = await Components.confirm(
+                        'Force password reset for all users',
+                        'Every user (including you) will be logged out and must set a new password at next sign-in. This cannot be undone.',
+                        'Force reset',
+                    );
+                    if (!ok) return;
+                    try {
+                        const res = await API.admin.forcePasswordResetAll();
+                        const n = res?.users_affected;
+                        Components.toast(
+                            n != null ? `Password reset required for ${n} user(s). Signing out…` : 'Password reset required. Signing out…',
+                            'success',
+                        );
+                        setTimeout(() => {
+                            API.clearAuth();
+                            window.location.hash = '#/login';
+                            window.location.reload();
+                        }, 800);
+                    } catch (err) {
+                        Components.toast(err?.message || 'Failed to force password reset', 'error');
                     }
                     return;
                 }

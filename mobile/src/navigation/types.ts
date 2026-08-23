@@ -26,6 +26,7 @@ export type RootStackParamList = {
     methodsAvailable?: string[];
   };
   LoginApproval: { challengeId: string };
+  ForceChangePassword: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   Search: { query: string };
   Recent: undefined;

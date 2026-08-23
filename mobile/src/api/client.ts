@@ -492,6 +492,11 @@ export const api = {
     request("POST", `/auth/login-approval/${id}/deny`),
 
   me: () => request<User>("GET", "/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ status: string; user?: User }>("POST", "/me/password", {
+      current_password,
+      new_password,
+    }),
   myStorage: () => request<StorageInfo>("GET", "/me/storage"),
 
   folderRoot: async (opts?: { page_size?: number; page_token?: string }) => {

@@ -1093,6 +1093,20 @@ pub async fn get_profile(state: State<'_, AppState>) -> Result<User, String> {
 }
 
 #[tauri::command]
+pub async fn change_password(
+    state: State<'_, AppState>,
+    current_password: String,
+    new_password: String,
+) -> Result<serde_json::Value, String> {
+    state
+        .api()
+        .map_err(|e| e.to_string())?
+        .change_password(&current_password, &new_password)
+        .await
+        .map_err(|e: crate::error::AppError| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_storage_info(state: State<'_, AppState>) -> Result<StorageInfo, String> {
     state
         .api()

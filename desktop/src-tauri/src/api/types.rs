@@ -15,6 +15,8 @@ pub struct User {
     pub role: String,
     #[serde(default)]
     pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub must_change_password: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

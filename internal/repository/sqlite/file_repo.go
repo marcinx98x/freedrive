@@ -565,7 +565,7 @@ func (r *FileRepo) SumAllEncryptedSize(ctx context.Context) (int64, error) {
 // SumEncryptedSizeByOwner so the category totals add up to used_bytes.
 func (r *FileRepo) ListFileMetaByOwner(ctx context.Context, ownerID string) ([]domain.FileMeta, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		"SELECT mime_type, name, encrypted_size FROM files WHERE owner_id = ? AND is_trashed = 0", ownerID)
+		"SELECT mime_type, name, encrypted_size, created_at FROM files WHERE owner_id = ? AND is_trashed = 0", ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +577,7 @@ func (r *FileRepo) ListFileMetaByOwner(ctx context.Context, ownerID string) ([]d
 // (admin storage breakdown across the whole instance).
 func (r *FileRepo) ListFileMetaAll(ctx context.Context) ([]domain.FileMeta, error) {
 	rows, err := r.reader.QueryContext(ctx,
-		"SELECT mime_type, name, encrypted_size FROM files WHERE is_trashed = 0")
+		"SELECT mime_type, name, encrypted_size, created_at FROM files WHERE is_trashed = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -589,7 +589,7 @@ func scanFileMetaRows(rows *sql.Rows) ([]domain.FileMeta, error) {
 	var metas []domain.FileMeta
 	for rows.Next() {
 		var m domain.FileMeta
-		if err := rows.Scan(&m.MimeType, &m.Name, &m.EncryptedSize); err != nil {
+		if err := rows.Scan(&m.MimeType, &m.Name, &m.EncryptedSize, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		metas = append(metas, m)

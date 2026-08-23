@@ -55,6 +55,16 @@
                 <div class="auth-error" id="reset-error" role="alert" aria-live="polite"></div>
                 <button type="submit" class="btn btn-primary btn-full" id="reset-btn"><span>Reset password</span><div class="btn-loader hidden"></div></button>
             </form>
+            <form id="force-password-form" class="auth-form hidden">
+                <p style="margin:0 0 16px;color:#5f6368;font-size:14px;line-height:1.45;text-align:center;">
+                    Your administrator requires you to set a new password before continuing.
+                </p>
+                <div class="form-group"><input type="password" id="force-pw-current" placeholder="Current password" required autocomplete="current-password"></div>
+                <div class="form-group"><input type="password" id="force-pw-new" placeholder="New password (min 6 chars)" required minlength="6" autocomplete="new-password"></div>
+                <div class="form-group"><input type="password" id="force-pw-confirm" placeholder="Confirm new password" required minlength="6" autocomplete="new-password"></div>
+                <div class="auth-error" id="force-pw-error" role="alert" aria-live="polite"></div>
+                <button type="submit" class="btn btn-primary btn-full" id="force-pw-btn"><span>Set new password</span><div class="btn-loader hidden"></div></button>
+            </form>
             <form id="confirm-email-form" class="auth-form hidden">
                 <p id="confirm-email-message" style="margin:0 0 16px;color:#5f6368;font-size:14px;line-height:1.45;text-align:center;">Confirming your new email address...</p>
                 <div class="auth-error" id="confirm-email-error" role="alert" aria-live="polite"></div>

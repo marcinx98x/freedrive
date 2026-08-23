@@ -444,6 +444,9 @@
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 16px;
 }
+.gd-overview-grid-3 {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
 .gd-overview-card {
     display: flex;
     align-items: center;
@@ -481,6 +484,27 @@
     font-size: 12px;
     color: #188038;
     margin-top: 4px;
+}
+
+.gd-dashboard-donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    padding: 16px 8px 8px;
+    flex-wrap: wrap;
+}
+.gd-dashboard-donut {
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    mask: radial-gradient(circle, transparent 48%, #000 49%);
+    -webkit-mask: radial-gradient(circle, transparent 48%, #000 49%);
+}
+.gd-dashboard-donut-legend {
+    flex: 1;
+    min-width: 180px;
+    margin-top: 0;
 }
 
 /* Recent Activity inside Dashboard */

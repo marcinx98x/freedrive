@@ -22,6 +22,7 @@ type UserHandler struct {
 	fileRepo        repository.FileRepository
 	emailChangeRepo repository.EmailChangeRepository
 	authService     *service.AuthService
+	cryptoService   *service.CryptoService
 }
 
 // NewUserHandler creates a new user handler.
@@ -30,12 +31,14 @@ func NewUserHandler(
 	fileRepo repository.FileRepository,
 	emailChangeRepo repository.EmailChangeRepository,
 	authService *service.AuthService,
+	cryptoService *service.CryptoService,
 ) *UserHandler {
 	return &UserHandler{
 		userRepo:        userRepo,
 		fileRepo:        fileRepo,
 		emailChangeRepo: emailChangeRepo,
 		authService:     authService,
+		cryptoService:   cryptoService,
 	}
 }
 
@@ -55,6 +58,68 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 
 	user.TwoFactorRequired = adminsettings.Require2FA()
 	writeJSON(w, http.StatusOK, user)
+}
+
+// ChangePassword handles POST /api/v1/me/password
+func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+		CryptoUpdate    *struct {
+			KeySalt            []byte `json:"key_salt"`
+			WrappedUEK         string `json:"wrapped_uek"`
+			WrappedUEKRecovery string `json:"wrapped_uek_recovery"`
+		} `json:"crypto_update"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeError(w, "current_password and new_password are required", http.StatusBadRequest)
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		writeError(w, "password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+
+	sessionID := middleware.GetSessionID(r.Context())
+	if err := h.authService.ChangePassword(r.Context(), userID, req.CurrentPassword, req.NewPassword, sessionID); err != nil {
+		if err == service.ErrInvalidCredentials {
+			writeError(w, "current password is incorrect", http.StatusUnauthorized)
+			return
+		}
+		writeError(w, "failed to change password", http.StatusInternalServerError)
+		return
+	}
+
+	if req.CryptoUpdate != nil && req.CryptoUpdate.WrappedUEK != "" && h.cryptoService != nil {
+		_ = h.cryptoService.UpdateAccount(
+			r.Context(),
+			userID,
+			req.CryptoUpdate.KeySalt,
+			req.CryptoUpdate.WrappedUEK,
+			req.CryptoUpdate.WrappedUEKRecovery,
+		)
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "must_change_password": false})
+		return
+	}
+	user.TwoFactorRequired = adminsettings.Require2FA()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"user":   user,
+	})
 }
 
 // UpdateMe handles PATCH /api/v1/me — updates username and/or avatar for the current user.

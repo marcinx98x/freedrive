@@ -93,6 +93,7 @@ const Auth = (() => {
         document.getElementById('login-approval-form')?.classList.add('hidden');
         document.getElementById('register-form')?.classList.add('hidden');
         document.getElementById('reset-form')?.classList.add('hidden');
+        document.getElementById('force-password-form')?.classList.add('hidden');
         document.getElementById('confirm-email-form')?.classList.add('hidden');
         document.getElementById('login-form')?.classList.remove('hidden');
         document.querySelector('.auth-tabs')?.classList.remove('hidden');
@@ -104,6 +105,34 @@ const Auth = (() => {
         clearFormError('login-error');
         clearFormError('twofa-error');
         clearFormError('login-approval-error');
+        clearFormError('force-pw-error');
+    }
+
+    function showForcePasswordForm(prefillCurrent = '') {
+        stopApprovalPoll();
+        document.getElementById('login-form')?.classList.add('hidden');
+        document.getElementById('register-form')?.classList.add('hidden');
+        document.getElementById('reset-form')?.classList.add('hidden');
+        document.getElementById('confirm-email-form')?.classList.add('hidden');
+        document.getElementById('twofa-form')?.classList.add('hidden');
+        document.getElementById('login-approval-form')?.classList.add('hidden');
+        document.querySelector('.auth-tabs')?.classList.add('hidden');
+        document.getElementById('force-password-form')?.classList.remove('hidden');
+        document.getElementById('auth-screen')?.classList.remove('hidden');
+        document.getElementById('app')?.classList.add('hidden');
+
+        const titleEl = document.querySelector('.auth-logo h1');
+        const subtitleEl = document.querySelector('.auth-logo .tagline');
+        if (titleEl) titleEl.textContent = 'Change password';
+        if (subtitleEl) subtitleEl.textContent = 'required by your administrator';
+
+        const currentInput = document.getElementById('force-pw-current');
+        if (currentInput && prefillCurrent) currentInput.value = prefillCurrent;
+        clearFormError('force-pw-error');
+        setTimeout(() => {
+            if (prefillCurrent) document.getElementById('force-pw-new')?.focus();
+            else currentInput?.focus();
+        }, 50);
     }
 
     function stopApprovalPoll() {
@@ -118,6 +147,7 @@ const Auth = (() => {
         document.getElementById('login-form')?.classList.add('hidden');
         document.getElementById('register-form')?.classList.add('hidden');
         document.getElementById('reset-form')?.classList.add('hidden');
+        document.getElementById('force-password-form')?.classList.add('hidden');
         document.getElementById('confirm-email-form')?.classList.add('hidden');
         document.getElementById('twofa-form')?.classList.add('hidden');
         document.querySelector('.auth-tabs')?.classList.add('hidden');
@@ -191,8 +221,74 @@ const Auth = (() => {
         if (password && window.CryptoSync?.ensureUnlockedAfterLogin) {
             await CryptoSync.ensureUnlockedAfterLogin(password);
         }
+        if (data.user.must_change_password) {
+            showForcePasswordForm(password || '');
+            return;
+        }
         Components.toast('Welcome back, ' + (data.user.username || data.user.email) + '!', 'success');
         App.showApp();
+    }
+
+    async function submitForcePasswordChange() {
+        const current = String(document.getElementById('force-pw-current')?.value || '');
+        const next = String(document.getElementById('force-pw-new')?.value || '');
+        const confirm = String(document.getElementById('force-pw-confirm')?.value || '');
+        const btn = document.getElementById('force-pw-btn');
+        clearFormError('force-pw-error');
+
+        if (!current || !next) {
+            const msg = 'Enter your current and new password';
+            setFormError('force-pw-error', msg);
+            return;
+        }
+        if (next.length < 6) {
+            const msg = 'Password must be at least 6 characters';
+            setFormError('force-pw-error', msg);
+            return;
+        }
+        if (next !== confirm) {
+            const msg = 'Passwords do not match';
+            setFormError('force-pw-error', msg);
+            return;
+        }
+
+        try {
+            if (btn) {
+                btn.disabled = true;
+                btn.querySelector('.btn-loader')?.classList.remove('hidden');
+                const span = btn.querySelector('span');
+                if (span) span.textContent = 'Saving...';
+            }
+            await API.changePassword(current, next);
+            try {
+                if (window.CryptoSync?.rewrapWithNewPassword) {
+                    await CryptoSync.rewrapWithNewPassword(current, next);
+                }
+            } catch (cryptoErr) {
+                console.warn('Crypto rewrap after password change failed:', cryptoErr);
+            }
+            try {
+                const me = await API.me();
+                API.setUser(me);
+            } catch {
+                const user = API.getUser() || {};
+                user.must_change_password = false;
+                API.setUser(user);
+            }
+            Components.toast('Password updated', 'success');
+            App.showApp();
+        } catch (err) {
+            const msg = friendlyAuthError(err);
+            setFormError('force-pw-error', msg);
+            Components.toast(msg, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.querySelector('.btn-loader')?.classList.add('hidden');
+                const span = btn.querySelector('span');
+                if (span) span.textContent = 'Set new password';
+            }
+        }
     }
 
     function setFormError(id, message) {
@@ -269,6 +365,11 @@ const Auth = (() => {
 
         document.getElementById('login-approval-back-btn')?.addEventListener('click', () => {
             showLoginForm();
+        });
+
+        document.getElementById('force-password-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await submitForcePasswordChange();
         });
 
         document.getElementById('twofa-send-email-btn')?.addEventListener('click', async () => {
@@ -553,5 +654,5 @@ const Auth = (() => {
         });
     }
 
-    return { init };
+    return { init, showForcePasswordForm };
 })();

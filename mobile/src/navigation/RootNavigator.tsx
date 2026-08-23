@@ -8,6 +8,7 @@ import { useAuth } from "../auth/AuthContext";
 import { FilePreviewScreen } from "../screens/FilePreviewScreen";
 import { LoginApprovalScreen } from "../screens/LoginApprovalScreen";
 import { LoginScreen } from "../screens/LoginScreen";
+import { ForceChangePasswordScreen } from "../screens/ForceChangePasswordScreen";
 import { RecentScreen } from "../screens/RecentScreen";
 import { SearchScreen } from "../screens/SearchScreen";
 import { TrashScreen } from "../screens/TrashScreen";
@@ -54,12 +55,13 @@ const linking: LinkingOptions<RootStackParamList> = {
 const PENDING_POLL_MS = 2500;
 
 export function RootNavigator() {
-  const { booting, signedIn } = useAuth();
+  const { booting, signedIn, user } = useAuth();
   const navRef = useRef<any>(null);
   const shownChallengeRef = useRef<string | null>(null);
+  const mustChangePassword = Boolean(user?.must_change_password);
 
   useEffect(() => {
-    if (!signedIn) return;
+    if (!signedIn || mustChangePassword) return;
     void registerForPushNotifications();
     const stopRetry = startPushRegistrationRetries();
 
@@ -75,10 +77,10 @@ export function RootNavigator() {
       sub.remove();
       stopRetry();
     };
-  }, [signedIn]);
+  }, [signedIn, mustChangePassword]);
 
   useEffect(() => {
-    if (!signedIn) {
+    if (!signedIn || mustChangePassword) {
       shownChallengeRef.current = null;
       return;
     }
@@ -136,7 +138,7 @@ export function RootNavigator() {
       if (timer) clearTimeout(timer);
       appSub.remove();
     };
-  }, [signedIn]);
+  }, [signedIn, mustChangePassword]);
 
   if (booting) {
     return (
@@ -147,13 +149,15 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navRef} theme={navTheme} linking={signedIn ? linking : undefined}>
+    <NavigationContainer ref={navRef} theme={navTheme} linking={signedIn && !mustChangePassword ? linking : undefined}>
       <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
         {!signedIn ? (
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="TwoFactor" component={TwoFactorScreen} />
           </>
+        ) : mustChangePassword ? (
+          <Stack.Screen name="ForceChangePassword" component={ForceChangePasswordScreen} />
         ) : (
           <>
             <Stack.Screen name="Main" component={MainTabs} />
