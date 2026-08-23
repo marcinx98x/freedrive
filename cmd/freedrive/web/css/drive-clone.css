@@ -1888,6 +1888,16 @@ body {
 
 .app:not(.admin-mode) .property-item {
   border-bottom: 1px solid #f1f3f6 !important;
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+
+.app:not(.admin-mode) .details-versions-btn {
+  color: #5f6368 !important;
+}
+
+.app:not(.admin-mode) .details-versions-btn:hover {
+  background: rgba(60, 64, 67, 0.08) !important;
 }
 
 .app:not(.admin-mode) .gd-home-list-header {

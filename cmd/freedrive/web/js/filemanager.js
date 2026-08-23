@@ -3785,20 +3785,48 @@ const FileManager = (() => {
         const { data, type } = payload;
         const desc = meta.descriptions[data.id] || '';
         const locationLabel = buildLocationLabel(data.folder_id);
-        const ownerName = data.last_modified_by || itemOwner(data);
+        const me = getCurrentUser();
         const isFolder = type === 'folder';
         const stats = isFolder ? folderStatsCache.get(data.id) : null;
-        // sharedRows uses propRow — defined later in this function
-        const ICON_PERSON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`;
-        const ICON_CLOCK  = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>`;
-        const ICON_KEY    = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12.65 10A6 6 0 1 0 13 16h7v-2h-2v-2h-2v2h-1.35A6.003 6.003 0 0 0 12.65 10zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>`;
-        function sharedPropRow(iconSvg, label, valueHTML) {
-            return `<div class="property-item"><span class="property-icon">${iconSvg}</span><span class="property-content"><span class="property-label">${label}</span><span class="property-value">${valueHTML}</span></span></div>`;
+        const ownerIsMe = !!(data.owner_id && me.id && data.owner_id === me.id);
+        const ownerLabel = ownerIsMe ? 'me' : itemOwner(data);
+
+        const meNames = new Set(
+            [me.username, me.email, currentUserLabel(), 'me', 'you']
+                .filter(Boolean)
+                .map((s) => String(s).toLowerCase().trim()),
+        );
+        const rawModifiedBy = String(data.last_modified_by || '').trim();
+        let modifiedByLabel;
+        if (!rawModifiedBy) {
+            modifiedByLabel = ownerIsMe ? 'me' : itemOwner(data);
+        } else if (meNames.has(rawModifiedBy.toLowerCase())) {
+            modifiedByLabel = 'me';
+        } else {
+            modifiedByLabel = rawModifiedBy;
         }
+
+        const showVersionsBtn = !isFolder
+            && !isTrashMode(payload)
+            && canWriteFileItem(data);
+
+        function propRow(label, valueHTML, extraClass = '') {
+            return `<div class="property-item${extraClass ? ` ${extraClass}` : ''}">
+                <span class="property-content">
+                    <span class="property-label">${label}</span>
+                    <span class="property-value">${valueHTML}</span>
+                </span>
+            </div>`;
+        }
+
+        function sharedPropRow(label, valueHTML) {
+            return propRow(label, valueHTML);
+        }
+
         const sharedRows = currentPage === 'shared-with'
-            ? sharedPropRow(ICON_PERSON, 'Shared by',   esc(data.shared_by_name || 'User'))
-              + sharedPropRow(ICON_CLOCK,  'Date shared', Components.formatAbsoluteDate(data.shared_at || data.updated_at || data.created_at))
-              + sharedPropRow(ICON_KEY,    'Access',      esc(capitalizeRole(data.share_role || 'viewer')))
+            ? sharedPropRow('Shared by', esc(data.shared_by_name || 'User'))
+              + sharedPropRow('Date shared', Components.formatAbsoluteDate(data.shared_at || data.updated_at || data.created_at))
+              + sharedPropRow('Access', esc(capitalizeRole(data.share_role || 'viewer')))
             : '';
 
         function formatMimeType(mime, filename) {
@@ -3841,39 +3869,26 @@ const FileManager = (() => {
             ? (stats ? formatSizeStrict(stats.bytes) : 'Calculating...')
             : formatSizeStrict(data.size);
 
-        const ICONS = {
-            type:     `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>`,
-            size:     `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V6h5.17l2 2H20v10z"/></svg>`,
-            location: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>`,
-            owner:    `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
-            modified: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>`,
-            created:  `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>`,
-            desc:     `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M14 17H4v2h10v-2zm6-8H4v2h16V9zM4 15h16v-2H4v2zM4 5v2h16V5H4z"/></svg>`,
-            access:   `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zM8 11c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.98 1.97 3.45V19h7v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>`,
-        };
-
-        function propRow(iconKey, label, valueHTML) {
-            return `<div class="property-item">
-                <span class="property-icon">${ICONS[iconKey]}</span>
-                <span class="property-content">
-                    <span class="property-label">${label}</span>
-                    <span class="property-value">${valueHTML}</span>
+        const modifiedValue = `
+            <span class="property-modified-wrap">
+                <span class="property-modified-text">
+                    ${Components.formatAbsoluteDate(data.updated_at || data.created_at)}
+                    <br><span class="property-modified-by">by ${esc(modifiedByLabel)}</span>
                 </span>
-            </div>`;
-        }
+                ${showVersionsBtn ? `<button type="button" class="btn-icon details-versions-btn" id="details-versions-btn" title="Manage versions" aria-label="Manage versions"><span class="material-icons-outlined">history</span></button>` : ''}
+            </span>`;
 
         box.innerHTML = `
             <div class="details-section-title">Details</div>
-            ${propRow('type',     'Type',         esc(typeValue))}
-            ${propRow('size',     'Size',         esc(folderSizeValue))}
-            ${propRow('location', 'Location',     `<a href="#/files${data.folder_id ? `/${data.folder_id}` : ''}">${esc(locationLabel)}</a>`)}
-            ${propRow('owner',    'Owner',        esc(itemOwner(data)))}
+            ${propRow('Type',     esc(typeValue))}
+            ${propRow('Size',     esc(folderSizeValue))}
+            ${propRow('Location', `<a href="#/files${data.folder_id ? `/${data.folder_id}` : ''}">${esc(locationLabel)}</a>`)}
+            ${propRow('Owner',    esc(ownerLabel))}
             ${sharedRows}
-            ${propRow('modified', 'Modified',     `${Components.formatAbsoluteDate(data.updated_at || data.created_at)}<br><span style="color:#5f6368;font-size:12px;">by ${esc(ownerName)}</span>`)}
-            ${propRow('created',  'Created',      Components.formatAbsoluteDate(data.created_at))}
+            ${propRow('Modified', modifiedValue, 'property-item-modified')}
+            ${propRow('Created',  Components.formatAbsoluteDate(data.created_at))}
             <div class="panel-sep"></div>
             <div class="property-item">
-                <span class="property-icon">${ICONS.desc}</span>
                 <span class="property-content">
                     <span class="property-label">Description</span>
                     <textarea id="details-description" placeholder="Add a description">${esc(desc)}</textarea>
@@ -3884,6 +3899,12 @@ const FileManager = (() => {
         document.getElementById('details-description')?.addEventListener('change', (e) => {
             meta.descriptions[data.id] = e.target.value;
             saveMeta();
+        });
+
+        document.getElementById('details-versions-btn')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openVersionHistory(data);
         });
 
         if (isFolder && !folderStatsCache.has(data.id)) {

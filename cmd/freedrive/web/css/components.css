@@ -1559,23 +1559,8 @@
 .property-item {
     display: flex;
     align-items: flex-start;
-    padding: 12px 24px;
-    gap: 16px;
-}
-
-.property-icon {
-    display: flex;
-    color: #5f6368;
-    margin-top: 2px;
-    margin-right: 16px;
-    width: 24px;
-    height: 24px;
-    flex-shrink: 0;
-}
-
-.property-icon svg {
-    width: 24px;
-    height: 24px;
+    padding: 12px 16px;
+    gap: 0;
 }
 
 .property-content {
@@ -1583,6 +1568,7 @@
     flex-direction: column;
     gap: 2px;
     flex: 1;
+    min-width: 0;
 }
 
 .property-label {
@@ -1590,6 +1576,40 @@
     font-weight: 500;
     color: #5f6368;
     margin-bottom: 4px;
+}
+
+.property-modified-wrap {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+}
+
+.property-item-modified .property-value {
+    display: block;
+    width: 100%;
+}
+
+.property-modified-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.property-modified-by {
+    color: #5f6368;
+    font-size: 12px;
+}
+
+.details-versions-btn {
+    flex-shrink: 0;
+    color: #5f6368;
+    margin-top: -4px;
+}
+
+.details-versions-btn .material-icons-outlined {
+    font-size: 20px;
+    line-height: 1;
 }
 
 .property-value {

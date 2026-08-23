@@ -93,7 +93,7 @@ FreeDrive is ideal for:
 - Global live search in the top bar on every page
 - Advanced search panel (Drive-style filters: type, owner, location, modified, trash, starred, approvals, and more)
 - Context menus and keyboard shortcuts
-- File/Folder information side panel: Details tab shows preview, Who has access (Manage access), then properties; Activity tab for comments/approvals — no duplicate Share/Download/Rename/Delete actions in the panel (use context menu or selection bar)
+- File/Folder information side panel: Details tab shows preview, Who has access (Manage access), then properties (Owner/Modified use `me` / `by me` for your own items); history icon on Modified opens Manage versions for writable files; Activity tab for comments/approvals — no duplicate Share/Download/Rename/Delete actions in the panel
 
 ### 2. Sidebar: My Drive & Computers
 
@@ -124,7 +124,7 @@ FreeDrive is ideal for:
 
 - File version records are kept when content is updated (can be disabled in admin settings)
 - Configurable `keep_versions` retention per file
-- List versions per file
+- List versions per file (context menu Manage versions, or history control in the details panel Modified row)
 - Restore an earlier version
 
 ### 6. User Profile & Security
