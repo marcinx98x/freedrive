@@ -98,7 +98,7 @@ const AdminPanel = (() => {
         storageUserPage: 1,
         storageUserPerPage: 25,
         activityFilters: {
-            users: [],
+            userId: '',
             action: 'all',
             from: '',
             to: '',
@@ -320,6 +320,12 @@ const AdminPanel = (() => {
                 if (!allowed.has(String(state.activityFilters.action || ''))) {
                     state.activityFilters.action = 'all';
                 }
+                // Migrate legacy multi-select `users: []` → single `userId`
+                if (Array.isArray(state.activityFilters.users)) {
+                    state.activityFilters.userId = String(state.activityFilters.users[0] || '');
+                    delete state.activityFilters.users;
+                }
+                state.activityFilters.userId = String(state.activityFilters.userId || '');
             }
             if (raw.usersFilter) state.usersFilter = raw.usersFilter;
             if (raw.usersPerPage) state.usersPerPage = asNumber(raw.usersPerPage, state.usersPerPage);
@@ -1177,33 +1183,6 @@ const AdminPanel = (() => {
                 </div>
 
                 <div class="gd-cards-layout">
-                    <!-- Clean Up Suggestions Card -->
-                    <div class="gd-card gd-cleanup-card">
-                        <div class="gd-card-header">
-                            <div class="gd-card-icon-wrap" style="background-color: #E8F0FE; color: #1967D2;">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M15 2H9c-1.1 0-2 .9-2 2v2H3v2h18V6h-4V4c0-1.1-.9-2-2-2zM9 4h6v2H9V4zm3 16c-3.3 0-6-2.7-6-6h2c0 2.2 1.8 4 4 4s4-1.8 4-4-1.8-4-4-4v2l-3-3 3-3v2c3.3 0 6 2.7 6 6s-2.7 6-6 6z"/></svg>
-                            </div>
-                            <div class="gd-card-title-area">
-                                <h3>Clean up space</h3>
-                                <p>Review large files, trash, and duplicates to free up storage.</p>
-                            </div>
-                        </div>
-                        <div class="gd-cleanup-actions">
-                            <div class="gd-cleanup-item">
-                                <span>Trashed items older than 30 days</span>
-                                <button class="gd-btn-outline" data-admin-action="cleanup-trash">Review</button>
-                            </div>
-                            <div class="gd-cleanup-item">
-                                <span>Duplicate files</span>
-                                <button class="gd-btn-outline" data-admin-action="cleanup-duplicates">Review</button>
-                            </div>
-                            <div class="gd-cleanup-item">
-                                <span>Never opened (90+ days)</span>
-                                <button class="gd-btn-outline" disabled title="Not available yet">Notify</button>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Usage by User Card -->
                     <div class="gd-card">
                         <div class="gd-card-header">
@@ -1348,7 +1327,11 @@ const AdminPanel = (() => {
             .map(decorateActivity)
             .filter((a) => {
                 if (!isAuthActivity(a.action)) return false;
-                if (filters.users.length && !filters.users.includes(String(a.user_id || a.username || ''))) return false;
+                if (filters.userId) {
+                    const uid = String(a.user_id || '');
+                    const uname = String(a.username || '');
+                    if (uid !== filters.userId && uname !== filters.userId) return false;
+                }
                 if (filters.action !== 'all' && String(a.action || '').toLowerCase() !== filters.action) return false;
                 if (filters.from) {
                     const fromTs = new Date(filters.from).getTime();
@@ -1379,10 +1362,15 @@ const AdminPanel = (() => {
         const pageMeta = paginate(list, state.activityPage, state.activityPerPage);
         state.activityPage = pageMeta.page;
 
-        const usersOpts = state.users.map((u) => {
-            const value = u.id || u.username;
-            return `<option value="${esc(value)}" ${state.activityFilters.users.includes(value) ? 'selected' : ''}>${esc(u.username || u.email)}</option>`;
-        }).join('');
+        const selectedUserId = String(state.activityFilters.userId || '');
+        const selectedUser = state.users.find((u) => String(u.id || u.username) === selectedUserId);
+        const usersOpts = [
+            `<option value="" ${!selectedUserId ? 'selected' : ''}>All users</option>`,
+            ...state.users.map((u) => {
+                const value = u.id || u.username;
+                return `<option value="${esc(value)}" ${selectedUserId === String(value) ? 'selected' : ''}>${esc(u.username || u.email)}</option>`;
+            }),
+        ].join('');
 
         const svgOk   = `<svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`;
         const svgFail = `<svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`;
@@ -1398,7 +1386,7 @@ const AdminPanel = (() => {
                     <div class="gd-filter-grid">
                         <div class="gd-input-group">
                             <label>Filter by user</label>
-                            <select class="gd-input" id="admin-activity-users" multiple size="3">
+                            <select class="gd-input" id="admin-activity-users">
                                 ${usersOpts}
                             </select>
                         </div>
@@ -1424,6 +1412,7 @@ const AdminPanel = (() => {
 
                     <div class="activity-filter-row">
                         <div class="activity-active-filters">
+                            ${selectedUserId ? `<button class="gd-filter-chip active" data-admin-action="clear-activity-filter" data-filter-key="user">${esc(selectedUser?.username || selectedUser?.email || selectedUserId)} ×</button>` : ''}
                             ${state.activityFilters.action !== 'all' ? `<button class="gd-filter-chip active" data-admin-action="clear-activity-filter" data-filter-key="action">${esc(state.activityFilters.action === 'failed_login' ? 'Failed login' : state.activityFilters.action)} ×</button>` : ''}
                             ${state.activityFilters.from ? `<button class="gd-filter-chip active" data-admin-action="clear-activity-filter" data-filter-key="from">From ${esc(state.activityFilters.from)} ×</button>` : ''}
                             ${state.activityFilters.to ? `<button class="gd-filter-chip active" data-admin-action="clear-activity-filter" data-filter-key="to">To ${esc(state.activityFilters.to)} ×</button>` : ''}
@@ -1828,7 +1817,6 @@ const AdminPanel = (() => {
                 <h4>Danger Zone</h4>
                 <p>These actions cannot be undone.</p>
                 <div class="danger-actions">
-                    <button class="danger-outline-btn" data-admin-action="danger-clear-trash">Clear all trash</button>
                     <button class="danger-outline-btn" data-admin-action="danger-reset-sessions">Reset all user sessions</button>
                     <input class="admin-input" id="danger-confirm-input" placeholder="Type WIPE to enable">
                     <button class="danger-outline-btn" id="danger-wipe-btn" data-admin-action="danger-wipe-data" disabled>Wipe all data</button>
@@ -2606,43 +2594,15 @@ const AdminPanel = (() => {
                     return;
                 }
 
-                if (action === 'cleanup-trash') {
-                    const ok = await Components.confirm('Empty trash older than 30 days', 'Trashed files and folders older than 30 days will be permanently deleted.', 'Empty');
-                    if (!ok) return;
-                    try {
-                        const res = await API.admin.purgeTrash(30);
-                        Components.toast(formatPurgeTrashResult(res), 'success');
-                        await load('storage', { force: true });
-                    } catch (err) {
-                        Components.toast(err?.message || 'Trash cleanup failed', 'error');
-                    }
-                    return;
-                }
-                if (action === 'cleanup-duplicates') {
-                    const ok = await Components.confirm('Remove duplicate files', 'In each duplicate group the newest copy is kept; older copies are permanently deleted.', 'Remove');
-                    if (!ok) return;
-                    try {
-                        const res = await API.admin.purgeDuplicates();
-                        Components.toast(`Removed ${res.removed_files || 0} duplicate file(s)`, 'success');
-                        await load('storage', { force: true });
-                    } catch (err) {
-                        Components.toast(err?.message || 'Duplicate cleanup failed', 'error');
-                    }
-                    return;
-                }
-                if (action === 'cleanup-notify') {
-                    return;
-                }
-
                 if (action === 'apply-activity-filters') {
                     const select = document.getElementById('admin-activity-users');
-                    const selected = Array.from(select?.selectedOptions || []).map((o) => o.value);
-                    state.activityFilters.users = selected;
+                    state.activityFilters.userId = String(select?.value || '');
                     const nextAction = String(document.getElementById('admin-activity-action')?.value || 'all');
                     state.activityFilters.action = ['all', 'login', 'failed_login'].includes(nextAction) ? nextAction : 'all';
                     state.activityFilters.from = String(document.getElementById('admin-activity-from')?.value || '');
                     state.activityFilters.to = String(document.getElementById('admin-activity-to')?.value || '');
                     state.activityPage = 1;
+                    saveLocalUiState();
                     renderSection();
                     return;
                 }
@@ -2673,9 +2633,11 @@ const AdminPanel = (() => {
                 }
                 if (action === 'clear-activity-filter') {
                     const key = btn.getAttribute('data-filter-key');
+                    if (key === 'user') state.activityFilters.userId = '';
                     if (key === 'action') state.activityFilters.action = 'all';
                     if (key === 'from') state.activityFilters.from = '';
                     if (key === 'to') state.activityFilters.to = '';
+                    saveLocalUiState();
                     renderSection();
                     return;
                 }
@@ -3040,19 +3002,6 @@ const AdminPanel = (() => {
                         return;
                     }
                     renderSection();
-                    return;
-                }
-
-                if (action === 'danger-clear-trash') {
-                    const ok = await Components.confirm('Clear all trash', 'This cannot be undone and all trashed files and folders will be permanently deleted.', 'Clear');
-                    if (!ok) return;
-                    try {
-                        const res = await API.admin.purgeTrash(0);
-                        Components.toast(formatPurgeTrashResult(res, 'Cleared'), 'success');
-                        await load('storage', { force: true });
-                    } catch (err) {
-                        Components.toast(err?.message || 'Failed to clear trash', 'error');
-                    }
                     return;
                 }
 

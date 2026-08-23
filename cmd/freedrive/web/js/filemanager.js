@@ -2574,10 +2574,15 @@ const FileManager = (() => {
             setElementHidden(actionMap.open_with, !showOpenWith);
             actionMap.open_with.style.display = showOpenWith ? '' : 'none';
         }
+        if (actionMap.versions) {
+            const showVersions = !inTrash && target && target.type === 'file' && canWriteFileItem(target.data);
+            setElementHidden(actionMap.versions, !showVersions);
+            actionMap.versions.style.display = showVersions ? '' : 'none';
+        }
 
         const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
         if (computerEntry) {
-            ['move', 'share', 'get_link', 'request_approval', 'copy', 'rename', 'offline', 'open_with', 'star', 'download'].forEach((action) => {
+            ['move', 'share', 'get_link', 'request_approval', 'copy', 'rename', 'offline', 'open_with', 'star', 'download', 'versions'].forEach((action) => {
                 if (actionMap[action]) {
                     setElementHidden(actionMap[action], true);
                     actionMap[action].style.display = 'none';
@@ -2781,6 +2786,11 @@ const FileManager = (() => {
                 return;
             case 'info':
                 openDetailsPanel({ type, data, isTrash });
+                return;
+            case 'versions':
+                if (type === 'file') {
+                    await openVersionHistory(data);
+                }
                 return;
             case 'download':
                 await downloadPayloadAsZip({ type, data });
@@ -6592,17 +6602,23 @@ const FileManager = (() => {
                 return;
             }
 
-            const body = versions.map((v) => {
-                return `
-                    <div class="share-existing-entry" style="grid-template-columns:1fr 110px 90px;">
-                        <div>Version ${v.version} · ${Components.formatDate(v.created_at)}</div>
-                        <span>${Components.formatSize(v.size)}</span>
-                        <button class="btn btn-secondary btn-sm" data-version="${v.version}">Restore</button>
-                    </div>
-                `;
-            }).join('');
+            const body = `
+                <p style="margin:0 0 12px;color:#5f6368;font-size:13px;">Restore a previous version. The current content is kept in history when versioning is enabled.</p>
+                <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;">
+                    ${versions.map((v) => `
+                        <div class="share-existing-entry" style="grid-template-columns:1fr 110px 90px;">
+                            <div>
+                                <div style="font-weight:500;">Version ${esc(String(v.version))}</div>
+                                <div style="font-size:12px;color:#5f6368;">${Components.formatDate(v.created_at)}</div>
+                            </div>
+                            <span>${Components.formatSize(v.size)}</span>
+                            <button class="btn btn-secondary btn-sm" data-version="${esc(String(v.version))}">Restore</button>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
 
-            Components.showModal('Version history', body, [{ text: 'Close' }]);
+            Components.showModal('Manage versions', body, [{ text: 'Close' }]);
             setTimeout(() => {
                 document.querySelectorAll('[data-version]').forEach((btn) => {
                     btn.addEventListener('click', async () => {
@@ -6612,6 +6628,12 @@ const FileManager = (() => {
                             Components.toast('Version restored', 'success');
                             Components.hideModal();
                             refresh();
+                            if (editorState?.file?.id === file.id) {
+                                try {
+                                    const updated = await API.files.get(file.id);
+                                    if (updated) openFile(updated);
+                                } catch { /* ignore reopen errors */ }
+                            }
                         } catch (err) {
                             Components.toast(`Restore failed: ${err.message}`, 'error');
                         }
