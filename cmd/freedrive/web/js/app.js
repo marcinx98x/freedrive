@@ -1210,6 +1210,7 @@ const App = (() => {
             });
         });
 
+        document.getElementById('selection-clear')?.addEventListener('click', () => FileManager.clearSelection());
         document.getElementById('bulk-share')?.addEventListener('click', () => FileManager.bulkShare());
         document.getElementById('bulk-download')?.addEventListener('click', () => FileManager.bulkDownload());
         document.getElementById('bulk-move')?.addEventListener('click', () => FileManager.bulkMove());

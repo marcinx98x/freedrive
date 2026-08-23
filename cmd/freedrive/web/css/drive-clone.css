@@ -1010,8 +1010,8 @@ body {
 .app:not(.admin-mode) .selection-bar {
   height: 40px !important;
   margin: 4px 16px !important;
-  padding: 0 16px 0 20px !important;
-  gap: 12px !important;
+  padding: 0 12px 0 8px !important;
+  gap: 8px !important;
   border: none !important;
   border-bottom: none !important;
   border-radius: 999px !important;
@@ -1019,10 +1019,22 @@ body {
   box-sizing: border-box;
 }
 
+.app:not(.admin-mode) .selection-bar #selection-clear {
+  color: #001d35 !important;
+  flex-shrink: 0;
+}
+
+.app:not(.admin-mode) .selection-bar #selection-clear .material-icons-outlined,
+.app:not(.admin-mode) .selection-bar .selection-actions .btn-icon .material-icons-outlined {
+  font-size: 20px !important;
+  line-height: 1;
+}
+
 .app:not(.admin-mode) .selection-bar #selection-count {
   color: #001d35 !important;
   font-weight: 500 !important;
   flex-shrink: 0;
+  margin-right: 4px;
 }
 
 .app:not(.admin-mode) .selection-bar .selection-actions {
@@ -1032,6 +1044,10 @@ body {
 
 .app:not(.admin-mode) .selection-bar .selection-actions .btn-icon {
   color: #001d35 !important;
+}
+
+.app:not(.admin-mode) .selection-bar .selection-actions .btn-icon.danger-icon {
+  color: #d93025 !important;
 }
 
 .app:not(.admin-mode) .selection-bar.hidden {

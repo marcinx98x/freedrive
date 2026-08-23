@@ -7118,6 +7118,7 @@ const FileManager = (() => {
         bulkMove,
         bulkDelete,
         bulkRestore,
+        clearSelection,
         showLargestFiles,
         hideDetailsPanel,
         shareSelectedItem,

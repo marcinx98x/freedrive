@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
 	"github.com/go-chi/chi/v5"
 )
@@ -388,45 +387,5 @@ func (h *AdminHandler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "failed to delete backup", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// WipeAllData handles POST /api/v1/admin/danger/wipe
-func (h *AdminHandler) WipeAllData(w http.ResponseWriter, r *http.Request) {
-	adminID := middleware.GetUserID(r.Context())
-	if adminID == "" {
-		writeError(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	var req struct {
-		Confirm string `json:"confirm"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(req.Confirm) != "WIPE" {
-		writeError(w, `confirmation must be "WIPE"`, http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
-	if h.diskStorage != nil {
-		paths, err := h.fileRepo.ListAllBlobPaths(ctx)
-		if err != nil {
-			writeError(w, "failed to list blobs", http.StatusInternalServerError)
-			return
-		}
-		for _, p := range paths {
-			_ = h.diskStorage.Delete(p)
-		}
-	}
-
-	if err := h.userRepo.WipeAllDataExcept(ctx, adminID); err != nil {
-		writeError(w, "wipe failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

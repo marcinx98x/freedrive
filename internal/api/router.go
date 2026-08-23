@@ -230,7 +230,6 @@ func NewRouter(
 				r.Get("/storage/breakdown", adminHandler.StorageBreakdown)
 				r.Get("/storage/duplicates", adminHandler.ListDuplicates)
 				r.Post("/storage/duplicates/purge", adminHandler.PurgeDuplicates)
-				r.Post("/danger/wipe", adminHandler.WipeAllData)
 			})
 		})
 

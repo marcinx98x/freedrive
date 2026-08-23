@@ -32,7 +32,6 @@ type UserRepository interface {
 	ListInvites(ctx context.Context) ([]domain.InviteLink, error)
 	DeleteInvite(ctx context.Context, id string) error
 	DeleteAllInvites(ctx context.Context) error
-	WipeAllDataExcept(ctx context.Context, keepUserID string) error
 }
 
 // EmailChangeRepository defines data access for email change tokens.

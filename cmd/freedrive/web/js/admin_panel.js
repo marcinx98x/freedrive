@@ -1818,8 +1818,6 @@ const AdminPanel = (() => {
                 <p>These actions cannot be undone.</p>
                 <div class="danger-actions">
                     <button class="danger-outline-btn" data-admin-action="danger-reset-sessions">Reset all user sessions</button>
-                    <input class="admin-input" id="danger-confirm-input" placeholder="Type WIPE to enable">
-                    <button class="danger-outline-btn" id="danger-wipe-btn" data-admin-action="danger-wipe-data" disabled>Wipe all data</button>
                 </div>
             </div>
         `;
@@ -3016,25 +3014,6 @@ const AdminPanel = (() => {
                     }
                     return;
                 }
-
-                if (action === 'danger-wipe-data') {
-                    const confirmWord = String(document.getElementById('danger-confirm-input')?.value || '').trim();
-                    if (confirmWord !== 'WIPE') {
-                        Components.toast('Type WIPE to proceed', 'warning');
-                        return;
-                    }
-                    const finalOk = await Components.confirm('Final confirmation', 'All files and user data will be irreversibly destroyed. Your admin account and settings are kept.', 'Wipe');
-                    if (!finalOk) return;
-                    try {
-                        await API.admin.wipeAllData();
-                        Components.toast('All data wiped', 'success');
-                        history.pushState(null, '', '/#/files');
-                        window.dispatchEvent(new Event('popstate'));
-                    } catch (err) {
-                        Components.toast(err?.message || 'Wipe failed', 'error');
-                    }
-                    return;
-                }
             });
         });
 
@@ -3094,16 +3073,6 @@ const AdminPanel = (() => {
                 }
                 renderSection();
             });
-        }
-
-        const wipeInput = document.getElementById('danger-confirm-input');
-        const wipeBtn = document.getElementById('danger-wipe-btn');
-        if (wipeInput && wipeBtn) {
-            const updateWipe = () => {
-                wipeBtn.disabled = String(wipeInput.value || '').trim() !== 'WIPE';
-            };
-            wipeInput.addEventListener('input', updateWipe);
-            updateWipe();
         }
 
         const shell = document.getElementById('admin-shell');

@@ -218,9 +218,10 @@ Admin chrome:
 - Save/retrieve admin settings (persisted to `data/settings.json`)
 - Run backup snapshot for admin settings
 - Scheduled settings backup (daily / weekly / monthly)
-- Storage tools: purge trash (files + folders), list/purge duplicate blobs, wipe all data (danger zone)
+- Storage tools: purge trash (files + folders), list/purge duplicate blobs
 - Storage type breakdown across the instance (`images` / `videos` / `documents` / `audio` / `archives` / `other` by encrypted size); optional `?user_id=` for a single user
 - Trash auto-empty scheduler (`storage.trash_auto_empty`: 7 / 30 / 90 days or never)
+- Advanced (danger zone): reset all user sessions only — full data wipe is not available
 
 ### Security & Access Policy
 
@@ -675,7 +676,6 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 - `POST /admin/storage/purge-trash?days=30` — permanently delete trashed files (blobs + rows) and folder rows older than N days; `days=0` purges all trash. Response: `{ removed_files, removed_folders, freed_bytes }`. Background auto-empty uses the `storage.trash_auto_empty` setting (7 / 30 / 90 / never).
 - `GET /admin/storage/duplicates`
 - `POST /admin/storage/duplicates/purge`
-- `POST /admin/danger/wipe`
 
 ### Health
 

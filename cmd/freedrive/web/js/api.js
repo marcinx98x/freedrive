@@ -459,7 +459,6 @@ const API = (() => {
         },
         restoreBackup: (filename) => request('POST', '/admin/backup/restore', { filename }),
         deleteBackup: (filename) => request('DELETE', `/admin/backup/${encodeURIComponent(filename)}`),
-        wipeAllData: () => request('POST', '/admin/danger/wipe', { confirm: 'WIPE' }),
     };
 
     const activity = {
