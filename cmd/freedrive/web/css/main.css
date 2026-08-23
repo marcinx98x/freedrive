@@ -569,15 +569,15 @@ svg {
 .selection-bar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   height: 48px;
   padding: 0 16px;
   background: #e8f0fe;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-#selection-count { font-size: 14px; font-weight: 500; color: #1a73e8; }
-.selection-actions { display: flex; gap: 4px; margin-left: auto; }
+#selection-count { font-size: 14px; font-weight: 500; color: #1a73e8; flex-shrink: 0; }
+.selection-actions { display: flex; gap: 4px; align-items: center; }
 
 /* ── Breadcrumb ── */
 .breadcrumb-bar {

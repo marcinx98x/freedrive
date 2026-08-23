@@ -506,25 +506,24 @@
     </div>
 
     <div class="context-menu hidden" id="context-menu">
-        <button class="context-item" data-action="open">Open</button>
-        <button class="context-item" data-action="open_with">Open with...</button>
+        <button class="context-item" data-action="open_with"><span class="context-item-icon material-icons-outlined">open_with</span><span class="context-item-label">Open with...</span></button>
         <div class="context-divider"></div>
-        <button class="context-item" data-action="share">Share</button>
-        <button class="context-item" data-action="get_link">Get link</button>
-        <button class="context-item" data-action="request_approval">Request approval</button>
+        <button class="context-item" data-action="share"><span class="context-item-icon material-icons-outlined">person_add</span><span class="context-item-label">Share</span></button>
+        <button class="context-item" data-action="get_link"><span class="context-item-icon material-icons-outlined">link</span><span class="context-item-label">Get link</span></button>
+        <button class="context-item" data-action="request_approval"><span class="context-item-icon material-icons-outlined">fact_check</span><span class="context-item-label">Request approval</span></button>
         <div class="context-divider"></div>
-        <button class="context-item" data-action="move">Move to</button>
-        <button class="context-item" data-action="star">Add to Starred</button>
-        <button class="context-item" data-action="offline">Add to Offline</button>
-        <button class="context-item" data-action="copy">Make a copy</button>
-        <button class="context-item" data-action="rename">Rename</button>
+        <button class="context-item" data-action="move"><span class="context-item-icon material-icons-outlined">drive_file_move</span><span class="context-item-label">Move to</span></button>
+        <button class="context-item" data-action="star"><span class="context-item-icon material-icons-outlined">star_outline</span><span class="context-item-label">Add to Starred</span></button>
+        <button class="context-item" data-action="offline"><span class="context-item-icon material-icons-outlined">offline_pin</span><span class="context-item-label">Add to Offline</span></button>
+        <button class="context-item" data-action="copy"><span class="context-item-icon material-icons-outlined">content_copy</span><span class="context-item-label">Make a copy</span></button>
+        <button class="context-item" data-action="rename"><span class="context-item-icon material-icons-outlined">drive_file_rename_outline</span><span class="context-item-label">Rename</span></button>
         <div class="context-divider"></div>
-        <button class="context-item" data-action="info">File information</button>
-        <button class="context-item" data-action="versions">Manage versions</button>
-        <button class="context-item" data-action="download">Download</button>
-        <button class="context-item" data-action="restore" id="ctx-restore" hidden aria-label="Restore">Restore</button>
+        <button class="context-item" data-action="info"><span class="context-item-icon material-icons-outlined">info</span><span class="context-item-label">File information</span></button>
+        <button class="context-item" data-action="versions"><span class="context-item-icon material-icons-outlined">history</span><span class="context-item-label">Manage versions</span></button>
+        <button class="context-item" data-action="download"><span class="context-item-icon material-icons-outlined">download</span><span class="context-item-label">Download</span></button>
+        <button class="context-item" data-action="restore" id="ctx-restore" hidden aria-label="Restore"><span class="context-item-icon material-icons-outlined">restore_from_trash</span><span class="context-item-label">Restore</span></button>
         <div class="context-divider"></div>
-        <button class="context-item danger" data-action="delete" id="ctx-delete" aria-label="Move to trash">Move to trash</button>
+        <button class="context-item danger" data-action="delete" id="ctx-delete" aria-label="Move to trash"><span class="context-item-icon material-icons-outlined">delete</span><span class="context-item-label">Move to trash</span></button>
     </div>
 
     <div class="modal-overlay hidden" id="modal-overlay">

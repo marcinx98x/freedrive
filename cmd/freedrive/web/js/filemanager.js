@@ -2473,6 +2473,10 @@ const FileManager = (() => {
         if (!el) return;
         el.title = label;
         el.setAttribute('aria-label', label);
+        const labelEl = el.querySelector?.('.context-item-label');
+        if (labelEl) {
+            labelEl.textContent = label;
+        }
     }
 
     function syncTrashActionLabels(target = contextTarget) {
@@ -2535,8 +2539,8 @@ const FileManager = (() => {
         const isFolder = target && target.type === 'folder';
         const allowed = inTrash
             ? new Set(isFolder
-                ? ['open', 'restore', 'info', 'delete']
-                : ['open', 'restore', 'info', 'download', 'delete'])
+                ? ['restore', 'info', 'delete']
+                : ['restore', 'info', 'download', 'delete'])
             : null;
 
         Object.entries(actionMap).forEach(([action, item]) => {
@@ -2548,20 +2552,16 @@ const FileManager = (() => {
         if (actionMap.delete) {
             const computerEntry = target && target.type === 'folder' && isComputerListEntry(target.data);
             if (computerEntry) {
-                actionMap.delete.textContent = 'Remove device';
                 setActionLabel(actionMap.delete, 'Remove device');
             } else {
-                actionMap.delete.textContent = inTrash ? TrashCopy.deleteForever : TrashCopy.moveToTrash;
-                setActionLabel(actionMap.delete, actionMap.delete.textContent);
+                setActionLabel(actionMap.delete, inTrash ? TrashCopy.deleteForever : TrashCopy.moveToTrash);
             }
         }
         if (actionMap.restore) {
-            actionMap.restore.textContent = TrashCopy.restore;
             setActionLabel(actionMap.restore, TrashCopy.restore);
         }
         if (actionMap.info) {
             const infoLabel = (target && target.type === 'folder') ? 'Folder information' : 'File information';
-            actionMap.info.textContent = infoLabel;
             setActionLabel(actionMap.info, infoLabel);
         }
         if (actionMap.request_approval) {
@@ -2591,7 +2591,7 @@ const FileManager = (() => {
         }
 
         if (inTrash) {
-            ['open', 'restore', 'download', 'info', 'delete'].forEach((action) => {
+            ['restore', 'download', 'info', 'delete'].forEach((action) => {
                 if (actionMap[action]) menu.appendChild(actionMap[action]);
             });
             menu.querySelectorAll('.context-divider').forEach((divider) => {
