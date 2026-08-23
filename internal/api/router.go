@@ -45,6 +45,7 @@ func NewRouter(
 	clientMutationRepo repository.ClientMutationRepository,
 	uploadSessionRepo repository.UploadSessionRepository,
 	loginApprovalService *service.LoginApprovalService,
+	bandwidthRepo repository.BandwidthRepository,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -63,13 +64,13 @@ func NewRouter(
 	}
 	loginApprovalHandler := handlers.NewLoginApprovalHandler(loginApprovalService)
 	sessionHandler := handlers.NewSessionHandler(authService)
-	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload, clientMutationRepo)
-	uploadHandler := handlers.NewUploadHandler(uploadSessionRepo, fileRepo, userRepo, fileService, diskStorage, accessService, maxUpload, dataDir)
+	fileHandler := handlers.NewFileHandler(fileService, fileRepo, diskStorage, maxUpload, clientMutationRepo, bandwidthRepo)
+	uploadHandler := handlers.NewUploadHandler(uploadSessionRepo, fileRepo, userRepo, fileService, diskStorage, accessService, maxUpload, dataDir, bandwidthRepo)
 	folderHandler := handlers.NewFolderHandler(folderService, clientMutationRepo)
 	computerHandler := handlers.NewComputerHandler(computerService, folderService, syncFeedService)
-	shareHandler := handlers.NewShareHandler(shareService, fileRepo, userRepo, diskStorage)
+	shareHandler := handlers.NewShareHandler(shareService, fileRepo, userRepo, diskStorage, bandwidthRepo)
 	commentHandler := handlers.NewCommentHandler(commentRepo, accessService, userRepo)
-	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, folderRepo, activityRepo, authService, passwordResetService, diskStorage, dataDir)
+	adminHandler := handlers.NewAdminHandler(userRepo, fileRepo, folderRepo, activityRepo, authService, passwordResetService, diskStorage, dataDir, bandwidthRepo)
 	userHandler := handlers.NewUserHandler(userRepo, fileRepo, emailChangeRepo, authService, cryptoService)
 	searchHandler := handlers.NewSearchHandler(searchRepo)
 	approvalHandler := handlers.NewApprovalHandler(approvalRepo, userRepo, accessService)

@@ -750,6 +750,7 @@ const AdminPanel = (() => {
         const diskTotal = asNumber(state.disk?.total_bytes, 0);
         const diskFree = asNumber(state.disk?.free_bytes, 0);
         const storagePct = diskTotal ? Math.min(100, (freedriveUsed / diskTotal) * 100) : 0;
+        const bandwidthMonth = asNumber(state.stats?.bandwidth_month, 0);
 
         const today = new Date().toDateString();
         const usersToday = users.filter((u) => new Date(u.created_at || 0).toDateString() === today).length;
@@ -763,7 +764,7 @@ const AdminPanel = (() => {
                     <p class="gd-storage-hero-subtitle">Summary of your FreeDrive workspace.</p>
                 </div>
 
-                <div class="gd-overview-grid gd-overview-grid-3">
+                <div class="gd-overview-grid">
                     <div class="gd-card gd-overview-card">
                         <div class="gd-metric-icon" style="color: #1967D2; background: #E8F0FE;">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5s-3 1.34-3 3 1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.98 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
@@ -793,6 +794,16 @@ const AdminPanel = (() => {
                             <span class="gd-metric-label">Files</span>
                             <span class="gd-metric-value">${totalFiles.toLocaleString('en-US')}</span>
                             <span class="gd-metric-sub">+${filesToday} today</span>
+                        </div>
+                    </div>
+                    <div class="gd-card gd-overview-card">
+                        <div class="gd-metric-icon" style="color: #D93025; background: #FCE8E6;">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M13 2.05v2.02A8.001 8.001 0 0 1 20 12h2c0-5-3.66-9.15-8.45-9.95zM11 2.05C6.22 2.86 2.56 7 2.56 12S6.22 21.14 11 21.95v-2.02A8.001 8.001 0 0 1 4.56 12 8.001 8.001 0 0 1 11 4.07V2.05zM12 8v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                        </div>
+                        <div class="gd-metric-content">
+                            <span class="gd-metric-label">Bandwidth</span>
+                            <span class="gd-metric-value">${Components.formatSize(bandwidthMonth)}</span>
+                            <span class="gd-metric-sub">This month</span>
                         </div>
                     </div>
                 </div>

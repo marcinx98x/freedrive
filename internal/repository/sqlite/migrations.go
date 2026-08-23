@@ -40,6 +40,7 @@ func runMigrations(db *sql.DB) error {
 		{17, migrationV17},
 		{18, migrationV18},
 		{19, migrationV19},
+		{20, migrationV20},
 	}
 
 	for _, m := range migrations {
@@ -485,4 +486,15 @@ ALTER TABLE users ADD COLUMN login_approval_enabled INTEGER NOT NULL DEFAULT 0;
 
 const migrationV19 = `
 ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+`
+
+const migrationV20 = `
+CREATE TABLE IF NOT EXISTS bandwidth_monthly (
+    user_id TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    upload_bytes INTEGER NOT NULL DEFAULT 0,
+    download_bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, year_month)
+);
+CREATE INDEX IF NOT EXISTS idx_bandwidth_monthly_ym ON bandwidth_monthly(year_month);
 `

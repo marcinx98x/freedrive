@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -25,6 +26,7 @@ type FileHandler struct {
 	storage      *storage.DiskStorage
 	maxUpload    int64
 	mutationRepo repository.ClientMutationRepository
+	bandwidth    repository.BandwidthRepository
 }
 
 // NewFileHandler creates a new file handler.
@@ -34,6 +36,7 @@ func NewFileHandler(
 	store *storage.DiskStorage,
 	maxUpload int64,
 	mutationRepo repository.ClientMutationRepository,
+	bandwidth repository.BandwidthRepository,
 ) *FileHandler {
 	return &FileHandler{
 		fileService:  fileService,
@@ -41,6 +44,25 @@ func NewFileHandler(
 		storage:      store,
 		maxUpload:    maxUpload,
 		mutationRepo: mutationRepo,
+		bandwidth:    bandwidth,
+	}
+}
+
+func (h *FileHandler) recordUpload(ctx context.Context, userID string, n int64) {
+	if h.bandwidth == nil || userID == "" || n <= 0 {
+		return
+	}
+	if err := h.bandwidth.AddUpload(ctx, userID, n); err != nil {
+		log.Printf("bandwidth upload user=%s bytes=%d: %v", userID, n, err)
+	}
+}
+
+func (h *FileHandler) recordDownload(ctx context.Context, userID string, n int64) {
+	if h.bandwidth == nil || userID == "" || n <= 0 {
+		return
+	}
+	if err := h.bandwidth.AddDownload(ctx, userID, n); err != nil {
+		log.Printf("bandwidth download user=%s bytes=%d: %v", userID, n, err)
 	}
 }
 
@@ -121,6 +143,7 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recordUpload(r.Context(), userID, encryptedSize)
 	writeJSON(w, http.StatusCreated, f)
 }
 
@@ -145,6 +168,7 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	defer reader.Close()
 
 	h.fileService.RecordDownload(r.Context(), userID, file.ID, file.Name)
+	h.recordDownload(r.Context(), userID, file.EncryptedSize)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
@@ -341,6 +365,8 @@ func (h *FileHandler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.recordDownload(r.Context(), userID, size)
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
@@ -403,6 +429,7 @@ func (h *FileHandler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recordUpload(r.Context(), userID, updated.EncryptedSize)
 	writeJSON(w, http.StatusOK, updated)
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ type ShareHandler struct {
 	fileRepo     repository.FileRepository
 	userRepo     repository.UserRepository
 	storage      *storage.DiskStorage
+	bandwidth    repository.BandwidthRepository
 }
 
 // NewShareHandler creates a share handler.
@@ -30,12 +32,14 @@ func NewShareHandler(
 	fileRepo repository.FileRepository,
 	userRepo repository.UserRepository,
 	store *storage.DiskStorage,
+	bandwidth repository.BandwidthRepository,
 ) *ShareHandler {
 	return &ShareHandler{
 		shareService: shareService,
 		fileRepo:     fileRepo,
 		userRepo:     userRepo,
 		storage:      store,
+		bandwidth:    bandwidth,
 	}
 }
 
@@ -234,6 +238,12 @@ func (h *ShareHandler) PublicLinkDownload(w http.ResponseWriter, r *http.Request
 	defer reader.Close()
 
 	_ = h.shareService.RecordLinkDownload(r.Context(), link.ID)
+
+	if h.bandwidth != nil && file.OwnerID != "" && file.EncryptedSize > 0 {
+		if err := h.bandwidth.AddDownload(r.Context(), file.OwnerID, file.EncryptedSize); err != nil {
+			log.Printf("bandwidth download user=%s bytes=%d: %v", file.OwnerID, file.EncryptedSize, err)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+file.Name+"\"")

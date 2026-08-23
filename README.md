@@ -191,7 +191,7 @@ In the Drive UI, users with the `admin` role see a Security-style shield icon in
 Admin chrome:
 
 - Top bar title **Admin Panel**; the in-page header shows the active section name (Dashboard, Manage Users, Storage, …)
-- **Dashboard** shows live FreeDrive metrics: user count, encrypted file storage (with disk free as context), file count (+ created today), a 30-day storage growth chart (cumulative from file upload dates), and recent auth activity — type breakdown lives under Storage
+- **Dashboard** shows live FreeDrive metrics: user count, encrypted file storage (with disk free as context), file count (+ created today), Bandwidth (encrypted upload+download this calendar month UTC), a 30-day storage growth chart (cumulative from file upload dates), and recent auth activity — type breakdown lives under Storage
 - Sidebar matches Drive nav styling; **Back to Drive** at the bottom returns to `/#/files`
 - Security nav icon matches the top-bar Security icon
 
@@ -664,7 +664,7 @@ For encrypted payloads **> 32 MiB**, clients open a session and send **8 MiB
 - `POST /admin/users/{id}/revoke-sessions`
 - `POST /admin/users/send-2fa-reminder`
 - `POST /admin/sessions/revoke-all`
-- `GET /admin/stats`
+- `GET /admin/stats` — `total_users`, `total_used`, `total_quota`, plus `bandwidth_month` / `bandwidth_month_upload` / `bandwidth_month_download` (encrypted transfer this UTC month)
 - `POST /admin/invites`
 - `POST /admin/invites/resend`
 - `GET /admin/invites`

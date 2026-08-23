@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,6 +39,7 @@ type UploadHandler struct {
 	fileService *service.FileService
 	disk        *storage.DiskStorage
 	access      *service.AccessService
+	bandwidth   repository.BandwidthRepository
 	maxUpload   int64
 	dataDir     string
 }
@@ -52,6 +54,7 @@ func NewUploadHandler(
 	access *service.AccessService,
 	maxUpload int64,
 	dataDir string,
+	bandwidth repository.BandwidthRepository,
 ) *UploadHandler {
 	h := &UploadHandler{
 		sessions:    sessions,
@@ -60,6 +63,7 @@ func NewUploadHandler(
 		fileService: fileService,
 		disk:        disk,
 		access:      access,
+		bandwidth:   bandwidth,
 		maxUpload:   maxUpload,
 		dataDir:     dataDir,
 	}
@@ -388,6 +392,12 @@ func (h *UploadHandler) finalize(ctx context.Context, session *domain.UploadSess
 	if err != nil {
 		_ = h.disk.Delete(blobPath)
 		return nil, err
+	}
+
+	if h.bandwidth != nil && session.EncryptedSize > 0 {
+		if bwErr := h.bandwidth.AddUpload(ctx, session.UserID, session.EncryptedSize); bwErr != nil {
+			log.Printf("bandwidth upload user=%s bytes=%d: %v", session.UserID, session.EncryptedSize, bwErr)
+		}
 	}
 
 	_ = h.sessions.Delete(ctx, session.ID)

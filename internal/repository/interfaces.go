@@ -245,3 +245,10 @@ type UploadSessionRepository interface {
 	DeleteExpired(ctx context.Context, now time.Time) ([]domain.UploadSession, error)
 	ListByUser(ctx context.Context, userID string) ([]domain.UploadSession, error)
 }
+
+// BandwidthRepository tracks monthly encrypted upload/download bytes per user.
+type BandwidthRepository interface {
+	AddUpload(ctx context.Context, userID string, bytes int64) error
+	AddDownload(ctx context.Context, userID string, bytes int64) error
+	SumMonth(ctx context.Context, yearMonth string) (uploadBytes, downloadBytes int64, err error)
+}

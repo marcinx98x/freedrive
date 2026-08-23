@@ -120,6 +120,7 @@ func main() {
 		clientMutationRepo,
 		sqlite.NewUploadSessionRepo(db),
 		loginApprovalService,
+		sqlite.NewBandwidthRepo(db),
 	)
 
 	server := &http.Server{

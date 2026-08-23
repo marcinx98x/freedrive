@@ -74,6 +74,7 @@ type AdminHandler struct {
 	fileRepo             repository.FileRepository
 	folderRepo           repository.FolderRepository
 	activityRepo         repository.ActivityRepository
+	bandwidthRepo        repository.BandwidthRepository
 	authService          *service.AuthService
 	passwordResetService *service.PasswordResetService
 	diskStorage          *storage.DiskStorage
@@ -90,6 +91,7 @@ func NewAdminHandler(
 	passwordResetService *service.PasswordResetService,
 	diskStorage *storage.DiskStorage,
 	dataDir string,
+	bandwidthRepo repository.BandwidthRepository,
 ) *AdminHandler {
 	if dataDir != "" {
 		adminSettingsMu.Lock()
@@ -102,6 +104,7 @@ func NewAdminHandler(
 		fileRepo:             fileRepo,
 		folderRepo:           folderRepo,
 		activityRepo:         activityRepo,
+		bandwidthRepo:        bandwidthRepo,
 		authService:          authService,
 		passwordResetService: passwordResetService,
 		diskStorage:          diskStorage,
@@ -479,10 +482,19 @@ func (h *AdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		totalQuota += u.QuotaBytes
 	}
 
+	var uploadMonth, downloadMonth int64
+	if h.bandwidthRepo != nil {
+		ym := time.Now().UTC().Format("2006-01")
+		uploadMonth, downloadMonth, _ = h.bandwidthRepo.SumMonth(r.Context(), ym)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_users": userCount,
-		"total_used":  totalUsed,
-		"total_quota": totalQuota,
+		"total_users":               userCount,
+		"total_used":                totalUsed,
+		"total_quota":               totalQuota,
+		"bandwidth_month":           uploadMonth + downloadMonth,
+		"bandwidth_month_upload":    uploadMonth,
+		"bandwidth_month_download":  downloadMonth,
 	})
 }
 
