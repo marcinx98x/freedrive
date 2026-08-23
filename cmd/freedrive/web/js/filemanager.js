@@ -378,9 +378,19 @@ const FileManager = (() => {
 
         const show = !!(folder && !isTrashMode({ type: 'folder', data: folder }) && !isComputerListEntry(folder));
         setElementHidden(section, !show);
-        if (!show) return;
+        if (!show) {
+            delete grid.dataset.folderId;
+            delete grid.dataset.currentColor;
+            return;
+        }
 
         const current = resolveFolderColor(folder.color).toLowerCase();
+        // Avoid wiping swatches on focusin/hover — that races with click and drops the event.
+        if (grid.dataset.folderId === String(folder.id) && grid.dataset.currentColor === current && grid.childElementCount) {
+            return;
+        }
+        grid.dataset.folderId = String(folder.id);
+        grid.dataset.currentColor = current;
         grid.innerHTML = FOLDER_COLORS.map((hex) => {
             const raw = hex.replace(/^#/, '');
             const selected = hex.toLowerCase() === current ? ' is-selected' : '';
@@ -388,13 +398,17 @@ const FileManager = (() => {
         }).join('');
     }
 
+    let folderColourApplyInFlight = false;
+
     async function applyFolderColourFromSwatch(btn) {
         if (!btn || !contextTarget || contextTarget.type !== 'folder') return;
+        if (folderColourApplyInFlight) return;
         const folder = contextTarget.data;
         if (!folder?.id) return;
         const raw = String(btn.dataset.folderColor || '').replace(/^#/, '');
         const color = resolveFolderColor(raw ? `#${raw}` : '');
         const storeColor = color.toLowerCase() === DEFAULT_FOLDER_COLOR.toLowerCase() ? '' : color;
+        folderColourApplyInFlight = true;
         hideContextMenu();
         try {
             const updated = await API.folders.update(folder.id, { color: storeColor });
@@ -414,6 +428,8 @@ const FileManager = (() => {
             }
         } catch (err) {
             Components.toast(err?.message || 'Failed to update folder colour', 'error');
+        } finally {
+            folderColourApplyInFlight = false;
         }
     }
 
@@ -468,7 +484,11 @@ const FileManager = (() => {
         document.querySelectorAll('#context-menu .context-item.has-submenu').forEach((host) => {
             host.addEventListener('mouseenter', () => showContextSubmenu(host));
             host.addEventListener('mouseleave', () => scheduleHideContextSubmenu(host));
-            host.addEventListener('focusin', () => showContextSubmenu(host));
+            host.addEventListener('focusin', (e) => {
+                // Focusing a swatch/button inside the flyout must not rebuild the grid.
+                if (e.target.closest('.context-submenu')) return;
+                showContextSubmenu(host);
+            });
             host.addEventListener('click', (e) => {
                 if (e.target.closest('.context-submenu')) return;
                 e.preventDefault();
@@ -485,9 +505,20 @@ const FileManager = (() => {
             submenu?.addEventListener('mouseleave', () => scheduleHideContextSubmenu(host));
         });
 
-        document.getElementById('context-menu')?.addEventListener('click', async (e) => {
+        const contextMenuEl = document.getElementById('context-menu');
+        // pointerdown fires before focusin, so colour apply survives any residual DOM rebuild.
+        contextMenuEl?.addEventListener('pointerdown', (e) => {
+            if (e.button != null && e.button !== 0) return;
+            const colorBtn = e.target.closest('[data-folder-color]');
+            if (!colorBtn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            void applyFolderColourFromSwatch(colorBtn);
+        }, true);
+        contextMenuEl?.addEventListener('click', async (e) => {
             const colorBtn = e.target.closest('[data-folder-color]');
             if (colorBtn) {
+                // Usually already handled on pointerdown; guard against double PATCH.
                 e.preventDefault();
                 e.stopPropagation();
                 await applyFolderColourFromSwatch(colorBtn);
