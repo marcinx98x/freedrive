@@ -203,6 +203,7 @@ func NewRouter(
 				r.Use(middleware.RequireAdmin)
 
 				r.Get("/users", adminHandler.ListUsers)
+				r.Get("/users/avatars", adminHandler.ListUserAvatars)
 				r.Post("/users", adminHandler.CreateUser)
 				r.Patch("/users/{id}", adminHandler.UpdateUser)
 				r.Post("/users/send-2fa-reminder", adminHandler.Send2FAReminder)

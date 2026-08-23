@@ -82,6 +82,9 @@ const AdminPanel = (() => {
         activities: [],
         sessions: [],
         disk: {},
+        keyLoadedAt: {},
+        avatarsLoaded: false,
+        avatarsEnriching: false,
         userMeta: {},
         userSelection: new Set(),
         usersSearch: '',
@@ -112,6 +115,7 @@ const AdminPanel = (() => {
         settingsDirty: false,
         settingsErrors: {},
         settingsSavedUntil: 0,
+        settingsReady: false,
         invites: [],
         backups: [],
         initialized: false,
@@ -456,49 +460,151 @@ const AdminPanel = (() => {
 
     function ensureUserMeta() {
         state.users.forEach((u) => {
-            const userFiles = state.files.filter((f) => String(f.owner_id || f.user_id || '') === String(u.id));
             if (!state.userMeta[u.id]) {
                 state.userMeta[u.id] = {
                     status: u.suspended ? 'suspended' : 'active',
                     last_active: u.last_login_at || u.updated_at || u.created_at || nowISO(),
                     twofa: Boolean(u.email_2fa_enabled) || Boolean(u.totp_enabled),
-                    files_count: userFiles.length,
-                    bandwidth_month: asNumber(state.userMeta[u.id]?.bandwidth_month, 0),
+                    files_count: asNumber(state.userMeta[u.id]?.files_count, 0),
+                    bandwidth_month: 0,
                 };
             } else {
                 state.userMeta[u.id].last_active = state.userMeta[u.id].last_active || u.last_login_at || u.updated_at || u.created_at || nowISO();
-                state.userMeta[u.id].files_count = userFiles.length;
                 state.userMeta[u.id].bandwidth_month = asNumber(state.userMeta[u.id].bandwidth_month, 0);
                 state.userMeta[u.id].twofa = Boolean(u.email_2fa_enabled) || Boolean(u.totp_enabled);
+                state.userMeta[u.id].status = u.suspended ? 'suspended' : (state.userMeta[u.id].status || 'active');
             }
         });
     }
 
-    async function hydrateData() {
-        const [statsRes, usersRes, diskRes, activityRes, sessionsRes, filesRes, invitesRes, backupsRes, breakdownRes] = await Promise.all([
-            API.admin.stats().catch(() => ({})),
-            API.admin.users().catch(() => ({ users: [] })),
-            API.diskStats().catch(() => ({})),
-            API.admin.activity(1, 300).catch(() => ({ activities: [] })),
-            API.admin.sessions().catch(() => ({ sessions: [] })),
-            API.files.list({ page_size: '800' }).catch(() => ({ files: [] })),
-            API.admin.invites().catch(() => ({ invites: [] })),
-            API.admin.listBackups().catch(() => ({ backups: [] })),
-            API.admin.storageBreakdown().catch(() => ({ breakdown: null })),
-        ]);
+    const HYDRATE_TTL_MS = 60_000;
 
-        state.stats = statsRes.stats || statsRes || {};
-        state.users = Array.isArray(usersRes.users) ? usersRes.users : [];
-        state.disk = diskRes || {};
-        state.activities = Array.isArray(activityRes.activities) ? activityRes.activities : [];
-        state.sessions = Array.isArray(sessionsRes.sessions) ? sessionsRes.sessions : [];
-        state.files = Array.isArray(filesRes.files) ? filesRes.files : [];
-        state.invites = (Array.isArray(invitesRes.invites) ? invitesRes.invites : []).map(mapInviteRecord);
-        state.backups = Array.isArray(backupsRes.backups) ? backupsRes.backups : [];
-        state.storageBreakdown = breakdownRes?.breakdown || null;
+    function sectionHydrateKeys(section) {
+        switch (normalizeSection(section)) {
+            case 'dashboard':
+                return ['users', 'disk', 'stats', 'activity', 'breakdown'];
+            case 'users':
+                return ['users', 'invites'];
+            case 'storage':
+                return ['users', 'disk', 'stats', 'breakdown'];
+            case 'activity':
+                return ['users', 'activity'];
+            case 'security':
+                return ['users', 'sessions', 'activity'];
+            case 'settings':
+                return state.settingsTab === 'backup' ? ['backups'] : [];
+            default:
+                return ['users'];
+        }
+    }
 
-        ensureUserMeta();
+    function keyNeedsFetch(key, force) {
+        if (force) return true;
+        const loadedAt = state.keyLoadedAt[key];
+        if (!loadedAt) return true;
+        return (Date.now() - loadedAt) > HYDRATE_TTL_MS;
+    }
+
+    async function loadHydrateKey(key) {
+        switch (key) {
+            case 'users': {
+                const usersRes = await API.admin.users().catch(() => ({ users: [] }));
+                const prevById = new Map((state.users || []).map((u) => [String(u.id), u]));
+                state.users = (Array.isArray(usersRes.users) ? usersRes.users : []).map((u) => {
+                    const prev = prevById.get(String(u.id));
+                    if (prev?.avatar_url && !u.avatar_url) {
+                        return { ...u, avatar_url: prev.avatar_url };
+                    }
+                    return u;
+                });
+                ensureUserMeta();
+                break;
+            }
+            case 'disk': {
+                state.disk = await API.diskStats().catch(() => ({})) || {};
+                break;
+            }
+            case 'stats': {
+                const statsRes = await API.admin.stats().catch(() => ({}));
+                state.stats = statsRes.stats || statsRes || {};
+                break;
+            }
+            case 'activity': {
+                const activityRes = await API.admin.activity(1, 50).catch(() => ({ activities: [] }));
+                state.activities = Array.isArray(activityRes.activities) ? activityRes.activities : [];
+                break;
+            }
+            case 'sessions': {
+                const sessionsRes = await API.admin.sessions().catch(() => ({ sessions: [] }));
+                state.sessions = Array.isArray(sessionsRes.sessions) ? sessionsRes.sessions : [];
+                break;
+            }
+            case 'invites': {
+                const invitesRes = await API.admin.invites().catch(() => ({ invites: [] }));
+                state.invites = (Array.isArray(invitesRes.invites) ? invitesRes.invites : []).map(mapInviteRecord);
+                break;
+            }
+            case 'backups': {
+                const backupsRes = await API.admin.listBackups().catch(() => ({ backups: [] }));
+                state.backups = Array.isArray(backupsRes.backups) ? backupsRes.backups : [];
+                break;
+            }
+            case 'breakdown': {
+                const breakdownRes = await API.admin.storageBreakdown().catch(() => ({ breakdown: null }));
+                state.storageBreakdown = breakdownRes?.breakdown || null;
+                break;
+            }
+            default:
+                break;
+        }
+        state.keyLoadedAt[key] = Date.now();
+    }
+
+    async function fetchHydrateKeys(keys, { force = false } = {}) {
+        const unique = [...new Set(keys.filter(Boolean))];
+        const toLoad = unique.filter((key) => keyNeedsFetch(key, force));
+        if (!toLoad.length) return;
+        await Promise.all(toLoad.map((key) => loadHydrateKey(key)));
         saveLocalUiState();
+    }
+
+    async function hydrateForSection(section, { force = false } = {}) {
+        await fetchHydrateKeys(sectionHydrateKeys(section), { force });
+    }
+
+    /** @deprecated use hydrateForSection / fetchHydrateKeys */
+    async function hydrateData(force = true) {
+        await fetchHydrateKeys(
+            ['users', 'disk', 'stats', 'activity', 'sessions', 'invites', 'backups', 'breakdown'],
+            { force },
+        );
+    }
+
+    async function enrichUserAvatars() {
+        if (state.avatarsEnriching) return;
+        const needs = (state.users || []).some((u) => u.has_avatar && !String(u.avatar_url || '').trim());
+        if (!needs) {
+            state.avatarsLoaded = true;
+            return;
+        }
+        state.avatarsEnriching = true;
+        try {
+            const res = await API.admin.userAvatars().catch(() => ({ avatars: {} }));
+            const map = res.avatars || {};
+            let changed = false;
+            state.users = (state.users || []).map((u) => {
+                const url = map[u.id];
+                if (url && u.avatar_url !== url) {
+                    changed = true;
+                    return { ...u, avatar_url: url };
+                }
+                return u;
+            });
+            state.avatarsLoaded = true;
+            if (changed) renderSection();
+        } finally {
+            state.avatarsEnriching = false;
+        }
     }
 
     function mapInviteRecord(inv) {
@@ -585,18 +691,14 @@ const AdminPanel = (() => {
 
     function generateStorageTrend() {
         const now = Date.now();
+        const usedGb = asNumber(state.disk?.used_bytes || state.stats?.total_used, 0) / (1024 ** 3);
         const result = [];
         for (let i = 29; i >= 0; i -= 1) {
             const t = new Date(now - i * 24 * 60 * 60 * 1000);
-            const dayStart = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
-            const cumulativeBytes = state.files
-                .filter((f) => new Date(f.created_at || f.updated_at || 0).getTime() <= dayStart + (24 * 60 * 60 * 1000) - 1)
-                .reduce((sum, f) => sum + asNumber(f.size, 0), 0);
-            const gb = cumulativeBytes / (1024 ** 3);
             result.push({
                 date: t,
                 label: t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                value: Number(gb.toFixed(1)),
+                value: Number(usedGb.toFixed(1)),
             });
         }
         return result;
@@ -604,9 +706,9 @@ const AdminPanel = (() => {
 
     function renderDashboardSection() {
         const users = state.users || [];
-        const filesToUse = state.files || [];
         const totalUsers = users.length;
-        const totalFiles = filesToUse.length;
+        const buckets = estimateFileTypeBuckets() || {};
+        const totalFiles = Object.values(buckets).reduce((sum, b) => sum + asNumber(b.count, 0), 0);
         
         const totalUsed = asNumber(state.disk?.used_bytes || state.stats?.total_used, 0);
         const totalCapacity = asNumber(state.disk?.total_bytes || state.stats?.total_quota, 0);
@@ -614,9 +716,8 @@ const AdminPanel = (() => {
         
         const today = new Date().toDateString();
         const usersToday = users.filter((u) => new Date(u.created_at || 0).toDateString() === today).length;
-        const filesToday = filesToUse.filter((f) => new Date(f.created_at || 0).toDateString() === today).length;
+        const filesToday = 0;
 
-        const buckets = estimateFileTypeBuckets() || {};
         const breakdown = [
             { label: 'Images', ...(buckets.Images || {size:0, count:0, color:'#1967D2'}) },
             { label: 'Videos', ...(buckets.Videos || {size:0, count:0, color:'#188038'}) },
@@ -1023,12 +1124,12 @@ const AdminPanel = (() => {
         const buckets = estimateFileTypeBuckets();
         const typeTotal = Object.values(buckets).reduce((sum, x) => sum + x.size, 0) || 1;
 
-        const largeFiles = [...(state.files || [])].sort((a, b) => asNumber(b.size) - asNumber(a.size)).slice(0, 20);
+        const largeFiles = [];
         
         // Sort buckets for display: from largest to smallest, but keep "Other" at the end typically
         const sortedBuckets = Object.entries(buckets).sort((a, b) => b[1].size - a[1].size);
 
-        if (!state.users.length && !state.files.length) {
+        if (!state.users.length && !asNumber(used, 0)) {
             return renderNoData('No data available');
         }
 
@@ -1884,7 +1985,7 @@ const AdminPanel = (() => {
         bindSectionEvents();
     }
 
-    async function load(section = 'dashboard') {
+    async function load(section = 'dashboard', { force = false } = {}) {
         const me = getCurrentUser();
         if (String(me.role || '').toLowerCase() !== 'admin') {
             Components.toast('Admin access required', 'error');
@@ -1903,11 +2004,15 @@ const AdminPanel = (() => {
         renderShell();
         const root = getSectionRoot();
         if (root) root.innerHTML = renderSectionSkeleton(state.section);
-        await loadServerSettings();
-        await hydrateData();
+        const tasks = [hydrateForSection(state.section, { force })];
+        if (force || !state.settingsReady || state.section === 'settings') {
+            tasks.push(loadServerSettings().then(() => { state.settingsReady = true; }));
+        }
+        await Promise.all(tasks);
         state.loading = false;
         renderShell();
         renderSection();
+        enrichUserAvatars();
     }
 
     function closeAllRowMenus() {
@@ -1966,7 +2071,7 @@ const AdminPanel = (() => {
             try {
                 await API.admin.updateUser(userId, { role: role.toLowerCase() });
                 Components.toast('Role updated', 'success');
-                await load(state.section);
+                await load(state.section, { force: true });
             } catch (err) {
                 Components.toast(err?.message || 'Failed to update role', 'error');
             }
@@ -1980,7 +2085,7 @@ const AdminPanel = (() => {
             try {
                 await API.admin.updateUser(userId, { quota_bytes: Math.round(quota * (1024 ** 3)) });
                 Components.toast('Quota updated', 'success');
-                await load(state.section);
+                await load(state.section, { force: true });
             } catch (err) {
                 Components.toast(err?.message || 'Failed to update quota', 'error');
             }
@@ -1992,7 +2097,7 @@ const AdminPanel = (() => {
             try {
                 await API.admin.updateUser(userId, { suspended });
                 Components.toast(suspended ? 'User suspended' : 'User unsuspended', 'success');
-                await load(state.section);
+                await load(state.section, { force: true });
             } catch (err) {
                 Components.toast(err?.message || 'Failed to update user', 'error');
             }
@@ -2021,7 +2126,7 @@ const AdminPanel = (() => {
             });
             state.userSelection.delete(userId);
             Components.toast('User and all their files deleted', 'success');
-            await load(state.section);
+            await load(state.section, { force: true });
             return;
         }
     }
@@ -2228,7 +2333,7 @@ const AdminPanel = (() => {
                         }
                         API.admin.deleteInvite(row.id).then(async () => {
                             Components.toast('Invite cancelled', 'success');
-                            await hydrateData();
+                            await fetchHydrateKeys(['invites'], { force: true });
                             Components.hideModal();
                             openInviteModal();
                         }).catch((err) => {
@@ -2378,7 +2483,7 @@ const AdminPanel = (() => {
                         throw err;
                     });
                     Components.toast('User updated', 'success');
-                    await load('users');
+                    await load('users', { force: true });
                     state.drawerUserId = userId;
                     try {
                         const res = await API.admin.storageBreakdown(userId);
@@ -2400,7 +2505,7 @@ const AdminPanel = (() => {
                         await Promise.all([...state.userSelection].map((id) => API.admin.updateUser(id, { suspended: true })));
                         Components.toast('Selected users suspended', 'success');
                         state.userSelection.clear();
-                        await load(state.section);
+                        await load(state.section, { force: true });
                     } catch (err) {
                         Components.toast(err?.message || 'Failed to suspend users', 'error');
                     }
@@ -2425,7 +2530,7 @@ const AdminPanel = (() => {
                         }
                     }
                     state.userSelection.clear();
-                    await load('users');
+                    await load('users', { force: true });
                     if (failures.length && deleted === 0) {
                         Components.toast(failures[0], 'error');
                     } else if (failures.length) {
@@ -2443,7 +2548,7 @@ const AdminPanel = (() => {
                         await API.admin.updateUser(id, { role: role.toLowerCase() }).catch(() => {});
                     }
                     Components.toast('Role changed for selected users', 'success');
-                    await load('users');
+                    await load('users', { force: true });
                     return;
                 }
 
@@ -2455,7 +2560,7 @@ const AdminPanel = (() => {
                         await API.admin.updateUser(id, { quota_bytes: bytes }).catch(() => {});
                     }
                     Components.toast('Quota updated for selected users', 'success');
-                    await load('users');
+                    await load('users', { force: true });
                     return;
                 }
 
@@ -2497,7 +2602,7 @@ const AdminPanel = (() => {
                     if (!ok) return;
                     await API.files.delete(fileId).catch((err) => Components.toast(err.message, 'error'));
                     Components.toast('File moved to trash', 'success');
-                    await load('storage');
+                    await load('storage', { force: true });
                     return;
                 }
 
@@ -2507,7 +2612,7 @@ const AdminPanel = (() => {
                     try {
                         const res = await API.admin.purgeTrash(30);
                         Components.toast(formatPurgeTrashResult(res), 'success');
-                        await load('storage');
+                        await load('storage', { force: true });
                     } catch (err) {
                         Components.toast(err?.message || 'Trash cleanup failed', 'error');
                     }
@@ -2519,7 +2624,7 @@ const AdminPanel = (() => {
                     try {
                         const res = await API.admin.purgeDuplicates();
                         Components.toast(`Removed ${res.removed_files || 0} duplicate file(s)`, 'success');
-                        await load('storage');
+                        await load('storage', { force: true });
                     } catch (err) {
                         Components.toast(err?.message || 'Duplicate cleanup failed', 'error');
                     }
@@ -2625,6 +2730,7 @@ const AdminPanel = (() => {
                         await API.admin.revokeAllSessions();
                         const sessionsRes = await API.admin.sessions().catch(() => ({ sessions: [] }));
                         state.sessions = Array.isArray(sessionsRes.sessions) ? sessionsRes.sessions : [];
+                        state.keyLoadedAt.sessions = Date.now();
                         Components.toast('All sessions revoked', 'success');
                         renderSection();
                     } catch (err) {
@@ -2747,7 +2853,11 @@ const AdminPanel = (() => {
 
                 if (action === 'switch-settings-tab') {
                     state.settingsTab = btn.getAttribute('data-tab') || 'general';
-                    renderSection();
+                    if (state.settingsTab === 'backup') {
+                        fetchHydrateKeys(['backups']).then(() => renderSection());
+                    } else {
+                        renderSection();
+                    }
                     return;
                 }
 
@@ -2939,7 +3049,7 @@ const AdminPanel = (() => {
                     try {
                         const res = await API.admin.purgeTrash(0);
                         Components.toast(formatPurgeTrashResult(res, 'Cleared'), 'success');
-                        await load('storage');
+                        await load('storage', { force: true });
                     } catch (err) {
                         Components.toast(err?.message || 'Failed to clear trash', 'error');
                     }

@@ -416,6 +416,7 @@ const API = (() => {
 
     const admin = {
         users: () => request('GET', '/admin/users'),
+        userAvatars: () => request('GET', '/admin/users/avatars'),
         createUser: (data) => request('POST', '/admin/users', data),
         updateUser: (id, data) => request('PATCH', `/admin/users/${id}`, data),
         deleteUser: (id) => request('DELETE', `/admin/users/${id}`),

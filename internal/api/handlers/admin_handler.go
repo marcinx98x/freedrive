@@ -116,7 +116,65 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "failed to list users", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"users": slimAdminUsers(users)})
+}
+
+// ListUserAvatars handles GET /api/v1/admin/users/avatars
+func (h *AdminHandler) ListUserAvatars(w http.ResponseWriter, r *http.Request) {
+	users, err := h.userRepo.List(r.Context())
+	if err != nil {
+		writeError(w, "failed to list users", http.StatusInternalServerError)
+		return
+	}
+	avatars := make(map[string]string)
+	for _, u := range users {
+		if url := strings.TrimSpace(u.AvatarURL); url != "" {
+			avatars[u.ID] = url
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"avatars": avatars})
+}
+
+type adminUserListItem struct {
+	ID                   string      `json:"id"`
+	Email                string      `json:"email"`
+	Username             string      `json:"username"`
+	Role                 domain.Role `json:"role"`
+	QuotaBytes           int64       `json:"quota_bytes"`
+	UsedBytes            int64       `json:"used_bytes"`
+	HasAvatar            bool        `json:"has_avatar"`
+	Suspended            bool        `json:"suspended"`
+	Email2FAEnabled      bool        `json:"email_2fa_enabled"`
+	LoginApprovalEnabled bool        `json:"login_approval_enabled"`
+	TotpEnabled          bool        `json:"totp_enabled"`
+	TotpEnrolledAt       *time.Time  `json:"totp_enrolled_at,omitempty"`
+	CreatedAt            time.Time   `json:"created_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+	LastLoginAt          *time.Time  `json:"last_login_at,omitempty"`
+}
+
+func slimAdminUsers(users []domain.User) []adminUserListItem {
+	out := make([]adminUserListItem, 0, len(users))
+	for _, u := range users {
+		out = append(out, adminUserListItem{
+			ID:                   u.ID,
+			Email:                u.Email,
+			Username:             u.Username,
+			Role:                 u.Role,
+			QuotaBytes:           u.QuotaBytes,
+			UsedBytes:            u.UsedBytes,
+			HasAvatar:            strings.TrimSpace(u.AvatarURL) != "",
+			Suspended:            u.Suspended,
+			Email2FAEnabled:      u.Email2FAEnabled,
+			LoginApprovalEnabled: u.LoginApprovalEnabled,
+			TotpEnabled:          u.TotpEnabled,
+			TotpEnrolledAt:       u.TotpEnrolledAt,
+			CreatedAt:            u.CreatedAt,
+			UpdatedAt:            u.UpdatedAt,
+			LastLoginAt:          u.LastLoginAt,
+		})
+	}
+	return out
 }
 
 // CreateUser handles POST /api/v1/admin/users
@@ -408,7 +466,6 @@ func (h *AdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		"total_users": userCount,
 		"total_used":  totalUsed,
 		"total_quota": totalQuota,
-		"users":       users,
 	})
 }
 

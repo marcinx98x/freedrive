@@ -676,12 +676,14 @@ const FileManager = (() => {
             if (me.role === 'admin') {
                 const resp = await API.admin.users();
                 const users = resp.users || [];
+                const avatarRes = await API.admin.userAvatars().catch(() => ({ avatars: {} }));
+                const avatars = avatarRes.avatars || {};
                 users.forEach((u) => {
                     usersCache.push({
                         id: u.id,
                         email: u.email,
                         username: u.username,
-                        avatar_url: u.avatar_url,
+                        avatar_url: avatars[u.id] || u.avatar_url || '',
                         label: u.username ? `${u.username} (${u.email})` : u.email,
                     });
                 });
