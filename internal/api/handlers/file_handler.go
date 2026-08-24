@@ -327,6 +327,7 @@ func (h *FileHandler) GetVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"versions": versions,
+		"policy": map[string]interface{}{
 			"versioning":          adminsettings.VersioningEnabled(),
 			"keep_versions":       adminsettings.KeepVersions(),
 			"version_retain_days": adminsettings.VersionRetainDays(),

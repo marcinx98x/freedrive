@@ -102,4 +102,4 @@ powershell -File mobile\scripts\build-apk.ps1 -Clean
 
 Or after syncing to `C:\fdm`: `npx expo prebuild --platform android`, then `gradlew assembleRelease`.
 
-APK output for install: `mobile\dist\FreeDrive-1.0.0.apk` (debug-signed unless you configure a release keystore).
+APK output for install: `mobile\dist\FreeDrive-1.0.0.apk` (debug-signed unless you configure a release keystore). Current `versionCode` is in `app.json` (`expo.android.versionCode`; **52+** includes content-hash versioning on save).

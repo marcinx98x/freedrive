@@ -44,7 +44,7 @@ export function ForceChangePassword({ onSuccess, onLogout }: ForceChangePassword
     <div className="signin-layout">
       <div className="signin-left">
         <div className="signin-header">
-          <Logo size={36} />
+          <Logo />
         </div>
         <h1 className="signin-title">Change password</h1>
         <p className="signin-subtitle">

@@ -124,7 +124,8 @@ FreeDrive is ideal for:
 
 ### 5. Versioning Support
 
-- A historical version is created **only when file content changes** (SHA-256 of plaintext); identical saves and desktop re-uploads of the same bytes do not create versions
+- A historical version is created **only when file content changes** (SHA-256 of plaintext as `content_hash`); identical saves and desktop/mobile re-uploads of the same bytes do not create versions or rewrite the blob
+- Web, desktop, and mobile send `content_hash` on upload / content replace; **Upload new version** can force a snapshot even when bytes match
 - Configurable `keep_versions` count and `version_retain_days` (never / 7 / 30 / 90) — older versions are pruned on save and by a background job
 - List versions per file (Manage versions modal: policy blurb from admin settings, upload new version, Download / Restore from ⋮)
 - Restore an earlier version
@@ -612,7 +613,7 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 - `POST /files/{id}/approvals` — `{ approver_id?, approver_email? }` (requires write access)
 - `GET /files/{id}/download`
 - `PATCH /files/{id}`
-- `POST /files/{id}/content` — multipart replace encrypted blob (`file`, `name`, `mime_type`, `iv`, `original_size`); used by desktop sync and mobile text/image save
+- `POST /files/{id}/content` — multipart replace encrypted blob (`file`, `name`, `mime_type`, `iv`, `original_size`, optional `content_hash`, optional `force_version`); used by desktop sync and mobile text/image save; matching `content_hash` is a no-op (no new version)
 - `DELETE /files/{id}`
 - `POST /files/{id}/restore`
 - `DELETE /files/{id}/permanent`
@@ -729,8 +730,9 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **Stream (default)** keeps cloud placeholders (download on open, upload on close, then free local space); **Mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files); poll **removes** local placeholders after remote Move to bin so Explorer matches My Drive
 - **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, removes Explorer NameSpace/SyncRootManager pins, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder); prefer NSIS over MSI for this cleanup
-- Independent release tags: `desktop-v0.1.9` (server tags remain `v1.x.x`)
+- Independent release tags: `desktop-v0.1.27` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
+- **0.1.27+** — My Drive hydrate cache invalidates on remote `version`/`size` mismatch (sidecar `.meta`); plaintext download is atomic; Mirror refreshes when local size differs; uploads send `content_hash` so unchanged files do not create server versions
 
 Quick start (from repo root):
 
@@ -789,7 +791,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors; counter and image content pad above the Android system nav bar (same pattern as video)
 - **Video gallery** — swipe between videos in the same loaded list (active player only; safe-area padding above the system nav bar)
 - **Text / spreadsheet / PDF preview** — FilePreview editors also reserve bottom safe-area so controls and last lines are not covered by the system nav bar
-- **Edit & save** — text Edit/Save, sheet Edit/Save, and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content`
+- **Edit & save** — text Edit/Save, sheet Edit/Save, and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content` with `content_hash` so unchanged content does not create a new server version (APK **versionCode 52+**)
 - **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
 - **Status notifications** — no persistent “app running” foreground notification; status-bar icons only for downloads and while video is playing
 - Offline files are planned for later releases
