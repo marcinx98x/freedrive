@@ -4104,7 +4104,6 @@ const FileManager = (() => {
         if (!wrap) return;
         wrap.innerHTML = '';
 
-        const me = getCurrentUser();
         let entries = [];
         try {
             const data = await API.shares.sharedByMe();
@@ -4116,26 +4115,52 @@ const FileManager = (() => {
             entries = [];
         }
 
-        const names = [currentUserLabel()].concat(entries.map((item) => {
-            const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
-            return recipient?.label || recipient?.email || 'User';
-        }));
+        let myAvatar = getMyProfileAvatar();
+        if (!myAvatar) {
+            try {
+                myAvatar = localStorage.getItem('fd_profile_photo') || '';
+            } catch {
+                myAvatar = '';
+            }
+        }
 
-        names.slice(0, 6).forEach((name) => {
+        const people = [
+            { label: currentUserLabel(), avatarUrl: myAvatar },
+            ...entries.map((item) => {
+                const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
+                return {
+                    label: recipient?.label || recipient?.email || 'User',
+                    avatarUrl: String(recipient?.avatar_url || '').trim(),
+                };
+            }),
+        ];
+
+        people.slice(0, 6).forEach((person) => {
             const el = document.createElement('div');
-            el.className = 'access-avatar';
-            el.title = name;
-            el.textContent = Components.initials(name);
+            el.title = person.label;
+            const seed = String(person.label || 'U');
+            const hue = (seed.length * 137) % 360;
+            if (person.avatarUrl) {
+                el.className = 'access-avatar has-avatar';
+                const img = document.createElement('img');
+                img.src = person.avatarUrl;
+                img.alt = '';
+                el.appendChild(img);
+            } else {
+                el.className = 'access-avatar';
+                el.style.backgroundColor = `hsl(${hue},60%,50%)`;
+                el.textContent = Components.initials(person.label);
+            }
             wrap.appendChild(el);
         });
 
         const descEl = document.getElementById('access-desc');
         if (descEl) {
             if (entries.length) {
-                const extra = names.length > 6 ? ` +${names.length - 6} more` : '';
+                const extra = people.length > 6 ? ` +${people.length - 6} more` : '';
                 descEl.textContent = `Shared with ${entries.length} person${entries.length > 1 ? 's' : ''}${extra}`;
             } else {
-                descEl.textContent = me.role === 'admin' ? 'Only you (admin) have access' : 'Only you have access';
+                descEl.textContent = 'Private to you';
             }
         }
     }

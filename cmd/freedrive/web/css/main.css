@@ -1176,6 +1176,20 @@ svg.fd-folder-icon path {
   color: #fff;
   font-size: 12px;
   font-weight: 500;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.access-avatar.has-avatar {
+  background: transparent;
+  color: transparent;
+  padding: 0;
+}
+.access-avatar.has-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50%;
 }
 
 /* ── Notifications panel ── */
