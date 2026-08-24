@@ -303,6 +303,7 @@ export async function saveEncryptedContent(opts: {
       iv: ivB64,
       originalSize: opts.plaintext.length,
       encryptedUri: encPath,
+      contentHash: contentHashHex(opts.plaintext),
     });
   } finally {
     await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
