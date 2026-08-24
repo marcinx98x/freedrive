@@ -2770,7 +2770,7 @@ impl SyncEngine {
         };
         let result = crate::my_drive::upload_my_drive_path(&self.api, &self.db, path).await;
         self.release_my_drive_busy(result.is_err());
-        result
+        result.map(|_| ())
     }
 
     /// Explorer context menu: make My Drive path available offline (hydrate).

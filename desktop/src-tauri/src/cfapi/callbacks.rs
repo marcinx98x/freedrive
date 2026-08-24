@@ -11,7 +11,8 @@ use crate::db::DbHandle;
 use crate::error::AppResult;
 use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_directory_updated};
 use crate::my_drive::{
-    clear_hydrate_cache_for_file, ensure_hydrated_plaintext, fetch_folder_contents,
+    begin_fetch_data_inflight, clear_hydrate_cache_for_file, end_fetch_data_inflight,
+    ensure_hydrated_plaintext, fetch_folder_contents, is_fetch_data_inflight,
     is_path_under_active_free_up, is_under_my_drive, relative_path_from_sync_root,
     resolve_folder_id_for_fetch, resolve_my_drive_root_id, FolderIdSource,
 };
@@ -20,14 +21,16 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{NTSTATUS, STATUS_CLOUD_FILE_UNSUCCESSFUL, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
-    CfExecute, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS, CF_OPERATION_INFO,
-    CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_6,
-    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_TRANSFER_DATA,
+    CfExecute, CfReportProviderProgress, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS,
+    CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
+    CF_OPERATION_PARAMETERS_0_6, CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+    CF_OPERATION_TYPE_TRANSFER_DATA,
 };
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -70,6 +73,7 @@ struct CallbackContext {
 static CONTEXT: OnceLock<Mutex<Option<CallbackContext>>> = OnceLock::new();
 static APP_HANDLE: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();
 static CANCELLED_PLACEHOLDER_REQUESTS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+static CANCELLED_FETCH_DATA_REQUESTS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
 struct HydrateFailedPayload {
@@ -94,6 +98,10 @@ pub fn clear_app_handle() {
 
 fn cancelled_requests() -> &'static Mutex<HashSet<i64>> {
     CANCELLED_PLACEHOLDER_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cancelled_fetch_data_requests() -> &'static Mutex<HashSet<i64>> {
+    CANCELLED_FETCH_DATA_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn is_placeholder_request_cancelled(request_key: i64) -> bool {
@@ -124,6 +132,46 @@ fn clear_placeholder_request_cancelled(request_key: i64) {
     }
 }
 
+fn is_fetch_data_request_cancelled(request_key: i64) -> bool {
+    if request_key == 0 {
+        return false;
+    }
+    cancelled_fetch_data_requests()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&request_key))
+}
+
+fn mark_fetch_data_request_cancelled(request_key: i64) {
+    if request_key == 0 {
+        return;
+    }
+    if let Ok(mut set) = cancelled_fetch_data_requests().lock() {
+        set.insert(request_key);
+        if set.len() > 4096 {
+            set.clear();
+        }
+    }
+}
+
+fn clear_fetch_data_request_cancelled(request_key: i64) {
+    if request_key == 0 {
+        return;
+    }
+    if let Ok(mut set) = cancelled_fetch_data_requests().lock() {
+        set.remove(&request_key);
+    }
+}
+
+fn is_cloud_op_canceled(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("0x8007018e")
+        || lower.contains("canceled by user")
+        || lower.contains("cancelled by user")
+        || lower.contains("cloud operation was canceled")
+        || lower.contains("cloud operation was cancelled")
+}
+
 pub fn init_context(db: DbHandle, sync_root: PathBuf, api: ApiClient) {
     let slot = CONTEXT.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = slot.lock() {
@@ -143,6 +191,9 @@ pub fn clear_context() {
     }
     clear_app_handle();
     if let Ok(mut set) = cancelled_requests().lock() {
+        set.clear();
+    }
+    if let Ok(mut set) = cancelled_fetch_data_requests().lock() {
         set.clear();
     }
 }
@@ -251,6 +302,11 @@ pub unsafe extern "system" fn fetch_data(
     let result = std::panic::catch_unwind(|| handle_fetch_data(info, params));
     match result {
         Ok(Ok(())) => {}
+        Ok(Err(e)) if is_cloud_op_canceled(&e) => {
+            cfapi_callback_log(&format!(
+                "FETCH_DATA soft-cancel file={file_id}: {e}"
+            ));
+        }
         Ok(Err(e)) => {
             let mapped = map_fetch_data_error(&e);
             let detail = if file_id.is_empty() {
@@ -259,18 +315,49 @@ pub unsafe extern "system" fn fetch_data(
                 format!("file={file_id}: {mapped}")
             };
             log_callback_error("FETCH_DATA", &detail);
-            emit_hydrate_failed(&detail, &file_id);
-            if let Err(te) = fail_fetch_data(info, params) {
-                log_callback_error("TRANSFER_DATA", &te);
+            if !is_fetch_data_request_cancelled(info.RequestKey) {
+                emit_hydrate_failed(&detail, &file_id);
+                if let Err(te) = fail_fetch_data(info, params) {
+                    if !is_cloud_op_canceled(&te.to_string()) {
+                        log_callback_error("TRANSFER_DATA", &te);
+                    }
+                }
             }
         }
         Err(_) => {
             log_callback_error("FETCH_DATA", "callback panicked");
-            if let Err(te) = fail_fetch_data(info, params) {
-                log_callback_error("TRANSFER_DATA", &te);
+            if !is_fetch_data_request_cancelled(info.RequestKey) {
+                if let Err(te) = fail_fetch_data(info, params) {
+                    if !is_cloud_op_canceled(&te.to_string()) {
+                        log_callback_error("TRANSFER_DATA", &te);
+                    }
+                }
             }
         }
     }
+
+    clear_fetch_data_request_cancelled(info.RequestKey);
+    if !file_id.is_empty() {
+        end_fetch_data_inflight(&file_id);
+    }
+}
+
+pub unsafe extern "system" fn cancel_fetch_data(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    if info.RequestKey == 0 {
+        return;
+    }
+    mark_fetch_data_request_cancelled(info.RequestKey);
+    cfapi_callback_log(&format!(
+        "CANCEL_FETCH_DATA request_key={}",
+        info.RequestKey
+    ));
 }
 
 fn map_fetch_data_error(error: &str) -> String {
@@ -488,17 +575,50 @@ fn handle_fetch_data(
         return Err("FETCH_DATA on non-file".into());
     }
 
+    if is_fetch_data_request_cancelled(info.RequestKey) {
+        return Ok(());
+    }
+
+    begin_fetch_data_inflight(&remote_id);
+
     let ctx = with_context(|c| (c.db.clone(), c.api.clone()))
         .ok_or_else(|| "CfAPI context not initialized".to_string())?;
 
-    let cache_path = crate::blocking::run_async_future_with_timeout(
+    let request_key = info.RequestKey;
+    let connection_key = info.ConnectionKey;
+    let transfer_key = info.TransferKey;
+    let stop_progress = std::sync::Arc::new(AtomicBool::new(false));
+    let stop_flag = stop_progress.clone();
+    let progress_thread = std::thread::spawn(move || {
+        let mut tick = 0i64;
+        while !stop_flag.load(Ordering::Relaxed) {
+            if is_fetch_data_request_cancelled(request_key) {
+                break;
+            }
+            tick = (tick + 1).min(99);
+            let _ = unsafe { CfReportProviderProgress(connection_key, transfer_key, 100, tick) };
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+
+    let remote_id_for_hydrate = remote_id.clone();
+    let hydrate_result = crate::blocking::run_async_future_with_timeout(
         HYDRATE_TIMEOUT,
         async move {
-            ensure_hydrated_plaintext(&ctx.1, &ctx.0, &remote_id)
+            ensure_hydrated_plaintext(&ctx.1, &ctx.0, &remote_id_for_hydrate)
                 .await
                 .map_err(|e| e.to_string())
         },
-    )?;
+    );
+
+    stop_progress.store(true, Ordering::Relaxed);
+    let _ = progress_thread.join();
+
+    if is_fetch_data_request_cancelled(request_key) {
+        return Ok(());
+    }
+
+    let cache_path = hydrate_result?;
 
     let fetch = unsafe { params.Anonymous.FetchData };
     let offset = fetch.RequiredFileOffset;
@@ -518,8 +638,17 @@ fn handle_fetch_data(
     let mut chunk = vec![0u8; need];
     file.read_exact(&mut chunk).map_err(|e| e.to_string())?;
 
-    unsafe { transfer_data(info, offset, chunk.len() as i64, &chunk, STATUS_SUCCESS)? };
-    Ok(())
+    if is_fetch_data_request_cancelled(request_key) {
+        return Ok(());
+    }
+
+    let _ = unsafe { CfReportProviderProgress(connection_key, transfer_key, 100, 100) };
+
+    match unsafe { transfer_data(info, offset, chunk.len() as i64, &chunk, STATUS_SUCCESS) } {
+        Ok(()) => Ok(()),
+        Err(e) if is_cloud_op_canceled(&e.to_string()) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 unsafe fn transfer_data(
@@ -640,21 +769,34 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
 
     tauri::async_runtime::spawn(async move {
         let uploaded = match crate::my_drive::upload_my_drive_path(&api, &db, &full).await {
-            Ok(()) => true,
+            Ok(true) => true,
+            Ok(false) => false,
             Err(e) => {
                 cfapi_callback_log(&format!("NOTIFY_FILE_CLOSE upload failed: {}", e));
                 false
             }
         };
-        // Only dehydrate after a successful upload — never after skip/failure (avoids loops).
+        // Only dehydrate after a real content upload — never after open/thumbnail no-op.
         if !stream_mode || !uploaded {
             return;
         }
         if let Some(ref id) = remote_id {
+            if is_fetch_data_inflight(id) {
+                cfapi_callback_log(&format!(
+                    "NOTIFY_FILE_CLOSE dehydrate deferred (fetch in flight) {}",
+                    full.display()
+                ));
+                return;
+            }
             clear_hydrate_cache_for_file(id);
         }
         // Brief delay so editors release the handle before dehydrate.
         tokio::time::sleep(Duration::from_millis(400)).await;
+        if let Some(ref id) = remote_id {
+            if is_fetch_data_inflight(id) {
+                return;
+            }
+        }
         if is_path_under_active_free_up(&full) || is_dehydrated_placeholder(&full) {
             return;
         }

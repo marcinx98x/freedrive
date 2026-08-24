@@ -2,11 +2,14 @@ use crate::api::types::FolderContents;
 use crate::api::ApiClient;
 use crate::db::{
     config_get, config_set, get_file_key, get_pending_file_key, has_any_pending_file_key,
-    my_drive_get_placeholder, my_drive_get_placeholder_by_remote_id, my_drive_upsert_placeholder,
-    DbHandle,
+    my_drive_get_placeholder, my_drive_get_placeholder_by_remote_id, my_drive_set_content_hash,
+    my_drive_upsert_placeholder, DbHandle,
 };
 use crate::error::{AppError, AppResult};
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO;
 
 pub const ROOT_FOLDER_CONFIG_KEY: &str = "my_drive_root_folder_id";
@@ -236,6 +239,7 @@ pub async fn ensure_hydrated_plaintext(
     let cache_path = hydrate_cache_path(file_id)?;
     let remote = api.get_file(file_id).await?;
     if hydrate_cache_matches(&cache_path, remote.version, remote.size) {
+        ensure_known_hash_from_cache(db, file_id, &cache_path, remote.version, remote.size);
         return Ok(cache_path);
     }
 
@@ -244,6 +248,7 @@ pub async fn ensure_hydrated_plaintext(
 
     let remote = api.get_file(file_id).await?;
     if hydrate_cache_matches(&cache_path, remote.version, remote.size) {
+        ensure_known_hash_from_cache(db, file_id, &cache_path, remote.version, remote.size);
         return Ok(cache_path);
     }
 
@@ -284,14 +289,65 @@ pub async fn ensure_hydrated_plaintext(
         }
     }
 
-    write_hydrate_meta(&cache_path, remote.version, remote.size)?;
+    let content_hash = hash_local_file(&cache_path)?;
+    write_hydrate_meta(&cache_path, remote.version, remote.size, &content_hash)?;
+    if let Ok(conn) = db.lock() {
+        let _ = my_drive_set_content_hash(&conn, file_id, &content_hash);
+    }
     Ok(cache_path)
+}
+
+fn plaintext_hash_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+pub fn hash_local_file(path: &Path) -> AppResult<String> {
+    let bytes = std::fs::read(path)?;
+    Ok(plaintext_hash_hex(&bytes))
+}
+
+/// Track in-flight FETCH_DATA so Stream dehydrate does not race Explorer thumbnails/opens.
+fn fetch_data_inflight() -> &'static Mutex<HashSet<String>> {
+    static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub fn begin_fetch_data_inflight(remote_id: &str) {
+    if remote_id.is_empty() {
+        return;
+    }
+    if let Ok(mut set) = fetch_data_inflight().lock() {
+        set.insert(remote_id.to_string());
+    }
+}
+
+pub fn end_fetch_data_inflight(remote_id: &str) {
+    if remote_id.is_empty() {
+        return;
+    }
+    if let Ok(mut set) = fetch_data_inflight().lock() {
+        set.remove(remote_id);
+    }
+}
+
+pub fn is_fetch_data_inflight(remote_id: &str) -> bool {
+    if remote_id.is_empty() {
+        return false;
+    }
+    fetch_data_inflight()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(remote_id))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HydrateMeta {
     version: i32,
     size: i64,
+    #[serde(default)]
+    content_hash: String,
 }
 
 fn hydrate_meta_path(cache_path: &Path) -> PathBuf {
@@ -319,11 +375,42 @@ fn hydrate_cache_matches(cache_path: &Path, version: i32, size: i64) -> bool {
     meta.version == version && meta.size == size
 }
 
-fn write_hydrate_meta(cache_path: &Path, version: i32, size: i64) -> AppResult<()> {
-    let meta = HydrateMeta { version, size };
+fn write_hydrate_meta(
+    cache_path: &Path,
+    version: i32,
+    size: i64,
+    content_hash: &str,
+) -> AppResult<()> {
+    let meta = HydrateMeta {
+        version,
+        size,
+        content_hash: content_hash.to_string(),
+    };
     let bytes = serde_json::to_vec(&meta).map_err(|e| AppError::msg(e.to_string()))?;
     std::fs::write(hydrate_meta_path(cache_path), bytes)?;
     Ok(())
+}
+
+fn ensure_known_hash_from_cache(
+    db: &DbHandle,
+    file_id: &str,
+    cache_path: &Path,
+    version: i32,
+    size: i64,
+) {
+    let Ok(conn) = db.lock() else {
+        return;
+    };
+    if let Ok(existing) = crate::db::my_drive_known_content_hash(&conn, file_id) {
+        if !existing.is_empty() {
+            return;
+        }
+    }
+    let Ok(hash) = hash_local_file(cache_path) else {
+        return;
+    };
+    let _ = write_hydrate_meta(cache_path, version, size, &hash);
+    let _ = my_drive_set_content_hash(&conn, file_id, &hash);
 }
 
 fn hydrate_cache_path(file_id: &str) -> AppResult<PathBuf> {

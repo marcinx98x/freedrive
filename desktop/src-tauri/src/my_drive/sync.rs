@@ -395,10 +395,11 @@ async fn upload_local_only_children(
                 .unwrap_or("file")
                 .to_string();
             match upload_my_drive_path(&api, &db, &path).await {
-                Ok(()) => {
+                Ok(true) => {
                     uploaded.fetch_add(1, Ordering::Relaxed);
                     sync_log(format!("My Drive uploaded (local scan) — {}", name));
                 }
+                Ok(false) => {}
                 Err(e) => {
                     upload_errors.fetch_add(1, Ordering::Relaxed);
                     sync_log(format!(
@@ -822,15 +823,15 @@ async fn mirror_file_if_needed(
     Ok(true)
 }
 
-pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -> AppResult<()> {
+pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -> AppResult<bool> {
     if !path.is_file() {
-        return Ok(());
+        return Ok(false);
     }
     let sync_root = sync_root_dir(false)?;
     let relative = relative_path_from_sync_root(&sync_root, path)
         .ok_or_else(|| AppError::msg("path outside sync root"))?;
     if !is_under_my_drive(&relative) {
-        return Ok(());
+        return Ok(false);
     }
 
     let file_name = path
@@ -839,7 +840,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         .unwrap_or("file")
         .to_string();
     if crate::sync::should_skip_file(&file_name) {
-        return Ok(());
+        return Ok(false);
     }
 
     let existing_remote = {
@@ -858,15 +859,29 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
                     remote.version, known_ver, file_name
                 ));
                 pull_remote_file_over_local(api, db, path, &relative, &remote, None).await?;
-                return Ok(());
+                return Ok(false);
             }
             Ok(_) => {}
             Err(e) => {
-                // Fail closed: do not push local bytes over an unknown remote (e.g. after restore).
                 return Err(AppError::msg(format!(
                     "My Drive skip upload (could not verify remote version for {}): {}",
                     file_name, e
                 )));
+            }
+        }
+
+        // Open / thumbnail must not create a version: skip when local bytes match last hydrate.
+        if let Ok(local_hash) = crate::my_drive::hash_local_file(path) {
+            let known_hash = {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                crate::db::my_drive_known_content_hash(&conn, &remote_id).unwrap_or_default()
+            };
+            if !known_hash.is_empty() && known_hash == local_hash {
+                sync_log(format!(
+                    "My Drive skip upload (unchanged hash) — {}",
+                    file_name
+                ));
+                return Ok(false);
             }
         }
 
@@ -878,11 +893,22 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         let (rec, key) = api
             .update_file_content(&remote_id, path, &file_name, existing_key, None)
             .await?;
+        let local_hash = crate::my_drive::hash_local_file(path).unwrap_or_default();
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
         my_drive_upsert_placeholder(&conn, &relative, &rec.id, "file", None, Some(rec.version))?;
+        if !local_hash.is_empty() {
+            let _ = crate::db::my_drive_set_content_hash(&conn, &rec.id, &local_hash);
+        }
+        if rec.version <= known_ver {
+            sync_log(format!(
+                "My Drive skip upload (content unchanged) — {}",
+                file_name
+            ));
+            return Ok(false);
+        }
         sync_log(format!("My Drive updated — {}", file_name));
-        return Ok(());
+        return Ok(true);
     }
 
     let parent_folder_id = ensure_my_drive_parent_folder(api, db, &relative).await?;
@@ -890,11 +916,15 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
     let (rec, key) = api
         .upload_file(db, path, &file_name, api_parent, None)
         .await?;
+    let local_hash = crate::my_drive::hash_local_file(path).unwrap_or_default();
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
     my_drive_upsert_placeholder(&conn, &relative, &rec.id, "file", api_parent, Some(rec.version))?;
+    if !local_hash.is_empty() {
+        let _ = crate::db::my_drive_set_content_hash(&conn, &rec.id, &local_hash);
+    }
     sync_log(format!("My Drive uploaded — {}", file_name));
-    Ok(())
+    Ok(true)
 }
 
 pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -> AppResult<()> {
@@ -1586,7 +1616,10 @@ async fn pull_remote_file_over_local(
     }
 
     // Stream: free local space after content is replaced (best-effort).
-    if crate::sync::engine::sync_mode_is_stream(db) && local_path.exists() {
+    if crate::sync::engine::sync_mode_is_stream(db)
+        && local_path.exists()
+        && !crate::my_drive::is_fetch_data_inflight(&file.id)
+    {
         let dehydrate = || -> AppResult<()> {
             if is_dehydrated_placeholder(local_path) {
                 return Ok(());
@@ -1594,13 +1627,12 @@ async fn pull_remote_file_over_local(
             match dehydrate_placeholder_file(local_path) {
                 Ok(()) => Ok(()),
                 Err(e) if is_not_cloud_file_error(&e) => {
-                    // Copied plaintext is present; convert to placeholder when possible.
                     match convert_file_to_placeholder(local_path, &file.id) {
                         Ok(()) => dehydrate_placeholder_file(local_path).or(Ok(())),
                         Err(_) => Ok(()),
                     }
                 }
-                Err(_) => Ok(()), // content already on disk; version stamp below is valid
+                Err(_) => Ok(()),
             }
         };
         if let Some(suppress) = suppress {
@@ -1619,5 +1651,8 @@ async fn pull_remote_file_over_local(
         parent_remote.as_deref(),
         Some(file.version),
     )?;
+    if let Ok(hash) = crate::my_drive::hash_local_file(&cached) {
+        let _ = crate::db::my_drive_set_content_hash(&conn, &file.id, &hash);
+    }
     Ok(())
 }

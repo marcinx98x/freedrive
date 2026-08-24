@@ -6,8 +6,9 @@ mod sync;
 pub use cleanup::{clear_my_drive_contents, uninstall_remove_app_data, uninstall_remove_my_drive};
 
 pub use provider::{
-    api_folder_parent_id, clear_all_hydrate_cache, clear_hydrate_cache_for_file,
-    ensure_hydrated_plaintext, fetch_folder_contents, is_under_my_drive,
+    api_folder_parent_id, begin_fetch_data_inflight, clear_all_hydrate_cache,
+    clear_hydrate_cache_for_file, end_fetch_data_inflight, ensure_hydrated_plaintext,
+    fetch_folder_contents, hash_local_file, is_fetch_data_inflight, is_under_my_drive,
     relative_path_from_sync_root, resolve_folder_id_for_fetch, resolve_my_drive_root_id,
     FolderIdSource, ROOT_FOLDER_CONFIG_KEY,
 };
@@ -61,8 +62,8 @@ pub async fn upload_my_drive_path(
     _api: &crate::api::ApiClient,
     _db: &crate::db::DbHandle,
     _path: &std::path::Path,
-) -> crate::error::AppResult<()> {
-    Ok(())
+) -> crate::error::AppResult<bool> {
+    Ok(false)
 }
 
 #[cfg(not(windows))]

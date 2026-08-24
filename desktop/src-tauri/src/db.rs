@@ -78,6 +78,7 @@ fn init_schema(conn: &Connection) -> AppResult<()> {
     purge_mirror_sync_state_once(conn)?;
     migrate_bidir_schema(conn)?;
     migrate_my_drive_remote_version(conn)?;
+    migrate_my_drive_content_hash(conn)?;
     Ok(())
 }
 
@@ -91,6 +92,19 @@ fn migrate_my_drive_remote_version(conn: &Connection) -> AppResult<()> {
         "#,
     );
     config_set(conn, "my_drive_remote_version_v1", "true")?;
+    Ok(())
+}
+
+fn migrate_my_drive_content_hash(conn: &Connection) -> AppResult<()> {
+    if config_get(conn, "my_drive_content_hash_v1")?.as_deref() == Some("true") {
+        return Ok(());
+    }
+    let _ = conn.execute_batch(
+        r#"
+        ALTER TABLE my_drive_placeholders ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+        "#,
+    );
+    config_set(conn, "my_drive_content_hash_v1", "true")?;
     Ok(())
 }
 
@@ -1189,6 +1203,31 @@ pub fn my_drive_known_remote_version(conn: &Connection, remote_id: &str) -> AppR
     } else {
         Ok(0)
     }
+}
+
+/// Last known plaintext SHA-256 for a My Drive file (survives hydrate-cache clear / dehydrate).
+pub fn my_drive_known_content_hash(conn: &Connection, remote_id: &str) -> AppResult<String> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(content_hash, '') FROM my_drive_placeholders WHERE remote_id = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![remote_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0)?)
+    } else {
+        Ok(String::new())
+    }
+}
+
+pub fn my_drive_set_content_hash(
+    conn: &Connection,
+    remote_id: &str,
+    content_hash: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "UPDATE my_drive_placeholders SET content_hash = ?1 WHERE remote_id = ?2",
+        params![content_hash, remote_id],
+    )?;
+    Ok(())
 }
 
 pub fn my_drive_clear_placeholders(conn: &Connection) -> AppResult<()> {
