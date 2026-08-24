@@ -161,7 +161,7 @@ func (h *UploadHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		contentHash := strings.TrimSpace(req.ContentHash)
-		if contentHash != "" && replaceFile.ContentHash != "" && contentHash == replaceFile.ContentHash {
+		if !req.ForceVersion && contentHash != "" && replaceFile.ContentHash != "" && contentHash == replaceFile.ContentHash {
 			// Identical plaintext — skip resumable upload entirely.
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"unchanged": true,

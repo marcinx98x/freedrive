@@ -147,17 +147,6 @@ func VersionRetainDays() int {
 	return n
 }
 
-// VersionCoalesceMinutes is the minimum gap between historical version snapshots for the same file.
-// Rapid saves (Docs autosave, desktop re-upload) update current content without adding a new history row.
-// 0 disables coalescing (every content update creates a version). Default 60.
-func VersionCoalesceMinutes() int {
-	n := asInt(storage(load())["version_coalesce_minutes"], 60)
-	if n < 0 {
-		return 0
-	}
-	return n
-}
-
 // TotalCapacityBytes returns server-wide storage cap from settings (0 = unlimited).
 func TotalCapacityBytes() int64 {
 	gb := asInt(storage(load())["total_capacity_gb"], 0)

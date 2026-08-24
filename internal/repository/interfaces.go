@@ -107,7 +107,6 @@ type FileRepository interface {
 	CreateVersion(ctx context.Context, version *domain.FileVersion) error
 	GetVersions(ctx context.Context, fileID string) ([]domain.FileVersion, error)
 	GetVersion(ctx context.Context, fileID string, version int) (*domain.FileVersion, error)
-	LatestVersionCreatedAt(ctx context.Context, fileID string) (*time.Time, error)
 	DeleteOldVersions(ctx context.Context, fileID string, keepCount int) ([]domain.FileVersion, error)
 	DeleteVersionsOlderThan(ctx context.Context, fileID string, days int) ([]domain.FileVersion, error)
 	ListVersionsOlderThan(ctx context.Context, days int) ([]domain.FileVersionOwner, error)

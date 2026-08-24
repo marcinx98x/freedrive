@@ -483,9 +483,8 @@ func (s *FileService) logActivity(ctx context.Context, userID string, action dom
 	})
 }
 
-// UpdateContent replaces the encrypted blob for an existing file and creates a version snapshot.
-// When contentHash matches the stored hash, the update is a no-op (no new version, no blob rewrite).
-// forceVersion always keeps a historical snapshot; otherwise snapshots are coalesced per admin policy.
+// UpdateContent replaces the encrypted blob for an existing file and creates a version snapshot
+// when plaintext actually changes. Matching content_hash is a no-op unless forceVersion is set.
 func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, mimeType, iv string, originalSize int64, r io.Reader, contentHash string, forceVersion bool) (*domain.File, error) {
 	if err := ValidateItemName(name); err != nil {
 		return nil, err
@@ -501,11 +500,11 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 		return nil, fmt.Errorf("file not found")
 	}
 
-	if contentHash != "" && file.ContentHash != "" && contentHash == file.ContentHash {
+	if !forceVersion && contentHash != "" && file.ContentHash != "" && contentHash == file.ContentHash {
 		return file, nil
 	}
 
-	versionKept := s.snapshotCurrentVersion(ctx, file, userID, forceVersion)
+	versionKept := s.snapshotCurrentVersion(ctx, file, userID)
 
 	newBlobPath, newEncryptedSize, err := s.storage.Save(userID, r)
 	if err != nil {
@@ -602,12 +601,12 @@ func (s *FileService) UpdateContentFromBlob(
 		return nil, fmt.Errorf("file not found")
 	}
 
-	if contentHash != "" && file.ContentHash != "" && contentHash == file.ContentHash {
+	if !forceVersion && contentHash != "" && file.ContentHash != "" && contentHash == file.ContentHash {
 		_ = s.storage.Delete(blobPath)
 		return file, nil
 	}
 
-	versionKept := s.snapshotCurrentVersion(ctx, file, userID, forceVersion)
+	versionKept := s.snapshotCurrentVersion(ctx, file, userID)
 
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -692,7 +691,7 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 		return nil, fmt.Errorf("version not found")
 	}
 
-	versionKept := s.snapshotCurrentVersion(ctx, file, userID, true)
+	versionKept := s.snapshotCurrentVersion(ctx, file, userID)
 
 	reader, err := s.storage.Get(v.BlobPath)
 	if err != nil {
@@ -755,21 +754,10 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 
 // snapshotCurrentVersion stores the current file blob as a historical version.
 // Returns true when the old blob must be retained on disk (owned by the version row).
-// When force is false, rapid updates within VersionCoalesceMinutes skip a new history row
-// (current content is still replaced; only intermediate history is omitted).
-func (s *FileService) snapshotCurrentVersion(ctx context.Context, file *domain.File, userID string, force bool) bool {
+// Callers must skip this when plaintext content is unchanged (content_hash match).
+func (s *FileService) snapshotCurrentVersion(ctx context.Context, file *domain.File, userID string) bool {
 	if !adminsettings.VersioningEnabled() || file == nil || file.BlobPath == "" {
 		return false
-	}
-	if !force {
-		if mins := adminsettings.VersionCoalesceMinutes(); mins > 0 {
-			latest, err := s.fileRepo.LatestVersionCreatedAt(ctx, file.ID)
-			if err != nil {
-				log.Printf("latest version lookup failed for %s: %v", file.ID, err)
-			} else if latest != nil && time.Since(*latest) < time.Duration(mins)*time.Minute {
-				return false
-			}
-		}
 	}
 	if err := s.fileRepo.CreateVersion(ctx, &domain.FileVersion{
 		FileID:    file.ID,

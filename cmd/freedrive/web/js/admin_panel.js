@@ -53,7 +53,6 @@ const AdminPanel = (() => {
             versioning: true,
             keep_versions: 20,
             version_retain_days: '30',
-            version_coalesce_minutes: 60,
         },
         backup: {
             auto_backup: true,
@@ -1749,11 +1748,6 @@ const AdminPanel = (() => {
                 <div class="admin-form-group">
                     <label>Keep last versions</label>
                     <input class="admin-input" type="number" min="1" data-setting="storage.keep_versions" value="${esc(s.keep_versions)}">
-                </div>
-                <div class="admin-form-group">
-                    <label>Coalesce versions (minutes)</label>
-                    <input class="admin-input" type="number" min="0" data-setting="storage.version_coalesce_minutes" value="${esc(s.version_coalesce_minutes ?? 60)}" title="Minimum gap between historical version snapshots. 0 = create a version on every save.">
-                    <p class="settings-hint" style="margin:6px 0 0;color:#5f6368;font-size:12px;">Rapid saves within this window update the current file without adding another history entry. Use 0 to version every change.</p>
                 </div>
                 <div class="admin-form-group">
                     <label>Keep versions for</label>

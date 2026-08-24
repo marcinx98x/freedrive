@@ -7105,7 +7105,6 @@ const FileManager = (() => {
         }
         const keep = Number(policy.keep_versions) > 0 ? Number(policy.keep_versions) : null;
         const days = Number(policy.version_retain_days) > 0 ? Number(policy.version_retain_days) : null;
-        const coalesce = Number(policy.version_coalesce_minutes);
         let limitText = '';
         if (days && keep) {
             limitText = `after <strong>${days} days</strong> or after <strong>${keep} versions</strong> are stored`;
@@ -7116,10 +7115,7 @@ const FileManager = (() => {
         } else {
             limitText = 'according to administrator retention settings';
         }
-        const coalesceText = coalesce > 0
-            ? ` Rapid saves within <strong>${coalesce} minutes</strong> update the current file without adding another history entry.`
-            : '';
-        return `Temporary versions of '${name}' may be deleted automatically ${limitText}. Versions are listed newest first.${coalesceText}`;
+        return `A version is kept only when the file content changes. Temporary versions of '${name}' may be deleted automatically ${limitText}. Versions are listed newest first.`;
     }
 
     function versionsPersonLabel(userIdOrName) {

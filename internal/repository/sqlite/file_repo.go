@@ -646,25 +646,6 @@ func (r *FileRepo) GetVersion(ctx context.Context, fileID string, version int) (
 	return v, err
 }
 
-func (r *FileRepo) LatestVersionCreatedAt(ctx context.Context, fileID string) (*time.Time, error) {
-	var created sql.NullTime
-	err := r.reader.QueryRowContext(ctx,
-		`SELECT created_at FROM file_versions WHERE file_id = ? ORDER BY version DESC LIMIT 1`,
-		fileID,
-	).Scan(&created)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !created.Valid {
-		return nil, nil
-	}
-	t := created.Time
-	return &t, nil
-}
-
 func (r *FileRepo) DeleteOldVersions(ctx context.Context, fileID string, keepCount int) ([]domain.FileVersion, error) {
 	rows, err := r.reader.QueryContext(ctx,
 		`SELECT id, blob_path FROM file_versions WHERE file_id = ?
