@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { Computer, FolderItem } from "../api/types";
 import { colors, radii, spacing } from "../theme";
 import { formatRelativeDate } from "../utils/format";
+import { resolveFolderColor } from "../utils/folderColors";
 import { Icon } from "./Icon";
 
 interface FolderRowProps {
@@ -13,10 +14,11 @@ interface FolderRowProps {
 }
 
 export function FolderRow({ folder, onPress, onMenuPress }: FolderRowProps) {
+  const folderTint = resolveFolderColor(folder.color);
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.icon}>
-        <Icon name="folder" size={22} color={colors.folder} />
+        <Icon name="folder" size={22} color={folderTint} />
       </View>
       <View style={styles.meta}>
         <Text style={styles.name} numberOfLines={1}>
@@ -61,10 +63,11 @@ export function ComputerRow({ computer, onPress, onMenuPress }: ComputerRowProps
 }
 
 export function FolderGridTile({ folder, onPress, onMenuPress, columns = 2 }: FolderRowProps) {
+  const folderTint = resolveFolderColor(folder.color);
   return (
     <Pressable style={[styles.tile, { width: `${100 / columns}%` }]} onPress={onPress}>
       <View style={styles.tilePreview}>
-        <Icon name="folder" size={44} color={colors.folder} />
+        <Icon name="folder" size={44} color={folderTint} />
         <Pressable style={styles.tileMenu} onPress={onMenuPress} hitSlop={8}>
           <Icon name="more" size={18} color={colors.textSecondary} />
         </Pressable>

@@ -11,7 +11,7 @@ export const colors = {
   fab: "#3C4454",
   danger: "#F28B82",
   success: "#81C995",
-  folder: "#DADCE0",
+  folder: "#5f6368",
   doc: "#4285F4",
   sheet: "#0F9D58",
   image: "#E8710A",

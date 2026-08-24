@@ -20,6 +20,11 @@ import type { FileItem, FolderItem, ShareLink, SharedItem } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { colors, radii, spacing } from "../theme";
 import { formatBytes, formatRelativeDate } from "../utils/format";
+import {
+  FOLDER_COLORS,
+  resolveFolderColor,
+  storeFolderColor,
+} from "../utils/folderColors";
 import { copyText, downloadFileToDevice, downloadFileToShare } from "../utils/openFile";
 import { Icon, type IconName } from "./Icon";
 
@@ -42,19 +47,6 @@ type ActionRow = {
   danger?: boolean;
   dividerAfter?: boolean;
 };
-
-const FOLDER_COLORS = [
-  "#DADCE0",
-  "#F28B82",
-  "#FBBC04",
-  "#FFF475",
-  "#CCFF90",
-  "#A7FFEB",
-  "#CBF0F8",
-  "#AECBFA",
-  "#D7AEFB",
-  "#FDCFE8",
-];
 
 function publicLinkUrl(serverUrl: string | null, token: string): string {
   const base = (serverUrl || "").replace(/\/$/, "");
@@ -277,7 +269,11 @@ export function ItemActionsSheet({ target, onClose, onChanged }: ItemActionsShee
               <Icon
                 name={target.kind === "folder" ? "folder" : "doc"}
                 size={22}
-                color={target.kind === "folder" ? colors.folder : "#FFFFFF"}
+                color={
+                  target.kind === "folder"
+                    ? resolveFolderColor(target.item.color)
+                    : "#FFFFFF"
+                }
               />
             </View>
             <Text style={styles.headerTitle} numberOfLines={2}>
@@ -372,7 +368,7 @@ export function ItemActionsSheet({ target, onClose, onChanged }: ItemActionsShee
                       })
                     }
                   >
-                    <Icon name="folder" size={22} color={item.color || colors.folder} />
+                    <Icon name="folder" size={22} color={resolveFolderColor(item.color)} />
                     <Text style={styles.rowLabel}>{item.name}</Text>
                   </Pressable>
                 )}
@@ -393,7 +389,14 @@ export function ItemActionsSheet({ target, onClose, onChanged }: ItemActionsShee
                   <InfoLine label="Size" value={formatBytes(target.item.size)} />
                 </>
               ) : (
-                <InfoLine label="Colour" value={target.item.color || "Default"} />
+                <InfoLine
+                  label="Colour"
+                  value={
+                    target.item.color
+                      ? resolveFolderColor(target.item.color)
+                      : "Default"
+                  }
+                />
               )}
               <InfoLine label="Modified" value={formatRelativeDate(target.item.updated_at)} />
               <InfoLine label="Created" value={formatRelativeDate(target.item.created_at)} />
@@ -407,19 +410,32 @@ export function ItemActionsSheet({ target, onClose, onChanged }: ItemActionsShee
             <View style={styles.dialog}>
               <Text style={styles.dialogTitle}>Change colour</Text>
               <View style={styles.colorGrid}>
-                {FOLDER_COLORS.map((c) => (
-                  <Pressable
-                    key={c}
-                    style={[styles.colorDot, { backgroundColor: c }]}
-                    onPress={() =>
-                      void run(async () => {
-                        await api.updateFolder(target.item.id, { color: c });
-                        onChanged();
-                        onClose();
-                      })
-                    }
-                  />
-                ))}
+                {FOLDER_COLORS.map((c) => {
+                  const selected = resolveFolderColor(target.item.color) === c;
+                  return (
+                    <Pressable
+                      key={c}
+                      style={[
+                        styles.colorDot,
+                        { backgroundColor: c },
+                        selected && styles.colorDotSelected,
+                      ]}
+                      onPress={() =>
+                        void run(async () => {
+                          await api.updateFolder(target.item.id, {
+                            color: storeFolderColor(c),
+                          });
+                          onChanged();
+                          onClose();
+                        })
+                      }
+                    >
+                      {selected ? (
+                        <Text style={styles.colorDotCheck}>✓</Text>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
               </View>
               <Pressable onPress={() => setDialog("none")}>
                 <Text style={styles.linkBtn}>Back</Text>
@@ -630,8 +646,31 @@ const styles = StyleSheet.create({
   dialogActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.xl },
   linkBtn: { color: colors.textSecondary, fontSize: 15, fontWeight: "500" },
   linkBtnPrimary: { color: colors.accent, fontSize: 15, fontWeight: "600" },
-  colorGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: spacing.lg },
-  colorDot: { width: 40, height: 40, borderRadius: 20 },
+  colorGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: spacing.lg,
+  },
+  colorDot: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  colorDotSelected: {
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+  colorDotCheck: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 2,
+  },
   primaryBtn: {
     backgroundColor: colors.accentSoft,
     borderRadius: radii.pill,
