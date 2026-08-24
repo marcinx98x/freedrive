@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { FileItem } from "../api/types";
 import {
   cacheFileKey,
+  contentHashHex,
   prepareNewEncryptedFile,
   prepareNewFileKey,
   rawKeyToStandardBase64,
@@ -84,6 +85,7 @@ async function uploadOneJs(
       originalSize: plaintext.length,
       encryptedUri: encPath,
       folderId,
+      contentHash: contentHashHex(plaintext),
     });
     await api.putFileEncryptionKey(created.id, prepared.wrappedFileKey);
     await cacheFileKey(created.id, prepared.rawKey);
@@ -237,6 +239,7 @@ export async function createEncryptedBinaryFile(opts: {
       originalSize: plaintext.length,
       encryptedUri: encPath,
       folderId: opts.folderId,
+      contentHash: contentHashHex(plaintext),
     });
     await api.putFileEncryptionKey(created.id, prepared.wrappedFileKey);
     await cacheFileKey(created.id, prepared.rawKey);

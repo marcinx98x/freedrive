@@ -96,6 +96,7 @@ export interface FileItem {
   owner_id: string;
   iv: string;
   version: number;
+  content_hash?: string;
   is_starred: boolean;
   is_trashed: boolean;
   trashed_at?: string | null;

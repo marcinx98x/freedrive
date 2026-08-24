@@ -345,6 +345,7 @@ async function resumableUploadFromFile(opts: {
   originalSize: number;
   folderId?: string | null;
   fileId?: string;
+  contentHash?: string;
 }): Promise<FileItem> {
   const info = await FileSystem.getInfoAsync(opts.encryptedUri);
   const size = info.exists && "size" in info ? Number(info.size || 0) : 0;
@@ -356,6 +357,7 @@ async function resumableUploadFromFile(opts: {
     original_size: String(opts.originalSize),
   };
   if (opts.folderId) parameters.folder_id = opts.folderId;
+  if (opts.contentHash) parameters.content_hash = opts.contentHash;
 
   if (size > 0 && size <= RESUMABLE_THRESHOLD) {
     if (opts.fileId) {
@@ -390,8 +392,19 @@ async function resumableUploadFromFile(opts: {
   };
   if (opts.folderId) sessionBody.folder_id = opts.folderId;
   if (opts.fileId) sessionBody.file_id = opts.fileId;
+  if (opts.contentHash) sessionBody.content_hash = opts.contentHash;
 
-  const session = await request<{ id: string }>("POST", "/uploads/sessions", sessionBody);
+  const session = await request<{ id?: string; unchanged?: boolean; file?: FileItem }>(
+    "POST",
+    "/uploads/sessions",
+    sessionBody,
+  );
+  if (session.unchanged && session.file) {
+    return session.file;
+  }
+  if (!session.id) {
+    throw new ApiError("Invalid upload session response", 500);
+  }
   let offset = 0;
   let last: FileItem | { complete?: boolean; id?: string } | null = null;
   const url = await baseUrl();
@@ -796,6 +809,7 @@ export const api = {
       iv: string;
       originalSize: number;
       encryptedUri: string;
+      contentHash?: string;
     },
   ): Promise<FileItem> => {
     return resumableUploadFromFile({
@@ -805,6 +819,7 @@ export const api = {
       iv: opts.iv,
       originalSize: opts.originalSize,
       fileId,
+      contentHash: opts.contentHash,
     });
   },
 
@@ -816,6 +831,7 @@ export const api = {
     originalSize: number;
     encryptedUri: string;
     folderId?: string | null;
+    contentHash?: string;
   }): Promise<FileItem> => {
     return resumableUploadFromFile({
       encryptedUri: opts.encryptedUri,
@@ -824,6 +840,7 @@ export const api = {
       iv: opts.iv,
       originalSize: opts.originalSize,
       folderId: opts.folderId,
+      contentHash: opts.contentHash,
     });
   },
 

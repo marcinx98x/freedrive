@@ -26,6 +26,12 @@ function base64ToBytes(base64: string): Uint8Array {
   return out;
 }
 
+/** SHA-256 hex of plaintext — server skips versions when this matches the stored hash. */
+export function contentHashHex(plaintext: Uint8Array): string {
+  const digest = sha256(plaintext);
+  return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function arrayBufferToBase64Url(buffer: ArrayBuffer | Uint8Array): string {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

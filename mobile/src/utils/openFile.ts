@@ -5,6 +5,7 @@ import { Alert, NativeModules, PermissionsAndroid, Platform } from "react-native
 import { api } from "../api/client";
 import type { FileItem } from "../api/types";
 import {
+  contentHashHex,
   decryptDownloadedFile,
   encryptFileBytes,
   ensureFileKey,
