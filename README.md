@@ -129,6 +129,7 @@ FreeDrive is ideal for:
 - Configurable `keep_versions` count and `version_retain_days` (never / 7 / 30 / 90) — older versions are pruned on save and by a background job
 - List versions per file (Manage versions modal: policy blurb from admin settings, upload new version, Download / Restore from ⋮)
 - Restore an earlier version as a **new current edit** (`version++`, `updated_at=now`, sync change recorded) so desktop My Drive refreshes instead of uploading stale local bytes over the restore
+- **Date modified** uses `updated_at` only; downloads and image thumbnails update `accessed_at` without changing modified time
 
 ### 6. User Profile & Security
 
@@ -611,7 +612,7 @@ User-to-user sharing and public links. Permissions: `viewer`/`commenter` → rea
 - `POST /files/{id}/comments` — `{ content, parent_id?, assigned_to_email? }`
 - `DELETE /files/{id}/comments/{commentId}`
 - `POST /files/{id}/approvals` — `{ approver_id?, approver_email? }` (requires write access)
-- `GET /files/{id}/download`
+- `GET /files/{id}/download` — returns encrypted blob; updates `accessed_at` only (does not change `updated_at` / Date modified)
 - `PATCH /files/{id}`
 - `POST /files/{id}/content` — multipart replace encrypted blob (`file`, `name`, `mime_type`, `iv`, `original_size`, optional `content_hash`, optional `force_version`); used by desktop sync and mobile text/image save; matching `content_hash` is a no-op (no new version)
 - `DELETE /files/{id}`
@@ -730,8 +731,9 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **Stream (default)** keeps cloud placeholders (download on open, upload on close, then free local space); **Mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files); poll **removes** local placeholders after remote Move to bin so Explorer matches My Drive
 - **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, removes Explorer NameSpace/SyncRootManager pins, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder); prefer NSIS over MSI for this cleanup
-- Independent release tags: `desktop-v0.1.28` (server tags remain `v1.x.x`)
+- Independent release tags: `desktop-v0.1.29` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
+- **0.1.29+** — My Drive pull on remote-newer always replaces local bytes (then optional Stream dehydrate); size mismatch also triggers refresh (heals prior stamp-without-copy). Upload skips when remote version cannot be verified
 - **0.1.28+** — My Drive treats remote `version` as source of truth: poll refreshes when the server is newer (web restore/edit); local upload is skipped if remote version is ahead (stale PC bytes no longer overwrite a restore). Restore on the server bumps `updated_at` and records a sync change like a new edit
 - **0.1.27+** — My Drive hydrate cache invalidates on remote `version`/`size` mismatch (sidecar `.meta`); plaintext download is atomic; Mirror refreshes when local size differs; uploads send `content_hash` so unchanged files do not create server versions
 

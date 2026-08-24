@@ -57,7 +57,8 @@ func (r *FileRepo) GetByID(ctx context.Context, id string) (*domain.File, error)
 }
 
 func (r *FileRepo) Update(ctx context.Context, file *domain.File) error {
-	file.UpdatedAt = time.Now()
+	// Preserve caller's UpdatedAt — do not treat every Update as a content edit
+	// (Download used to bump modified via this path and broke "Date modified").
 	_, err := r.writer.ExecContext(ctx,
 		`UPDATE files SET name=?, mime_type=?, size=?, encrypted_size=?, folder_id=?, blob_path=?, iv=?,
 		        version=?, is_starred=?, is_trashed=?, trashed_at=?, updated_at=?, accessed_at=?, content_hash=?
@@ -65,6 +66,14 @@ func (r *FileRepo) Update(ctx context.Context, file *domain.File) error {
 		file.Name, file.MimeType, file.Size, file.EncryptedSize, file.FolderID,
 		file.BlobPath, file.IV, file.Version, file.IsStarred, file.IsTrashed,
 		file.TrashedAt, file.UpdatedAt, file.AccessedAt, file.ContentHash, file.ID,
+	)
+	return err
+}
+
+func (r *FileRepo) TouchAccessedAt(ctx context.Context, id string, at time.Time) error {
+	_, err := r.writer.ExecContext(ctx,
+		`UPDATE files SET accessed_at=? WHERE id=?`,
+		at, id,
 	)
 	return err
 }

@@ -82,6 +82,8 @@ type FileRepository interface {
 	Create(ctx context.Context, file *domain.File) error
 	GetByID(ctx context.Context, id string) (*domain.File, error)
 	Update(ctx context.Context, file *domain.File) error
+	// TouchAccessedAt updates only accessed_at (reads/thumbs must not change updated_at).
+	TouchAccessedAt(ctx context.Context, id string, at time.Time) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, opts domain.FileListOptions) ([]domain.File, int, error)
 	GetByFolderID(ctx context.Context, folderID *string, ownerID string) ([]domain.File, error)

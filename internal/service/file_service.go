@@ -116,10 +116,10 @@ func (s *FileService) Download(ctx context.Context, fileID, userID string) (*dom
 		return nil, nil, fmt.Errorf("file not found")
 	}
 
-	// Update accessed_at
+	// Update accessed_at only — must not bump updated_at (thumbs / open).
 	now := time.Now()
 	file.AccessedAt = now
-	_ = s.fileRepo.Update(ctx, file)
+	_ = s.fileRepo.TouchAccessedAt(ctx, file.ID, now)
 
 	getReader := func() (interface{}, error) {
 		return s.storage.Get(file.BlobPath)
@@ -246,6 +246,7 @@ func (s *FileService) Rename(ctx context.Context, fileID, userID, newName string
 
 	oldName := file.Name
 	file.Name = newName
+	file.UpdatedAt = time.Now()
 	if err := s.fileRepo.Update(ctx, file); err != nil {
 		return err
 	}
@@ -276,6 +277,7 @@ func (s *FileService) Move(ctx context.Context, fileID, userID string, folderID 
 	}
 
 	file.FolderID = folderID
+	file.UpdatedAt = time.Now()
 	if err := s.fileRepo.Update(ctx, file); err != nil {
 		return err
 	}
@@ -547,6 +549,7 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 	file.IV = iv
 	file.Version += 1
 	file.AccessedAt = time.Now()
+	file.UpdatedAt = file.AccessedAt
 	if contentHash != "" {
 		file.ContentHash = contentHash
 	}
@@ -644,6 +647,7 @@ func (s *FileService) UpdateContentFromBlob(
 	file.IV = iv
 	file.Version += 1
 	file.AccessedAt = time.Now()
+	file.UpdatedAt = file.AccessedAt
 	if contentHash != "" {
 		file.ContentHash = contentHash
 	}

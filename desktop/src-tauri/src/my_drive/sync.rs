@@ -851,14 +851,22 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
 
     if let Some((remote_id, known_ver)) = existing_remote {
         // Google Drive style: remote version is source of truth — never overwrite a newer restore/edit.
-        if let Ok(remote) = api.get_file(&remote_id).await {
-            if remote.version > known_ver {
+        match api.get_file(&remote_id).await {
+            Ok(remote) if remote.version > known_ver => {
                 sync_log(format!(
                     "My Drive skip upload (remote newer v{} > known v{}) — {}",
                     remote.version, known_ver, file_name
                 ));
                 pull_remote_file_over_local(api, db, path, &relative, &remote, None).await?;
                 return Ok(());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                // Fail closed: do not push local bytes over an unknown remote (e.g. after restore).
+                return Err(AppError::msg(format!(
+                    "My Drive skip upload (could not verify remote version for {}): {}",
+                    file_name, e
+                )));
             }
         }
 
@@ -1498,10 +1506,16 @@ async fn refresh_files_when_remote_newer(
             };
             crate::db::my_drive_known_remote_version(&conn, &file.id).unwrap_or(0)
         };
-        if file.version <= known {
+        let local_path = local_dir.join(sanitize_name(&file.name));
+        let expected = file.size.max(0) as u64;
+        let size_mismatch = match std::fs::metadata(&local_path) {
+            Ok(meta) if !is_dehydrated_placeholder(&local_path) => meta.len() != expected,
+            Ok(_) => false, // dehydrated placeholder — size on disk is not content
+            Err(_) => false,
+        };
+        if file.version <= known && !size_mismatch {
             continue;
         }
-        let local_path = local_dir.join(sanitize_name(&file.name));
         // Nothing local yet — update known version; open will hydrate via FETCH_DATA.
         if !local_path.exists() && !mirror {
             if let Ok(conn) = db.lock() {
@@ -1556,8 +1570,23 @@ async fn pull_remote_file_over_local(
             .and_then(|(_, _, p)| p)
     };
 
-    let stream_mode = crate::sync::engine::sync_mode_is_stream(db);
-    if stream_mode && local_path.exists() {
+    let cached = ensure_hydrated_plaintext(api, db, &file.id).await?;
+    if let Some(parent) = local_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let copy = || -> AppResult<()> {
+        std::fs::copy(&cached, local_path)?;
+        set_path_mtime_from_remote(local_path, &file.updated_at);
+        Ok(())
+    };
+    if let Some(suppress) = suppress {
+        suppress.run_suppressed(local_path, copy)?;
+    } else {
+        copy()?;
+    }
+
+    // Stream: free local space after content is replaced (best-effort).
+    if crate::sync::engine::sync_mode_is_stream(db) && local_path.exists() {
         let dehydrate = || -> AppResult<()> {
             if is_dehydrated_placeholder(local_path) {
                 return Ok(());
@@ -1565,35 +1594,19 @@ async fn pull_remote_file_over_local(
             match dehydrate_placeholder_file(local_path) {
                 Ok(()) => Ok(()),
                 Err(e) if is_not_cloud_file_error(&e) => {
-                    // Plain hydrated file — remove bytes so next open FETCH_DATA rehydrates.
-                    let _ = std::fs::remove_file(local_path);
-                    if let Some(parent) = local_path.parent() {
-                        let _ = create_file_placeholder(parent, file);
+                    // Copied plaintext is present; convert to placeholder when possible.
+                    match convert_file_to_placeholder(local_path, &file.id) {
+                        Ok(()) => dehydrate_placeholder_file(local_path).or(Ok(())),
+                        Err(_) => Ok(()),
                     }
-                    Ok(())
                 }
-                Err(e) => Err(e),
+                Err(_) => Ok(()), // content already on disk; version stamp below is valid
             }
         };
         if let Some(suppress) = suppress {
-            suppress.run_suppressed(local_path, dehydrate)?;
+            let _ = suppress.run_suppressed(local_path, dehydrate);
         } else {
-            dehydrate()?;
-        }
-    } else {
-        let cached = ensure_hydrated_plaintext(api, db, &file.id).await?;
-        if let Some(parent) = local_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let copy = || -> AppResult<()> {
-            std::fs::copy(&cached, local_path)?;
-            set_path_mtime_from_remote(local_path, &file.updated_at);
-            Ok(())
-        };
-        if let Some(suppress) = suppress {
-            suppress.run_suppressed(local_path, copy)?;
-        } else {
-            copy()?;
+            let _ = dehydrate();
         }
     }
 
