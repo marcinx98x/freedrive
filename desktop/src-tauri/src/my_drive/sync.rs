@@ -1103,10 +1103,7 @@ async fn hydrate_my_drive_file(
         return Ok(());
     };
     let cached = ensure_hydrated_plaintext(api, db, &remote_id).await?;
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    std::fs::copy(&cached, path)?;
+    crate::my_drive::pin_hydrated_cache_to_path(&cached, path)?;
     Ok(())
 }
 

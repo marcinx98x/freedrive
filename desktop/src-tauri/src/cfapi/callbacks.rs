@@ -12,16 +12,17 @@ use crate::error::AppResult;
 use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_directory_updated};
 use crate::my_drive::{
     begin_fetch_data_inflight, clear_hydrate_cache_for_file, end_fetch_data_inflight,
-    ensure_hydrated_plaintext, fetch_folder_contents, is_fetch_data_inflight,
-    is_path_under_active_free_up, is_under_my_drive, relative_path_from_sync_root,
-    resolve_folder_id_for_fetch, resolve_my_drive_root_id, FolderIdSource,
+    ensure_hydrated_plaintext_with_progress, fetch_folder_contents, is_fetch_data_inflight,
+    is_path_under_active_free_up, is_under_my_drive, pin_hydrated_cache_to_path,
+    relative_path_from_sync_root, resolve_folder_id_for_fetch, resolve_my_drive_root_id,
+    FolderIdSource,
 };
 use crate::sync::log::sync_log;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -38,6 +39,9 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 /// short placeholder timeout. Google Drive for desktop likewise waits for full hydrate.
 const HYDRATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const CLOSE_DEBOUNCE: Duration = Duration::from_secs(3);
+/// CFAPI TRANSFER_DATA chunks (offset/length must be 4KiB-aligned except at EOF).
+const TRANSFER_CHUNK: usize = 1024 * 1024;
+const TRANSFER_ALIGN: usize = 4096;
 
 static CLOSE_DEBOUNCE_MAP: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
@@ -575,7 +579,21 @@ fn handle_fetch_data(
         return Err("FETCH_DATA on non-file".into());
     }
 
+    let placeholder_path = callback_full_path(info).ok();
+    let fetch = unsafe { params.Anonymous.FetchData };
+    let req_offset = fetch.RequiredFileOffset;
+    let req_length = fetch.RequiredLength as u64;
+
+    cfapi_callback_log(format!(
+        "FETCH_DATA start file={remote_id} offset={req_offset} length={req_length} path={}",
+        placeholder_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    ));
+
     if is_fetch_data_request_cancelled(info.RequestKey) {
+        cfapi_callback_log(format!("FETCH_DATA already cancelled file={remote_id}"));
         return Ok(());
     }
 
@@ -587,68 +605,183 @@ fn handle_fetch_data(
     let request_key = info.RequestKey;
     let connection_key = info.ConnectionKey;
     let transfer_key = info.TransferKey;
+
+    let progress_completed = std::sync::Arc::new(AtomicU64::new(0));
+    let progress_total = std::sync::Arc::new(AtomicU64::new(100));
     let stop_progress = std::sync::Arc::new(AtomicBool::new(false));
     let stop_flag = stop_progress.clone();
+    let completed_flag = progress_completed.clone();
+    let total_flag = progress_total.clone();
     let progress_thread = std::thread::spawn(move || {
-        let mut tick = 0i64;
         while !stop_flag.load(Ordering::Relaxed) {
             if is_fetch_data_request_cancelled(request_key) {
                 break;
             }
-            tick = (tick + 1).min(99);
-            let _ = unsafe { CfReportProviderProgress(connection_key, transfer_key, 100, tick) };
-            std::thread::sleep(Duration::from_secs(2));
+            let total = total_flag.load(Ordering::Relaxed).max(1);
+            let done = completed_flag.load(Ordering::Relaxed).min(total);
+            // Keep Completed in 1..99 until hydrate finishes so Windows does not time out.
+            let tick = ((done * 99) / total).clamp(1, 99);
+            let _ = unsafe {
+                CfReportProviderProgress(connection_key, transfer_key, 100, tick as i64)
+            };
+            std::thread::sleep(Duration::from_millis(250));
         }
     });
 
+    let progress_cb: crate::api::UploadProgressCb = {
+        let completed = progress_completed.clone();
+        let total = progress_total.clone();
+        std::sync::Arc::new(move |done: u64, tot: u64| {
+            if tot > 0 {
+                total.store(tot, Ordering::Relaxed);
+            }
+            completed.store(done, Ordering::Relaxed);
+        })
+    };
+
+    let hydrate_started = Instant::now();
     let remote_id_for_hydrate = remote_id.clone();
     let hydrate_result = crate::blocking::run_async_future_with_timeout(
         HYDRATE_TIMEOUT,
         async move {
-            ensure_hydrated_plaintext(&ctx.1, &ctx.0, &remote_id_for_hydrate)
-                .await
-                .map_err(|e| e.to_string())
+            ensure_hydrated_plaintext_with_progress(
+                &ctx.1,
+                &ctx.0,
+                &remote_id_for_hydrate,
+                Some(progress_cb),
+            )
+            .await
+            .map_err(|e| e.to_string())
         },
     );
 
     stop_progress.store(true, Ordering::Relaxed);
     let _ = progress_thread.join();
 
+    let cache_path = match hydrate_result {
+        Ok(path) => path,
+        Err(e) => {
+            cfapi_callback_log(format!(
+                "FETCH_DATA hydrate failed file={remote_id} after {:?}: {e}",
+                hydrate_started.elapsed()
+            ));
+            return Err(e);
+        }
+    };
+
+    cfapi_callback_log(format!(
+        "FETCH_DATA hydrate ok file={remote_id} in {:?} cancelled={}",
+        hydrate_started.elapsed(),
+        is_fetch_data_request_cancelled(request_key)
+    ));
+
+    let pin_after_cancel = |reason: &str| {
+        let Some(dest) = placeholder_path.as_ref() else {
+            cfapi_callback_log(format!(
+                "FETCH_DATA {reason}: no placeholder path file={remote_id}"
+            ));
+            return;
+        };
+        match pin_hydrated_cache_to_path(&cache_path, dest) {
+            Ok(()) => cfapi_callback_log(format!(
+                "FETCH_DATA pin-after-cancel ok file={remote_id} {}",
+                dest.display()
+            )),
+            Err(e) => cfapi_callback_log(format!(
+                "FETCH_DATA pin-after-cancel failed file={remote_id}: {e}"
+            )),
+        }
+    };
+
+    // Windows often cancels large-file FETCH before TRANSFER_DATA; cache is ready — pin to disk.
     if is_fetch_data_request_cancelled(request_key) {
+        pin_after_cancel("cancelled after hydrate");
         return Ok(());
     }
-
-    let cache_path = hydrate_result?;
-
-    let fetch = unsafe { params.Anonymous.FetchData };
-    let offset = fetch.RequiredFileOffset;
-    let length = fetch.RequiredLength as usize;
-    let offset_usize = offset as usize;
 
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(&cache_path).map_err(|e| e.to_string())?;
-    let file_len = file.metadata().map_err(|e| e.to_string())?.len() as usize;
-    if offset_usize > file_len {
+    let file_len = file.metadata().map_err(|e| e.to_string())?.len();
+    let offset_u = req_offset as u64;
+    if offset_u > file_len {
         return Err("fetch offset beyond file".into());
     }
-    let end = (offset_usize + length).min(file_len);
-    let need = end - offset_usize;
-    file.seek(SeekFrom::Start(offset as u64))
-        .map_err(|e| e.to_string())?;
-    let mut chunk = vec![0u8; need];
-    file.read_exact(&mut chunk).map_err(|e| e.to_string())?;
+    let end = (offset_u.saturating_add(req_length)).min(file_len);
 
-    if is_fetch_data_request_cancelled(request_key) {
-        return Ok(());
+    let transfer_started = Instant::now();
+    let mut pos = offset_u;
+    let mut transferred = 0u64;
+    while pos < end {
+        if is_fetch_data_request_cancelled(request_key) {
+            pin_after_cancel("cancelled during transfer");
+            return Ok(());
+        }
+
+        let mut chunk_end = (pos + TRANSFER_CHUNK as u64).min(end);
+        // Align length to 4KiB unless this chunk reaches EOF.
+        if chunk_end < file_len {
+            let len = chunk_end - pos;
+            let aligned = (len / TRANSFER_ALIGN as u64) * TRANSFER_ALIGN as u64;
+            if aligned == 0 {
+                chunk_end = (pos + TRANSFER_ALIGN as u64).min(file_len);
+            } else {
+                chunk_end = pos + aligned;
+            }
+            if chunk_end > end && end < file_len {
+                // Stay within required range when not finishing the file: shrink to aligned end.
+                let max_aligned = (end / TRANSFER_ALIGN as u64) * TRANSFER_ALIGN as u64;
+                if max_aligned > pos {
+                    chunk_end = max_aligned;
+                } else {
+                    // Required range ends mid-block and not at EOF — over-read to EOF or next align.
+                    chunk_end = (pos + TRANSFER_ALIGN as u64).min(file_len);
+                }
+            }
+        }
+
+        let need = (chunk_end - pos) as usize;
+        file.seek(SeekFrom::Start(pos))
+            .map_err(|e| e.to_string())?;
+        let mut chunk = vec![0u8; need];
+        file.read_exact(&mut chunk).map_err(|e| e.to_string())?;
+
+        if is_fetch_data_request_cancelled(request_key) {
+            pin_after_cancel("cancelled before chunk transfer");
+            return Ok(());
+        }
+
+        match unsafe {
+            transfer_data(
+                info,
+                pos as i64,
+                chunk.len() as i64,
+                &chunk,
+                STATUS_SUCCESS,
+            )
+        } {
+            Ok(()) => {}
+            Err(e) if is_cloud_op_canceled(&e.to_string()) => {
+                pin_after_cancel("TRANSFER_DATA canceled");
+                return Ok(());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+
+        transferred += chunk.len() as u64;
+        pos = chunk_end;
+        let range_total = (end - offset_u).max(1);
+        let tick = ((transferred * 99) / range_total).clamp(1, 99);
+        let _ = unsafe {
+            CfReportProviderProgress(connection_key, transfer_key, 100, tick as i64)
+        };
     }
 
     let _ = unsafe { CfReportProviderProgress(connection_key, transfer_key, 100, 100) };
-
-    match unsafe { transfer_data(info, offset, chunk.len() as i64, &chunk, STATUS_SUCCESS) } {
-        Ok(()) => Ok(()),
-        Err(e) if is_cloud_op_canceled(&e.to_string()) => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
+    cfapi_callback_log(format!(
+        "FETCH_DATA transfer ok file={remote_id} bytes={transferred} in {:?}",
+        transfer_started.elapsed()
+    ));
+    Ok(())
 }
 
 unsafe fn transfer_data(

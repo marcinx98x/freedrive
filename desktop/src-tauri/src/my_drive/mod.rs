@@ -8,7 +8,8 @@ pub use cleanup::{clear_my_drive_contents, uninstall_remove_app_data, uninstall_
 pub use provider::{
     api_folder_parent_id, begin_fetch_data_inflight, clear_all_hydrate_cache,
     clear_hydrate_cache_for_file, end_fetch_data_inflight, ensure_hydrated_plaintext,
-    fetch_folder_contents, hash_local_file, is_fetch_data_inflight, is_under_my_drive,
+    ensure_hydrated_plaintext_with_progress, fetch_folder_contents, hash_local_file,
+    is_fetch_data_inflight, is_under_my_drive, pin_hydrated_cache_to_path,
     relative_path_from_sync_root, resolve_folder_id_for_fetch, resolve_my_drive_root_id,
     FolderIdSource, ROOT_FOLDER_CONFIG_KEY,
 };

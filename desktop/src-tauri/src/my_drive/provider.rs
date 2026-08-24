@@ -236,10 +236,22 @@ pub async fn ensure_hydrated_plaintext(
     db: &DbHandle,
     file_id: &str,
 ) -> AppResult<PathBuf> {
+    ensure_hydrated_plaintext_with_progress(api, db, file_id, None).await
+}
+
+pub async fn ensure_hydrated_plaintext_with_progress(
+    api: &ApiClient,
+    db: &DbHandle,
+    file_id: &str,
+    on_progress: Option<crate::api::UploadProgressCb>,
+) -> AppResult<PathBuf> {
     let cache_path = hydrate_cache_path(file_id)?;
     let remote = api.get_file(file_id).await?;
     if hydrate_cache_matches(&cache_path, remote.version, remote.size) {
         ensure_known_hash_from_cache(db, file_id, &cache_path, remote.version, remote.size);
+        if let Some(cb) = &on_progress {
+            cb(100, 100);
+        }
         return Ok(cache_path);
     }
 
@@ -249,6 +261,9 @@ pub async fn ensure_hydrated_plaintext(
     let remote = api.get_file(file_id).await?;
     if hydrate_cache_matches(&cache_path, remote.version, remote.size) {
         ensure_known_hash_from_cache(db, file_id, &cache_path, remote.version, remote.size);
+        if let Some(cb) = &on_progress {
+            cb(100, 100);
+        }
         return Ok(cache_path);
     }
 
@@ -272,8 +287,13 @@ pub async fn ensure_hydrated_plaintext(
     if let Some(parent) = cache_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    api.download_file_to_path(file_id, Some(&key_b64url), &cache_path)
-        .await?;
+    api.download_file_to_path_with_progress(
+        file_id,
+        Some(&key_b64url),
+        &cache_path,
+        on_progress.as_ref(),
+    )
+    .await?;
 
     if remote.size > 0 {
         let got = std::fs::metadata(&cache_path)
@@ -295,6 +315,15 @@ pub async fn ensure_hydrated_plaintext(
         let _ = my_drive_set_content_hash(&conn, file_id, &content_hash);
     }
     Ok(cache_path)
+}
+
+/// Copy plaintext from hydrate_cache onto a My Drive placeholder path (shell hydrate / pin-after-cancel).
+pub fn pin_hydrated_cache_to_path(cache_path: &Path, dest: &Path) -> AppResult<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(cache_path, dest)?;
+    Ok(())
 }
 
 fn plaintext_hash_hex(data: &[u8]) -> String {

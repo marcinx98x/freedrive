@@ -1494,6 +1494,17 @@ impl ApiClient {
         key_b64url: Option<&str>,
         dest: &Path,
     ) -> AppResult<()> {
+        self.download_file_to_path_with_progress(file_id, key_b64url, dest, None)
+            .await
+    }
+
+    pub async fn download_file_to_path_with_progress(
+        &self,
+        file_id: &str,
+        key_b64url: Option<&str>,
+        dest: &Path,
+        on_progress: Option<&UploadProgressCb>,
+    ) -> AppResult<()> {
         let mut auth_retry = false;
         let mut rl_retries = 2u32;
         let mut transient_retries = 3u32;
@@ -1501,7 +1512,7 @@ impl ApiClient {
 
         loop {
             match self
-                .download_file_to_path_once(file_id, key_b64url, dest)
+                .download_file_to_path_once(file_id, key_b64url, dest, on_progress)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -1536,6 +1547,7 @@ impl ApiClient {
         file_id: &str,
         key_b64url: Option<&str>,
         dest: &Path,
+        on_progress: Option<&UploadProgressCb>,
     ) -> AppResult<()> {
         use futures_util::StreamExt;
         use tokio::io::AsyncWriteExt;
@@ -1576,6 +1588,11 @@ impl ApiClient {
             .unwrap_or("")
             .to_string();
 
+        // Ciphertext download is ~0..90 of progress; decrypt/write uses 90..100.
+        let content_len = res.content_length().unwrap_or(0);
+        let download_total = if content_len > 0 { content_len } else { 1 };
+        report_progress(on_progress, 0, 100);
+
         if let Some(parent) = dest.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -1587,17 +1604,23 @@ impl ApiClient {
         {
             let mut file = tokio::fs::File::create(&enc_path).await?;
             let mut stream = res.bytes_stream();
+            let mut downloaded = 0u64;
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk
                     .map_err(|e| AppError::msg(format!("download interrupted: {e}")))?;
+                downloaded = downloaded.saturating_add(chunk.len() as u64);
                 file.write_all(&chunk).await?;
+                let pct = ((downloaded.min(download_total) * 90) / download_total).min(90);
+                report_progress(on_progress, pct, 100);
             }
             file.flush().await?;
         }
+        report_progress(on_progress, 90, 100);
 
         let result = async {
             if iv_header.is_empty() {
                 tokio::fs::rename(&enc_path, dest).await?;
+                report_progress(on_progress, 100, 100);
                 return Ok(());
             }
 
@@ -1605,15 +1628,18 @@ impl ApiClient {
                 key_b64url.ok_or_else(|| AppError::msg("missing encryption key"))?;
             let key = crypto::key_from_b64url(key_b64url)?;
             let iv = crypto::iv_from_base64(&iv_header)?;
+            report_progress(on_progress, 92, 100);
             let ciphertext = tokio::fs::read(&enc_path).await?;
             let plaintext = crypto::decrypt_file(&ciphertext, &key, &iv)?;
             drop(ciphertext);
+            report_progress(on_progress, 96, 100);
             // Atomic replace so partial plaintext never stays as the cache file.
             let plain_tmp = dest.with_extension("plain.tmp");
             let _ = tokio::fs::remove_file(&plain_tmp).await;
             tokio::fs::write(&plain_tmp, &plaintext).await?;
             drop(plaintext);
             tokio::fs::rename(&plain_tmp, dest).await?;
+            report_progress(on_progress, 100, 100);
             Ok::<(), AppError>(())
         }
         .await;
