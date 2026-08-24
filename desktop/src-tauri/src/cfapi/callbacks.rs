@@ -626,8 +626,8 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         crate::db::my_drive_get_placeholder(&conn, &relative)
             .ok()
             .flatten()
-            .filter(|(_, item_type)| item_type == "file")
-            .map(|(id, _)| id)
+            .filter(|(_, item_type, _)| item_type == "file")
+            .map(|(id, _, _)| id)
     });
 
     let stream_mode = crate::sync::engine::sync_mode_is_stream(&db);

@@ -176,6 +176,17 @@ async fn poll_my_drive_folder(
     if std::fs::create_dir_all(&local_dir).is_ok() {
         apply_remote_children(db, parent_relative, &local_dir, &contents, suppress);
         reconcile_local_against_remote(db, parent_relative, &local_dir, &contents, suppress);
+        refresh_files_when_remote_newer(
+            api,
+            db,
+            parent_relative,
+            &local_dir,
+            &contents.files,
+            mirror,
+            suppress,
+            stats,
+        )
+        .await;
         let parent_id = match folder_id {
             Some(id) => id.to_string(),
             None => resolve_my_drive_root_id(db)?,
@@ -329,6 +340,7 @@ async fn upload_local_only_children(
                         &folder.id,
                         "folder",
                         api_folder_parent_id(parent_folder_id),
+                        None,
                     );
                 }
                 if let Err(e) = ensure_cloud_placeholder(&path, "folder", &folder.id) {
@@ -482,7 +494,7 @@ fn apply_remote_children(
 
     // Ensure parent is a cloud placeholder before creating file children.
     if let Ok(conn) = db.lock() {
-        if let Ok(Some((remote_id, _))) = my_drive_get_placeholder(&conn, parent_relative) {
+        if let Ok(Some((remote_id, _, _))) = my_drive_get_placeholder(&conn, parent_relative) {
             if let Err(e) = ensure_cloud_placeholder(local_dir, "folder", &remote_id) {
                 sync_log(format!(
                     "My Drive ensure parent cloud placeholder {}: {}",
@@ -775,12 +787,16 @@ async fn mirror_file_if_needed(
 ) -> AppResult<bool> {
     let local_path = local_dir.join(sanitize_name(&file.name));
     let expected = file.size.max(0) as u64;
-    let needs = match std::fs::metadata(&local_path) {
-        // Refresh when size differs (grew or shrank) — e.g. web rotate/re-encode.
+    let known_version = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        crate::db::my_drive_known_remote_version(&conn, &file.id).unwrap_or(0)
+    };
+    let size_mismatch = match std::fs::metadata(&local_path) {
         Ok(meta) => meta.len() != expected,
         Err(_) => true,
     };
-    if !needs {
+    let version_newer = file.version > known_version;
+    if !size_mismatch && !version_newer {
         return Ok(false);
     }
     let cached = ensure_hydrated_plaintext(api, db, &file.id).await?;
@@ -788,6 +804,21 @@ async fn mirror_file_if_needed(
         let _ = std::fs::create_dir_all(parent);
     }
     std::fs::copy(&cached, &local_path)?;
+    set_path_mtime_from_remote(&local_path, &file.updated_at);
+    if let Ok(conn) = db.lock() {
+        if let Ok(Some((rel, _, parent))) =
+            crate::db::my_drive_get_placeholder_by_remote_id(&conn, &file.id)
+        {
+            let _ = my_drive_upsert_placeholder(
+                &conn,
+                &rel,
+                &file.id,
+                "file",
+                parent.as_deref(),
+                Some(file.version),
+            );
+        }
+    }
     Ok(true)
 }
 
@@ -814,11 +845,23 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
     let existing_remote = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_get_placeholder(&conn, &relative)?
-            .filter(|(_, item_type)| item_type == "file")
-            .map(|(id, _)| id)
+            .filter(|(_, item_type, _)| item_type == "file")
+            .map(|(id, _, known_ver)| (id, known_ver))
     };
 
-    if let Some(remote_id) = existing_remote {
+    if let Some((remote_id, known_ver)) = existing_remote {
+        // Google Drive style: remote version is source of truth — never overwrite a newer restore/edit.
+        if let Ok(remote) = api.get_file(&remote_id).await {
+            if remote.version > known_ver {
+                sync_log(format!(
+                    "My Drive skip upload (remote newer v{} > known v{}) — {}",
+                    remote.version, known_ver, file_name
+                ));
+                pull_remote_file_over_local(api, db, path, &relative, &remote, None).await?;
+                return Ok(());
+            }
+        }
+
         let existing_key = {
             let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
             get_file_key(&conn, &remote_id)?
@@ -829,7 +872,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
             .await?;
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
-        my_drive_upsert_placeholder(&conn, &relative, &rec.id, "file", None)?;
+        my_drive_upsert_placeholder(&conn, &relative, &rec.id, "file", None, Some(rec.version))?;
         sync_log(format!("My Drive updated — {}", file_name));
         return Ok(());
     }
@@ -841,7 +884,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         .await?;
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
-    my_drive_upsert_placeholder(&conn, &relative, &rec.id, "file", api_parent)?;
+    my_drive_upsert_placeholder(&conn, &relative, &rec.id, "file", api_parent, Some(rec.version))?;
     sync_log(format!("My Drive uploaded — {}", file_name));
     Ok(())
 }
@@ -857,8 +900,8 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
     let remote_id = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_get_placeholder(&conn, &relative)?
-            .filter(|(_, item_type)| item_type == "file")
-            .map(|(id, _)| id)
+            .filter(|(_, item_type, _)| item_type == "file")
+            .map(|(id, _, _)| id)
     };
 
     if let Some(remote_id) = remote_id {
@@ -901,7 +944,7 @@ pub async fn ensure_my_drive_folder_relative(
     }
 
     if let Ok(conn) = db.lock() {
-        if let Some((remote_id, item_type)) = my_drive_get_placeholder(&conn, &folder_relative)? {
+        if let Some((remote_id, item_type, _)) = my_drive_get_placeholder(&conn, &folder_relative)? {
             if item_type == "folder" {
                 return Ok(remote_id);
             }
@@ -923,7 +966,7 @@ pub async fn ensure_my_drive_folder_relative(
         let part = name.to_string_lossy();
         built_relative = format!("{}\\{}", built_relative, part);
         if let Ok(conn) = db.lock() {
-            if let Some((remote_id, item_type)) = my_drive_get_placeholder(&conn, &built_relative)? {
+            if let Some((remote_id, item_type, _)) = my_drive_get_placeholder(&conn, &built_relative)? {
                 if item_type == "folder" {
                     current_parent = remote_id;
                     continue;
@@ -940,6 +983,7 @@ pub async fn ensure_my_drive_folder_relative(
             &folder.id,
             "folder",
             api_folder_parent_id(&current_parent),
+            None,
         )?;
         current_parent = folder.id;
     }
@@ -1009,8 +1053,8 @@ async fn hydrate_my_drive_file(
     let remote_id = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_get_placeholder(&conn, relative)?
-            .filter(|(_, ty)| ty == "file")
-            .map(|(id, _)| id)
+            .filter(|(_, ty, _)| ty == "file")
+            .map(|(id, _, _)| id)
     };
     let Some(remote_id) = remote_id else {
         // Local-only file — already on disk.
@@ -1123,8 +1167,8 @@ async fn free_up_my_drive_file(
     let mut remote_id = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_get_placeholder(&conn, relative)?
-            .filter(|(_, ty)| ty == "file")
-            .map(|(id, _)| id)
+            .filter(|(_, ty, _)| ty == "file")
+            .map(|(id, _, _)| id)
     };
 
     // Prefer dehydrate without re-upload when the file is already tracked remotely.
@@ -1140,8 +1184,8 @@ async fn free_up_my_drive_file(
         remote_id = {
             let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
             my_drive_get_placeholder(&conn, relative)?
-                .filter(|(_, ty)| ty == "file")
-                .map(|(id, _)| id)
+                .filter(|(_, ty, _)| ty == "file")
+                .map(|(id, _, _)| id)
         };
     }
 
@@ -1345,8 +1389,8 @@ async fn free_up_tree_pass_recursive(
         let remote_id = {
             let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
             my_drive_get_placeholder(&conn, &relative)?
-                .filter(|(_, ty)| ty == "file")
-                .map(|(id, _)| id)
+                .filter(|(_, ty, _)| ty == "file")
+                .map(|(id, _, _)| id)
         };
         let Some(remote_id) = remote_id else {
             // No remote mapping — leave for earlier free_up_my_drive_file pass / next sync.
@@ -1418,4 +1462,149 @@ fn join_my_drive_relative(parent_relative: &str, name: &str) -> String {
 
 fn sanitize_name(name: &str) -> String {
     name.replace(['/', '\\'], "_")
+}
+
+fn set_path_mtime_from_remote(path: &Path, updated_at: &str) {
+    let when = chrono::DateTime::parse_from_rfc3339(updated_at)
+        .ok()
+        .map(|dt| std::time::SystemTime::from(dt.with_timezone(&chrono::Utc)))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(updated_at, "%Y-%m-%d %H:%M:%S%.f")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(updated_at, "%Y-%m-%d %H:%M:%S"))
+                .ok()
+                .map(|ndt| std::time::SystemTime::from(ndt.and_utc()))
+        })
+        .unwrap_or_else(std::time::SystemTime::now);
+    if let Ok(file) = std::fs::File::options().write(true).open(path) {
+        let _ = file.set_modified(when);
+    }
+}
+
+/// When server content is newer (restore / web edit), replace stale local bytes instead of keeping them.
+async fn refresh_files_when_remote_newer(
+    api: &ApiClient,
+    db: &DbHandle,
+    parent_relative: &str,
+    local_dir: &Path,
+    files: &[crate::api::types::FileRecord],
+    mirror: bool,
+    suppress: Option<&WatcherSuppress>,
+    stats: &mut MyDrivePollStats,
+) {
+    for file in files {
+        let known = {
+            let Ok(conn) = db.lock() else {
+                continue;
+            };
+            crate::db::my_drive_known_remote_version(&conn, &file.id).unwrap_or(0)
+        };
+        if file.version <= known {
+            continue;
+        }
+        let local_path = local_dir.join(sanitize_name(&file.name));
+        // Nothing local yet — update known version; open will hydrate via FETCH_DATA.
+        if !local_path.exists() && !mirror {
+            if let Ok(conn) = db.lock() {
+                let child_rel = join_my_drive_relative(parent_relative, &file.name);
+                let parent_id = crate::db::my_drive_get_placeholder_by_remote_id(&conn, &file.id)
+                    .ok()
+                    .flatten()
+                    .and_then(|(_, _, p)| p);
+                let _ = my_drive_upsert_placeholder(
+                    &conn,
+                    &child_rel,
+                    &file.id,
+                    "file",
+                    parent_id.as_deref(),
+                    Some(file.version),
+                );
+            }
+            continue;
+        }
+        let relative = join_my_drive_relative(parent_relative, &file.name);
+        match pull_remote_file_over_local(api, db, &local_path, &relative, file, suppress).await {
+            Ok(()) => {
+                stats.files_mirrored += 1;
+                sync_log(format!(
+                    "My Drive refreshed remote-newer v{} — {}",
+                    file.version, relative
+                ));
+            }
+            Err(e) => {
+                stats.errors += 1;
+                sync_log(format!(
+                    "My Drive refresh remote-newer failed {}: {}",
+                    relative, e
+                ));
+            }
+        }
+    }
+}
+
+async fn pull_remote_file_over_local(
+    api: &ApiClient,
+    db: &DbHandle,
+    local_path: &Path,
+    relative: &str,
+    file: &crate::api::types::FileRecord,
+    suppress: Option<&WatcherSuppress>,
+) -> AppResult<()> {
+    clear_hydrate_cache_for_file(&file.id);
+    let parent_remote = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        crate::db::my_drive_get_placeholder_by_remote_id(&conn, &file.id)?
+            .and_then(|(_, _, p)| p)
+    };
+
+    let stream_mode = crate::sync::engine::sync_mode_is_stream(db);
+    if stream_mode && local_path.exists() {
+        let dehydrate = || -> AppResult<()> {
+            if is_dehydrated_placeholder(local_path) {
+                return Ok(());
+            }
+            match dehydrate_placeholder_file(local_path) {
+                Ok(()) => Ok(()),
+                Err(e) if is_not_cloud_file_error(&e) => {
+                    // Plain hydrated file — remove bytes so next open FETCH_DATA rehydrates.
+                    let _ = std::fs::remove_file(local_path);
+                    if let Some(parent) = local_path.parent() {
+                        let _ = create_file_placeholder(parent, file);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        };
+        if let Some(suppress) = suppress {
+            suppress.run_suppressed(local_path, dehydrate)?;
+        } else {
+            dehydrate()?;
+        }
+    } else {
+        let cached = ensure_hydrated_plaintext(api, db, &file.id).await?;
+        if let Some(parent) = local_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let copy = || -> AppResult<()> {
+            std::fs::copy(&cached, local_path)?;
+            set_path_mtime_from_remote(local_path, &file.updated_at);
+            Ok(())
+        };
+        if let Some(suppress) = suppress {
+            suppress.run_suppressed(local_path, copy)?;
+        } else {
+            copy()?;
+        }
+    }
+
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    my_drive_upsert_placeholder(
+        &conn,
+        relative,
+        &file.id,
+        "file",
+        parent_remote.as_deref(),
+        Some(file.version),
+    )?;
+    Ok(())
 }

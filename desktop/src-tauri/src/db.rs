@@ -77,6 +77,20 @@ fn init_schema(conn: &Connection) -> AppResult<()> {
     )?;
     purge_mirror_sync_state_once(conn)?;
     migrate_bidir_schema(conn)?;
+    migrate_my_drive_remote_version(conn)?;
+    Ok(())
+}
+
+fn migrate_my_drive_remote_version(conn: &Connection) -> AppResult<()> {
+    if config_get(conn, "my_drive_remote_version_v1")?.as_deref() == Some("true") {
+        return Ok(());
+    }
+    let _ = conn.execute_batch(
+        r#"
+        ALTER TABLE my_drive_placeholders ADD COLUMN remote_version INTEGER NOT NULL DEFAULT 0;
+        "#,
+    );
+    config_set(conn, "my_drive_remote_version_v1", "true")?;
     Ok(())
 }
 
@@ -1109,31 +1123,42 @@ pub fn my_drive_upsert_placeholder(
     remote_id: &str,
     item_type: &str,
     parent_remote_id: Option<&str>,
+    remote_version: Option<i32>,
 ) -> AppResult<()> {
     let relative_path = normalize_my_drive_relative_path(relative_path);
+    // None = leave existing remote_version unchanged (listing/poll must not hide "remote newer").
     conn.execute(
-        "INSERT INTO my_drive_placeholders (relative_path, remote_id, item_type, parent_remote_id)
-         VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO my_drive_placeholders (relative_path, remote_id, item_type, parent_remote_id, remote_version)
+         VALUES (?1, ?2, ?3, ?4, COALESCE(?5, 0))
          ON CONFLICT(relative_path) DO UPDATE SET
            remote_id = excluded.remote_id,
            item_type = excluded.item_type,
-           parent_remote_id = excluded.parent_remote_id",
-        params![relative_path, remote_id, item_type, parent_remote_id],
+           parent_remote_id = excluded.parent_remote_id,
+           remote_version = COALESCE(?5, my_drive_placeholders.remote_version)",
+        params![
+            relative_path,
+            remote_id,
+            item_type,
+            parent_remote_id,
+            remote_version
+        ],
     )?;
     Ok(())
 }
 
+/// Returns `(remote_id, item_type, remote_version)`.
 pub fn my_drive_get_placeholder(
     conn: &Connection,
     relative_path: &str,
-) -> AppResult<Option<(String, String)>> {
+) -> AppResult<Option<(String, String, i32)>> {
     let relative_path = normalize_my_drive_relative_path(relative_path);
     let mut stmt = conn.prepare(
-        "SELECT remote_id, item_type FROM my_drive_placeholders WHERE relative_path = ?1 COLLATE NOCASE",
+        "SELECT remote_id, item_type, COALESCE(remote_version, 0)
+         FROM my_drive_placeholders WHERE relative_path = ?1 COLLATE NOCASE",
     )?;
     let mut rows = stmt.query(params![relative_path])?;
     if let Some(row) = rows.next()? {
-        Ok(Some((row.get(0)?, row.get(1)?)))
+        Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?)))
     } else {
         Ok(None)
     }
@@ -1151,6 +1176,18 @@ pub fn my_drive_get_placeholder_by_remote_id(
         Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?)))
     } else {
         Ok(None)
+    }
+}
+
+pub fn my_drive_known_remote_version(conn: &Connection, remote_id: &str) -> AppResult<i32> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(remote_version, 0) FROM my_drive_placeholders WHERE remote_id = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![remote_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0)?)
+    } else {
+        Ok(0)
     }
 }
 
@@ -1301,7 +1338,7 @@ mod tests {
     fn my_drive_placeholder_roundtrip() {
         let conn = test_conn();
         init_schema(&conn).unwrap();
-        my_drive_upsert_placeholder(&conn, "My Drive\\Docs", "f-1", "folder", Some("root-1")).unwrap();
+        my_drive_upsert_placeholder(&conn, "My Drive\\Docs", "f-1", "folder", Some("root-1"), None).unwrap();
         let row = my_drive_get_placeholder(&conn, "My Drive\\Docs").unwrap();
         assert_eq!(row.as_ref().map(|r| r.0.as_str()), Some("f-1"));
         assert_eq!(row.as_ref().map(|r| r.1.as_str()), Some("folder"));
@@ -1311,16 +1348,17 @@ mod tests {
     fn my_drive_delete_placeholders_under_prefix_cascades() {
         let conn = test_conn();
         init_schema(&conn).unwrap();
-        my_drive_upsert_placeholder(&conn, "My Drive\\Docs", "f-1", "folder", Some("root-1")).unwrap();
+        my_drive_upsert_placeholder(&conn, "My Drive\\Docs", "f-1", "folder", Some("root-1"), None).unwrap();
         my_drive_upsert_placeholder(
             &conn,
             "My Drive\\Docs\\a.txt",
             "file-1",
             "file",
             Some("f-1"),
+            Some(1),
         )
         .unwrap();
-        my_drive_upsert_placeholder(&conn, "My Drive\\Other", "f-2", "folder", Some("root-1"))
+        my_drive_upsert_placeholder(&conn, "My Drive\\Other", "f-2", "folder", Some("root-1"), None)
             .unwrap();
         let n = my_drive_delete_placeholders_under_prefix(&conn, "My Drive\\Docs").unwrap();
         assert_eq!(n, 2);
@@ -1381,6 +1419,7 @@ mod tests {
             "file-remote",
             "file",
             Some("folder-remote"),
+            Some(3),
         )
         .unwrap();
         let row = my_drive_get_placeholder_by_remote_id(&conn, "file-remote").unwrap();
@@ -1390,6 +1429,40 @@ mod tests {
             row.as_ref().and_then(|r| r.2.as_deref()),
             Some("folder-remote")
         );
+    }
+
+    #[test]
+    fn my_drive_remote_version_none_preserves_known() {
+        let conn = test_conn();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\a.jpg",
+            "file-1",
+            "file",
+            Some("folder-1"),
+            Some(5),
+        )
+        .unwrap();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\a.jpg",
+            "file-1",
+            "file",
+            Some("folder-1"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(my_drive_known_remote_version(&conn, "file-1").unwrap(), 5);
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\a.jpg",
+            "file-1",
+            "file",
+            Some("folder-1"),
+            Some(7),
+        )
+        .unwrap();
+        assert_eq!(my_drive_known_remote_version(&conn, "file-1").unwrap(), 7);
     }
 
     #[test]

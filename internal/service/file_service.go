@@ -732,7 +732,10 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 	file.IV = v.IV
 	file.Version += 1
 	file.ContentHash = "" // plaintext hash unknown after restore from encrypted history
-	file.AccessedAt = time.Now()
+	// Like Google Drive: restore is a new current edit, not a clock rewind.
+	now := time.Now()
+	file.UpdatedAt = now
+	file.AccessedAt = now
 
 	if err := s.fileRepo.Update(ctx, file); err != nil {
 		_ = s.storage.Delete(newBlobPath)
@@ -748,6 +751,10 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 	}
 	s.pruneFileVersions(ctx, userID, file.ID)
 	s.logActivity(ctx, userID, domain.ActionRestore, "file", file.ID, file.Name, fmt.Sprintf(`{"version":%d}`, version))
+
+	if s.syncChange != nil {
+		_ = s.syncChange.RecordFileUpdate(ctx, file)
+	}
 
 	return file, nil
 }

@@ -644,6 +644,7 @@ mod tests {
             folder_id: None,
             updated_at: "2026-01-01T00:00:00Z".into(),
             version: 1,
+            content_hash: String::new(),
         }];
         let entries = build_placeholder_infos(&folders, &files);
         assert_eq!(entries.len(), 2);

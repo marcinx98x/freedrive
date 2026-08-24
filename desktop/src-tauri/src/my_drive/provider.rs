@@ -62,7 +62,7 @@ pub fn is_under_my_drive(relative: &str) -> bool {
 pub fn store_root_folder_id(db: &DbHandle, folder_id: &str) -> AppResult<()> {
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     config_set(&conn, ROOT_FOLDER_CONFIG_KEY, folder_id)?;
-    my_drive_upsert_placeholder(&conn, "My Drive", folder_id, "folder", None)?;
+    my_drive_upsert_placeholder(&conn, "My Drive", folder_id, "folder", None, None)?;
     Ok(())
 }
 
@@ -135,7 +135,7 @@ pub fn resolve_folder_id(db: &DbHandle, relative_path: &str) -> AppResult<Option
     }
 
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-    if let Some((remote_id, item_type)) = my_drive_get_placeholder(&conn, relative_path)? {
+    if let Some((remote_id, item_type, _)) = my_drive_get_placeholder(&conn, relative_path)? {
         if item_type == "folder" {
             return Ok(Some(remote_id));
         }
@@ -191,6 +191,7 @@ pub async fn fetch_folder_contents(
                 &folder.id,
                 "folder",
                 parent_remote,
+                None,
             )?;
         }
         for file in &contents.files {
@@ -198,7 +199,16 @@ pub async fn fetch_folder_contents(
                 .join(&file.name)
                 .to_string_lossy()
                 .replace('/', "\\");
-            my_drive_upsert_placeholder(&conn, &rel, &file.id, "file", parent_remote)?;
+            // Do not stamp remote_version here — refresh_files_when_remote_newer
+            // compares listed file.version against the last synced value.
+            my_drive_upsert_placeholder(
+                &conn,
+                &rel,
+                &file.id,
+                "file",
+                parent_remote,
+                None,
+            )?;
         }
     }
 
@@ -443,6 +453,7 @@ mod tests {
                 "fid-1",
                 "file",
                 Some("f-parent"),
+                None,
             )
             .unwrap();
             store_pending_file_key(&conn, "f-parent", "a.bin", "pending-key").unwrap();
