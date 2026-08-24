@@ -5368,6 +5368,146 @@ const FileManager = (() => {
         if (e.target === e.currentTarget) closeEditor();
     }
 
+    function getMediaSiblings(currentFile) {
+        const list = filteredFiles.filter((f) => {
+            const g = getMimeGroup(f.mime_type, 'file', f.name);
+            return g === 'image' || g === 'video';
+        });
+        if (currentFile && !list.some((f) => f.id === currentFile.id)) {
+            return [currentFile, ...list];
+        }
+        return list;
+    }
+
+    function clearEditorMediaSideButtons() {
+        document
+            .getElementById('editor-overlay')
+            ?.querySelectorAll('.editor-media-side-btn')
+            .forEach((el) => el.remove());
+    }
+
+    /** Prev/next among images+videos in the current folder listing (like mobile gallery). */
+    function wireEditorMediaNav(file, { keyboard = false } = {}) {
+        const siblings = getMediaSiblings(file);
+        let index = siblings.findIndex((f) => f.id === file.id);
+        if (index < 0) {
+            siblings.unshift(file);
+            index = 0;
+        }
+        if (!editorState) return;
+        editorState.mediaNav = { siblings, index, keyboard };
+        if (siblings.length <= 1) return;
+
+        const shell = document.getElementById('editor-shell');
+        const controls = shell?.querySelector('#editor-main-controls');
+        if (controls && !controls.querySelector('.editor-media-nav')) {
+            const nav = document.createElement('div');
+            nav.className = 'editor-media-nav';
+            nav.innerHTML = `
+                <button type="button" class="btn-icon" id="editor-media-prev" title="Previous" aria-label="Previous file">
+                    <span class="material-icons-outlined">chevron_left</span>
+                </button>
+                <span class="editor-media-counter" id="editor-media-counter">${index + 1} / ${siblings.length}</span>
+                <button type="button" class="btn-icon" id="editor-media-next" title="Next" aria-label="Next file">
+                    <span class="material-icons-outlined">chevron_right</span>
+                </button>
+            `;
+            controls.insertBefore(nav, controls.firstChild);
+            nav.querySelector('#editor-media-prev')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigateEditorMedia(-1);
+            });
+            nav.querySelector('#editor-media-next')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigateEditorMedia(1);
+            });
+        }
+
+        const overlay = document.getElementById('editor-overlay');
+        if (overlay) {
+            clearEditorMediaSideButtons();
+            const mkSide = (id, icon, delta, label) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.id = id;
+                btn.className = 'editor-media-side-btn';
+                btn.title = label;
+                btn.setAttribute('aria-label', label);
+                btn.innerHTML = `<span class="material-icons-outlined">${icon}</span>`;
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    navigateEditorMedia(delta);
+                });
+                overlay.appendChild(btn);
+            };
+            mkSide('editor-media-side-prev', 'chevron_left', -1, 'Previous file');
+            mkSide('editor-media-side-next', 'chevron_right', 1, 'Next file');
+        }
+    }
+
+    async function switchEditorToMediaFile(nextFile) {
+        if (editorState?.cleanup) {
+            try {
+                editorState.cleanup();
+            } catch {
+                /* ignore */
+            }
+        }
+        clearEditorMediaSideButtons();
+        document.removeEventListener('keydown', editorGlobalShortcuts);
+        const overlay = document.getElementById('editor-overlay');
+        // Keep overlay open so openFile does not flash the drive underneath.
+        overlay?.classList.remove('hidden');
+        const shell = document.getElementById('editor-shell');
+        if (shell) shell.innerHTML = '';
+        editorState = null;
+        await openFile(nextFile);
+    }
+
+    function navigateEditorMedia(delta) {
+        const nav = editorState?.mediaNav;
+        if (!nav || nav.siblings.length <= 1) return;
+        const nextIdx = (nav.index + delta + nav.siblings.length) % nav.siblings.length;
+        const nextFile = nav.siblings[nextIdx];
+        if (!nextFile || nextFile.id === editorState?.file?.id) return;
+
+        const go = () => switchEditorToMediaFile(nextFile);
+
+        if (editorState?.unsaved) {
+            Components.showModal(
+                'Unsaved changes',
+                'Unsaved changes. Save before switching files?',
+                [
+                    { text: 'Cancel' },
+                    {
+                        text: 'Discard',
+                        class: 'btn-secondary',
+                        action: () => {
+                            go();
+                        },
+                    },
+                    {
+                        text: 'Save',
+                        class: 'btn-primary',
+                        action: async () => {
+                            if (editorState?.onSave) {
+                                const ok = await editorState.onSave();
+                                if (ok) {
+                                    Components.toast('File saved successfully', 'success');
+                                    await go();
+                                }
+                            } else {
+                                await go();
+                            }
+                        },
+                    },
+                ]
+            );
+            return;
+        }
+        go();
+    }
+
     function openEditorShell(file, titleStatus = 'Saved') {
         const overlay = document.getElementById('editor-overlay');
         const shell = document.getElementById('editor-shell');
@@ -5490,6 +5630,7 @@ const FileManager = (() => {
         if (editorState?.cleanup) {
             try { editorState.cleanup(); } catch {}
         }
+        clearEditorMediaSideButtons();
         const overlay = document.getElementById('editor-overlay');
         overlay?.removeEventListener('click', handleEditorOverlayClick);
         overlay?.classList.add('hidden');
@@ -5509,6 +5650,20 @@ const FileManager = (() => {
 
     function editorGlobalShortcuts(e) {
         if (!editorState) return;
+        const tag = (e.target && e.target.tagName) || '';
+        const typing = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable;
+        if (
+            editorState.mediaNav?.keyboard &&
+            !typing &&
+            !e.ctrlKey &&
+            !e.metaKey &&
+            !e.altKey &&
+            (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        ) {
+            e.preventDefault();
+            navigateEditorMedia(e.key === 'ArrowLeft' ? -1 : 1);
+            return;
+        }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
             e.preventDefault();
             document.getElementById('editor-save')?.click();
@@ -5538,6 +5693,7 @@ const FileManager = (() => {
     async function openImageEditor(file) {
         const blob = await decryptFileBlob(file);
         const shell = openEditorShell(file);
+        wireEditorMediaNav(file, { keyboard: true });
 
         const layout = document.createElement('div');
         layout.className = 'image-editor-wrap';
@@ -6326,6 +6482,7 @@ const FileManager = (() => {
         const blob = await decryptFileBlob(file);
         const url = URL.createObjectURL(blob);
         const shell = openEditorShell(file);
+        wireEditorMediaNav(file, { keyboard: false });
 
         const wrap = document.createElement('div');
         wrap.className = 'video-wrap';
@@ -6513,6 +6670,10 @@ const FileManager = (() => {
             v.currentTime = 0;
             v.playbackRate = 1;
             document.getElementById('video-speed').value = '1';
+        };
+        editorState.cleanup = () => {
+            try { v.pause(); } catch { /* ignore */ }
+            URL.revokeObjectURL(url);
         };
     }
 
