@@ -363,6 +363,7 @@ const FileManager = (() => {
         };
         apply(allFolders);
         apply(filteredFolders);
+        apply(homeSuggestedFolders);
         if (contextTarget?.type === 'folder' && contextTarget.data?.id === folderId) {
             contextTarget.data.color = color;
         }
@@ -418,6 +419,9 @@ const FileManager = (() => {
                 keepSelection: true,
                 isTrash: currentPage === 'trash',
             });
+            if (currentPage === 'home') {
+                renderHomeItems(filteredFiles, homeSuggestedFolders);
+            }
             if (selectedPrimary?.type === 'folder' && selectedPrimary.data?.id === folder.id) {
                 openDetailsPanel(selectedPrimary);
             }
@@ -1619,7 +1623,7 @@ const FileManager = (() => {
                 card.dataset.type = 'folder';
                 card.innerHTML = `
                     <div class="gd-card-top">
-                        <div class="gd-card-icon"><svg viewBox="0 0 24 24" fill="#5F6368" width="24" height="24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg></div>
+                        <div class="gd-card-icon" style="--fd-folder-fill:${esc(resolveFolderColor(f.color))}">${getIcon('folder', '', f.name, f.color)}</div>
                         <div class="gd-card-content">
                             <div class="gd-card-name" title="${esc(f.name)}">${esc(f.name)}</div>
                             <div class="gd-card-action">in My Drive</div>
