@@ -112,7 +112,7 @@ interface IconProps {
 
 export function Icon({ name, size = 24, color = colors.text }: IconProps) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
+    <Svg key={color} width={size} height={size} viewBox="0 0 24 24">
       <Path d={paths[name]} fill={color} />
     </Svg>
   );

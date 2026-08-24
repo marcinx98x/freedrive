@@ -132,7 +132,13 @@ export function FilesScreen({ navigation }: Props) {
     setError("");
     try {
       const contents = await api.folderRoot({ page_size: 100 });
-      setMyDriveFolders(contents.folders);
+      setMyDriveFolders((prev) => {
+        const prevColor = new Map(prev.map((f) => [f.id, f.color]));
+        return contents.folders.map((f) => ({
+          ...f,
+          color: f.color || prevColor.get(f.id) || f.color,
+        }));
+      });
       setMyDriveFiles(contents.files);
       setMyDriveNextToken(contents.next_page_token || "");
       await writeListCache<FolderContentsCache>(LIST_CACHE_KEYS.folderRoot, {

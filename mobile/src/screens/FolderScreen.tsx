@@ -101,7 +101,13 @@ export function FolderScreen({ route, navigation }: Props) {
       setError("");
       try {
         const contents = await api.folder(folderId, { page_size: 100 });
-        setFolders(contents.folders);
+        setFolders((prev) => {
+          const prevColor = new Map(prev.map((f) => [f.id, f.color]));
+          return contents.folders.map((f) => ({
+            ...f,
+            color: f.color || prevColor.get(f.id) || f.color,
+          }));
+        });
         setFiles(contents.files);
         setNextPageToken(contents.next_page_token || "");
         const folderName = contents.folder?.name;

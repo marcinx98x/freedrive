@@ -17,8 +17,8 @@ export function FolderRow({ folder, onPress, onMenuPress }: FolderRowProps) {
   const folderTint = resolveFolderColor(folder.color);
   return (
     <Pressable style={styles.row} onPress={onPress}>
-      <View style={styles.icon}>
-        <Icon name="folder" size={22} color={folderTint} />
+      <View style={[styles.icon, { backgroundColor: `${folderTint}33` }]}>
+        <Icon key={folderTint} name="folder" size={22} color={folderTint} />
       </View>
       <View style={styles.meta}>
         <Text style={styles.name} numberOfLines={1}>
@@ -66,8 +66,8 @@ export function FolderGridTile({ folder, onPress, onMenuPress, columns = 2 }: Fo
   const folderTint = resolveFolderColor(folder.color);
   return (
     <Pressable style={[styles.tile, { width: `${100 / columns}%` }]} onPress={onPress}>
-      <View style={styles.tilePreview}>
-        <Icon name="folder" size={44} color={folderTint} />
+      <View style={[styles.tilePreview, { backgroundColor: `${folderTint}33` }]}>
+        <Icon key={folderTint} name="folder" size={44} color={folderTint} />
         <Pressable style={styles.tileMenu} onPress={onMenuPress} hitSlop={8}>
           <Icon name="more" size={18} color={colors.textSecondary} />
         </Pressable>

@@ -433,7 +433,7 @@ export function ItemActionsSheet({ target, onClose, onChanged }: ItemActionsShee
                           });
                           onChanged({
                             folderId: target.item.id,
-                            color: updated?.color ?? stored,
+                            color: resolveFolderColor(updated?.color || stored || c),
                           });
                           onClose();
                         })
