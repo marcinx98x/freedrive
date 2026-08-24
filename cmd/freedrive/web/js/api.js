@@ -206,11 +206,14 @@ const API = (() => {
      * @param {string} [opts.iv]
      * @param {string} [opts.folderId]
      * @param {string} [opts.fileId] replace existing file content
+     * @param {string} [opts.contentHash] SHA-256 hex of plaintext (skips version when unchanged)
+     * @param {boolean} [opts.forceVersion] always keep a historical version snapshot
      * @param {(pct:number)=>void} [opts.onProgress]
      */
     async function uploadBytes(opts) {
         const {
-            data, name, mimeType, originalSize, iv = '', folderId, fileId, onProgress,
+            data, name, mimeType, originalSize, iv = '', folderId, fileId,
+            contentHash = '', forceVersion = false, onProgress,
         } = opts;
         let bytes;
         if (data instanceof Blob) {
@@ -229,6 +232,8 @@ const API = (() => {
             form.append('original_size', String(originalSize));
             if (iv) form.append('iv', iv);
             if (folderId) form.append('folder_id', folderId);
+            if (contentHash) form.append('content_hash', contentHash);
+            if (forceVersion) form.append('force_version', '1');
             form.append('file', new Blob([bytes], { type: 'application/octet-stream' }), name);
             if (fileId) return files.updateContent(fileId, form, onProgress);
             return uploadXHR('/files/upload', form, onProgress);
@@ -243,8 +248,13 @@ const API = (() => {
         };
         if (folderId) sessionBody.folder_id = folderId;
         if (fileId) sessionBody.file_id = fileId;
+        if (contentHash) sessionBody.content_hash = contentHash;
+        if (forceVersion) sessionBody.force_version = true;
 
         const session = await request('POST', '/uploads/sessions', sessionBody);
+        if (session?.unchanged && session.file) {
+            return session.file;
+        }
         let offset = 0;
         let last = null;
         while (offset < encryptedSize) {

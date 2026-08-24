@@ -32,11 +32,11 @@ func (r *FileRepo) Create(ctx context.Context, file *domain.File) error {
 	file.AccessedAt = now
 
 	_, err := r.writer.ExecContext(ctx,
-		`INSERT INTO files (id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version, is_starred, is_trashed, created_at, updated_at, accessed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO files (id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version, is_starred, is_trashed, created_at, updated_at, accessed_at, content_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		file.ID, file.Name, file.MimeType, file.Size, file.EncryptedSize,
 		file.FolderID, file.OwnerID, file.BlobPath, file.IV, file.Version,
-		file.IsStarred, file.IsTrashed, file.CreatedAt, file.UpdatedAt, file.AccessedAt,
+		file.IsStarred, file.IsTrashed, file.CreatedAt, file.UpdatedAt, file.AccessedAt, file.ContentHash,
 	)
 	return err
 }
@@ -45,11 +45,11 @@ func (r *FileRepo) GetByID(ctx context.Context, id string) (*domain.File, error)
 	f := &domain.File{}
 	err := r.reader.QueryRowContext(ctx,
 		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
-		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at, content_hash
 		 FROM files WHERE id = ?`, id,
 	).Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
 		&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
-		&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt)
+		&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt, &f.ContentHash)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -60,11 +60,11 @@ func (r *FileRepo) Update(ctx context.Context, file *domain.File) error {
 	file.UpdatedAt = time.Now()
 	_, err := r.writer.ExecContext(ctx,
 		`UPDATE files SET name=?, mime_type=?, size=?, encrypted_size=?, folder_id=?, blob_path=?, iv=?,
-		        version=?, is_starred=?, is_trashed=?, trashed_at=?, updated_at=?, accessed_at=?
+		        version=?, is_starred=?, is_trashed=?, trashed_at=?, updated_at=?, accessed_at=?, content_hash=?
 		 WHERE id=?`,
 		file.Name, file.MimeType, file.Size, file.EncryptedSize, file.FolderID,
 		file.BlobPath, file.IV, file.Version, file.IsStarred, file.IsTrashed,
-		file.TrashedAt, file.UpdatedAt, file.AccessedAt, file.ID,
+		file.TrashedAt, file.UpdatedAt, file.AccessedAt, file.ContentHash, file.ID,
 	)
 	return err
 }
@@ -644,6 +644,25 @@ func (r *FileRepo) GetVersion(ctx context.Context, fileID string, version int) (
 		return nil, nil
 	}
 	return v, err
+}
+
+func (r *FileRepo) LatestVersionCreatedAt(ctx context.Context, fileID string) (*time.Time, error) {
+	var created sql.NullTime
+	err := r.reader.QueryRowContext(ctx,
+		`SELECT created_at FROM file_versions WHERE file_id = ? ORDER BY version DESC LIMIT 1`,
+		fileID,
+	).Scan(&created)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !created.Valid {
+		return nil, nil
+	}
+	t := created.Time
+	return &t, nil
 }
 
 func (r *FileRepo) DeleteOldVersions(ctx context.Context, fileID string, keepCount int) ([]domain.FileVersion, error) {

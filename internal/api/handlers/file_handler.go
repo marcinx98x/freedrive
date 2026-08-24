@@ -110,6 +110,7 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	iv := r.FormValue("iv")
 	folderID := r.FormValue("folder_id")
+	contentHash := strings.TrimSpace(r.FormValue("content_hash"))
 
 	originalSize, _ := strconv.ParseInt(r.FormValue("original_size"), 10, 64)
 	if originalSize == 0 {
@@ -132,6 +133,7 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		OwnerID:       userID,
 		IV:            iv,
 		Version:       1,
+		ContentHash:   contentHash,
 	}
 	if folderID != "" {
 		f.FolderID = &folderID
@@ -326,9 +328,10 @@ func (h *FileHandler) GetVersions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"versions": versions,
 		"policy": map[string]interface{}{
-			"versioning":           adminsettings.VersioningEnabled(),
-			"keep_versions":        adminsettings.KeepVersions(),
-			"version_retain_days":  adminsettings.VersionRetainDays(),
+			"versioning":               adminsettings.VersioningEnabled(),
+			"keep_versions":            adminsettings.KeepVersions(),
+			"version_retain_days":      adminsettings.VersionRetainDays(),
+			"version_coalesce_minutes": adminsettings.VersionCoalesceMinutes(),
 		},
 	})
 }
@@ -417,13 +420,15 @@ func (h *FileHandler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	iv := r.FormValue("iv")
+	contentHash := strings.TrimSpace(r.FormValue("content_hash"))
+	forceVersion := r.FormValue("force_version") == "1" || strings.EqualFold(r.FormValue("force_version"), "true")
 
 	originalSize, _ := strconv.ParseInt(r.FormValue("original_size"), 10, 64)
 	if originalSize == 0 {
 		originalSize = header.Size
 	}
 
-	updated, err := h.fileService.UpdateContent(r.Context(), fileID, userID, name, mimeType, iv, originalSize, file)
+	updated, err := h.fileService.UpdateContent(r.Context(), fileID, userID, name, mimeType, iv, originalSize, file, contentHash, forceVersion)
 	if err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return

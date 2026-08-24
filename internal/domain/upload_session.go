@@ -17,4 +17,6 @@ type UploadSession struct {
 	ReceivedBytes  int64     `json:"received_bytes"`
 	CreatedAt      time.Time `json:"created_at"`
 	ExpiresAt      time.Time `json:"expires_at"`
+	ContentHash    string    `json:"content_hash,omitempty"`
+	ForceVersion   bool      `json:"force_version,omitempty"`
 }

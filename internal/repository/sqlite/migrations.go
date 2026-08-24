@@ -41,6 +41,7 @@ func runMigrations(db *sql.DB) error {
 		{18, migrationV18},
 		{19, migrationV19},
 		{20, migrationV20},
+		{21, migrationV21},
 	}
 
 	for _, m := range migrations {
@@ -497,4 +498,10 @@ CREATE TABLE IF NOT EXISTS bandwidth_monthly (
     PRIMARY KEY (user_id, year_month)
 );
 CREATE INDEX IF NOT EXISTS idx_bandwidth_monthly_ym ON bandwidth_monthly(year_month);
+`
+
+const migrationV21 = `
+ALTER TABLE files ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE upload_sessions ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE upload_sessions ADD COLUMN force_version INTEGER NOT NULL DEFAULT 0;
 `

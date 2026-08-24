@@ -104,6 +104,8 @@ func (h *UploadHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		EncryptedSize  int64   `json:"encrypted_size"`
 		FolderID       *string `json:"folder_id"`
 		FileID         *string `json:"file_id"`
+		ContentHash    string  `json:"content_hash"`
+		ForceVersion   bool    `json:"force_version"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -158,6 +160,15 @@ func (h *UploadHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "file not found", http.StatusNotFound)
 			return
 		}
+		contentHash := strings.TrimSpace(req.ContentHash)
+		if contentHash != "" && replaceFile.ContentHash != "" && contentHash == replaceFile.ContentHash {
+			// Identical plaintext — skip resumable upload entirely.
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"unchanged": true,
+				"file":      replaceFile,
+			})
+			return
+		}
 		delta := req.EncryptedSize - replaceFile.EncryptedSize
 		if user.UsedBytes+delta > user.QuotaBytes {
 			writeError(w, "quota exceeded", http.StatusBadRequest)
@@ -199,6 +210,8 @@ func (h *UploadHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		ReceivedBytes: 0,
 		CreatedAt:     now,
 		ExpiresAt:     now.Add(uploadSessionTTL),
+		ContentHash:   strings.TrimSpace(req.ContentHash),
+		ForceVersion:  req.ForceVersion,
 	}
 	if err := h.sessions.Create(r.Context(), session); err != nil {
 		_ = os.Remove(tempPath)
@@ -374,6 +387,8 @@ func (h *UploadHandler) finalize(ctx context.Context, session *domain.UploadSess
 			session.OriginalSize,
 			session.EncryptedSize,
 			blobPath,
+			session.ContentHash,
+			session.ForceVersion,
 		)
 	} else {
 		f := &domain.File{
@@ -385,6 +400,7 @@ func (h *UploadHandler) finalize(ctx context.Context, session *domain.UploadSess
 			IV:            session.IV,
 			Version:       1,
 			FolderID:      session.FolderID,
+			ContentHash:   session.ContentHash,
 		}
 		err = h.fileService.Upload(ctx, f, blobPath)
 		result = f

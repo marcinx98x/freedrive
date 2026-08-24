@@ -14,6 +14,7 @@ type File struct {
 	BlobPath      string     `json:"-"`
 	IV            string     `json:"iv"`
 	Version       int        `json:"version"`
+	ContentHash   string     `json:"content_hash,omitempty"`
 	IsStarred     bool       `json:"is_starred"`
 	IsTrashed     bool       `json:"is_trashed"`
 	TrashedAt     *time.Time `json:"trashed_at,omitempty"`

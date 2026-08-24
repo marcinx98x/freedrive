@@ -12,6 +12,8 @@ use rand::RngCore;
 
 use reqwest::multipart::{Form, Part};
 
+use sha2::{Digest, Sha256};
+
 use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
@@ -37,6 +39,12 @@ fn http_api_error(status: reqwest::StatusCode, text: &str) -> AppError {
         return AppError::http(code, format!("request failed ({code})"));
     }
     AppError::http(code, text.to_string())
+}
+
+fn content_hash_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
 }
 
 fn is_transient_gateway_status(status: reqwest::StatusCode) -> bool {
@@ -138,6 +146,7 @@ struct PreparedUpload {
     iv_b64: String,
     original_size: usize,
     folder_id: Option<String>,
+    content_hash: String,
 }
 
 enum UploadBody {
@@ -1057,6 +1066,7 @@ impl ApiClient {
     ) -> AppResult<PreparedUpload> {
         let plaintext = std::fs::read(local_path)?;
         let original_size = plaintext.len();
+        let content_hash = content_hash_hex(&plaintext);
         let mime = mime_guess::from_path(local_path)
             .first_or_octet_stream()
             .to_string();
@@ -1083,6 +1093,7 @@ impl ApiClient {
             iv_b64: crypto::iv_to_base64(&iv),
             original_size,
             folder_id: folder_id.map(|s| s.to_string()),
+            content_hash,
         })
     }
 
@@ -1117,41 +1128,33 @@ impl ApiClient {
 
 
     pub async fn update_file_content(
-
         &self,
-
         file_id: &str,
-
         local_path: &Path,
-
         name: &str,
-
         existing_key: Option<[u8; 32]>,
-
         on_progress: Option<UploadProgressCb>,
-
     ) -> AppResult<(FileRecord, [u8; 32])> {
+        // Skip re-encrypt/upload when plaintext is unchanged (avoids spurious versions).
+        if let (Ok(bytes), Ok(remote)) = (std::fs::read(local_path), self.get_file(file_id).await) {
+            let hash = content_hash_hex(&bytes);
+            if !remote.content_hash.is_empty() && remote.content_hash == hash {
+                if let Some(key) = existing_key {
+                    return Ok((remote, key));
+                }
+            }
+        }
 
         self.upload_multipart_with_retry(
-
             None,
-
             &format!("/files/{}/content", file_id),
-
             local_path,
-
             name,
-
             None,
-
             existing_key,
-
             on_progress,
-
         )
-
         .await
-
     }
 
 
@@ -1646,6 +1649,7 @@ impl ApiClient {
             "iv": prepared.iv_b64,
             "original_size": prepared.original_size,
             "encrypted_size": cipher_len,
+            "content_hash": prepared.content_hash,
         });
         if let Some(fid) = &prepared.folder_id {
             session_body["folder_id"] = serde_json::Value::String(fid.clone());
@@ -1654,11 +1658,7 @@ impl ApiClient {
             session_body["file_id"] = serde_json::Value::String(fid.to_string());
         }
 
-        #[derive(serde::Deserialize)]
-        struct SessionResp {
-            id: String,
-        }
-        let session: SessionResp = self
+        let session_val: serde_json::Value = self
             .request_json(
                 reqwest::Method::POST,
                 "/uploads/sessions",
@@ -1667,6 +1667,25 @@ impl ApiClient {
                 2,
             )
             .await?;
+        if session_val
+            .get("unchanged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let file: FileRecord = serde_json::from_value(
+                session_val
+                    .get("file")
+                    .cloned()
+                    .ok_or_else(|| AppError::msg("unchanged upload missing file"))?,
+            )
+            .map_err(|e| AppError::msg(e.to_string()))?;
+            return Ok(file);
+        }
+        let session_id = session_val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::msg("upload session missing id"))?
+            .to_string();
 
         let mut offset: u64 = 0;
         while offset < cipher_len {
@@ -1683,7 +1702,7 @@ impl ApiClient {
                 }
             };
             let range = format!("bytes {}-{}/{}", offset, end, cipher_len);
-            let url = self.api_url(&format!("/uploads/sessions/{}", session.id));
+            let url = self.api_url(&format!("/uploads/sessions/{}", session_id));
             let access_token = self.inner.read().access_token.clone();
             let http = self.inner.read().upload_http.clone();
             let res = http
@@ -1776,7 +1795,9 @@ impl ApiClient {
 
             .text("iv", prepared.iv_b64.clone())
 
-            .text("original_size", prepared.original_size.to_string());
+            .text("original_size", prepared.original_size.to_string())
+
+            .text("content_hash", prepared.content_hash.clone());
 
 
 

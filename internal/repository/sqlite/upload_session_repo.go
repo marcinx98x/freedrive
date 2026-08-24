@@ -24,10 +24,11 @@ func scanUploadSession(row interface {
 }) (*domain.UploadSession, error) {
 	var s domain.UploadSession
 	var fileID, folderID sql.NullString
+	var forceVersion int
 	err := row.Scan(
 		&s.ID, &s.UserID, &fileID, &s.Name, &s.MimeType, &s.IV,
 		&s.OriginalSize, &s.EncryptedSize, &folderID, &s.TempPath,
-		&s.ReceivedBytes, &s.CreatedAt, &s.ExpiresAt,
+		&s.ReceivedBytes, &s.CreatedAt, &s.ExpiresAt, &s.ContentHash, &forceVersion,
 	)
 	if err != nil {
 		return nil, err
@@ -38,22 +39,27 @@ func scanUploadSession(row interface {
 	if folderID.Valid && folderID.String != "" {
 		s.FolderID = &folderID.String
 	}
+	s.ForceVersion = forceVersion != 0
 	return &s, nil
 }
 
 const uploadSessionCols = `id, user_id, file_id, name, mime_type, iv, original_size, encrypted_size,
-	folder_id, temp_path, received_bytes, created_at, expires_at`
+	folder_id, temp_path, received_bytes, created_at, expires_at, content_hash, force_version`
 
 // Create inserts a new upload session.
 func (r *UploadSessionRepo) Create(ctx context.Context, session *domain.UploadSession) error {
+	force := 0
+	if session.ForceVersion {
+		force = 1
+	}
 	_, err := r.writer.ExecContext(ctx, `
 		INSERT INTO upload_sessions (
 			id, user_id, file_id, name, mime_type, iv, original_size, encrypted_size,
-			folder_id, temp_path, received_bytes, created_at, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			folder_id, temp_path, received_bytes, created_at, expires_at, content_hash, force_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.UserID, nullStr(session.FileID), session.Name, session.MimeType, session.IV,
 		session.OriginalSize, session.EncryptedSize, nullStr(session.FolderID), session.TempPath,
-		session.ReceivedBytes, session.CreatedAt, session.ExpiresAt,
+		session.ReceivedBytes, session.CreatedAt, session.ExpiresAt, session.ContentHash, force,
 	)
 	return err
 }

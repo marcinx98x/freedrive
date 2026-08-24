@@ -309,11 +309,13 @@ const Upload = (() => {
             let payload;
             let ivB64 = '';
             const originalSize = file.size;
+            const originalBuffer = await file.arrayBuffer();
+            const contentHashBuf = await crypto.subtle.digest('SHA-256', originalBuffer);
+            const contentHash = [...new Uint8Array(contentHashBuf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 
             if (canEncrypt) {
                 statusEl.textContent = 'Encrypting...';
                 key = await cryptoModule.generateKey();
-                const originalBuffer = await file.arrayBuffer();
                 const { ciphertext, iv } = await cryptoModule.encryptFile(originalBuffer, key);
                 payload = ciphertext;
                 ivB64 = cryptoModule.uint8ToBase64(iv);
@@ -322,7 +324,7 @@ const Upload = (() => {
                     insecureUploadNoticeShown = true;
                     Components.toast('HTTPS is not enabled, so files will be uploaded without browser encryption.', 'info', { duration: 7000 });
                 }
-                payload = await file.arrayBuffer();
+                payload = originalBuffer;
             }
 
             const result = await uploadWithRetry(() => API.uploadBytes({
@@ -332,6 +334,7 @@ const Upload = (() => {
                 originalSize,
                 iv: ivB64,
                 folderId: currentFolder || undefined,
+                contentHash,
                 onProgress: (pct) => {
                     progressFill.style.width = `${pct}%`;
                     statusEl.textContent = `${pct}%`;

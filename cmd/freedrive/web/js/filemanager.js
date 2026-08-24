@@ -5293,7 +5293,18 @@ const FileManager = (() => {
         return result;
     }
 
-    async function saveBlobToExistingFile(file, blob, mimeType, newName) {
+    async function sha256Hex(data) {
+        let bytes;
+        if (data instanceof ArrayBuffer) bytes = data;
+        else if (data instanceof Uint8Array) bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        else if (data instanceof Blob) bytes = await data.arrayBuffer();
+        else bytes = new TextEncoder().encode(String(data || ''));
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function saveBlobToExistingFile(file, blob, mimeType, newName, opts = {}) {
+        const forceVersion = Boolean(opts.forceVersion);
         const oldName = file.name;
         const nameToUse = newName || file.name;
         const cryptoModule = window.CryptoModule;
@@ -5303,11 +5314,16 @@ const FileManager = (() => {
         let payload;
         let ivB64 = '';
         const originalSize = blob.size;
+        const plainBuffer = await blob.arrayBuffer();
+        const contentHash = await sha256Hex(plainBuffer);
+
+        if (!forceVersion && file.content_hash && file.content_hash === contentHash) {
+            return true;
+        }
 
         if (canEncrypt) {
             key = (await cryptoModule.getKey(file.id)) || (await cryptoModule.generateKey());
-            const plain = await blob.arrayBuffer();
-            const { ciphertext, iv } = await cryptoModule.encryptFile(plain, key);
+            const { ciphertext, iv } = await cryptoModule.encryptFile(plainBuffer, key);
             payload = ciphertext;
             ivB64 = cryptoModule.uint8ToBase64(iv);
         } else {
@@ -5315,17 +5331,19 @@ const FileManager = (() => {
                 insecureUploadNoticeShown = true;
                 Components.toast('HTTPS is not enabled, so this file will be saved without browser encryption.', 'info', { duration: 7000 });
             }
-            payload = await blob.arrayBuffer();
+            payload = plainBuffer;
         }
 
         try {
-            await API.uploadBytes({
+            const updated = await API.uploadBytes({
                 data: payload,
                 name: nameToUse,
                 mimeType: mimeType || file.mime_type || blob.type || 'application/octet-stream',
                 originalSize,
                 iv: ivB64,
                 fileId: file.id,
+                contentHash,
+                forceVersion,
             });
             if (key) {
                 await cryptoModule.storeKey(file.id, key);
@@ -5334,6 +5352,9 @@ const FileManager = (() => {
             if (nameToUse !== oldName) {
                 await API.files.update(file.id, { name: nameToUse });
             }
+            if (updated?.content_hash) file.content_hash = updated.content_hash;
+            else file.content_hash = contentHash;
+            if (updated?.version != null) file.version = updated.version;
             addFileActivity(file.id, 'edited', file.name);
             createNotification(`${currentUserLabel()} edited ${nameToUse}`, new Date().toISOString(), true, currentUserLabel());
             return true;
@@ -7084,6 +7105,7 @@ const FileManager = (() => {
         }
         const keep = Number(policy.keep_versions) > 0 ? Number(policy.keep_versions) : null;
         const days = Number(policy.version_retain_days) > 0 ? Number(policy.version_retain_days) : null;
+        const coalesce = Number(policy.version_coalesce_minutes);
         let limitText = '';
         if (days && keep) {
             limitText = `after <strong>${days} days</strong> or after <strong>${keep} versions</strong> are stored`;
@@ -7094,7 +7116,10 @@ const FileManager = (() => {
         } else {
             limitText = 'according to administrator retention settings';
         }
-        return `Temporary versions of '${name}' may be deleted automatically ${limitText}. Versions are listed newest first.`;
+        const coalesceText = coalesce > 0
+            ? ` Rapid saves within <strong>${coalesce} minutes</strong> update the current file without adding another history entry.`
+            : '';
+        return `Temporary versions of '${name}' may be deleted automatically ${limitText}. Versions are listed newest first.${coalesceText}`;
     }
 
     function versionsPersonLabel(userIdOrName) {
@@ -7245,7 +7270,7 @@ const FileManager = (() => {
                     if (!picked) return;
                     try {
                         Components.toast('Uploading new version…', 'info');
-                        const ok = await saveBlobToExistingFile(file, picked, picked.type || file.mime_type, file.name);
+                        const ok = await saveBlobToExistingFile(file, picked, picked.type || file.mime_type, file.name, { forceVersion: true });
                         if (!ok) return;
                         Components.toast('New version uploaded', 'success');
                         const updated = await API.files.get(file.id);

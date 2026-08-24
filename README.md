@@ -125,6 +125,8 @@ FreeDrive is ideal for:
 ### 5. Versioning Support
 
 - File version records are kept when content is updated (can be disabled in admin settings)
+- **Content-hash skip** — identical plaintext (SHA-256) does not create a new version or rewrite the blob (web editors and desktop My Drive)
+- **Coalesce window** — rapid saves within `version_coalesce_minutes` (default 60) update the current file without adding another history entry; **Upload new version** and restore always force a snapshot
 - Configurable `keep_versions` count and `version_retain_days` (never / 7 / 30 / 90) — older versions are pruned on save and by a background job
 - List versions per file (Manage versions modal: policy blurb from admin settings, upload new version, Download / Restore from ⋮)
 - Restore an earlier version

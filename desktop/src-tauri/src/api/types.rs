@@ -79,6 +79,8 @@ pub struct FileRecord {
     pub updated_at: String,
     #[serde(default)]
     pub version: i32,
+    #[serde(default)]
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
