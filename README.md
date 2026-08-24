@@ -117,7 +117,7 @@ FreeDrive is ideal for:
 ### 4. In-browser editors & Open with
 
 - **Docs** — Google Docs-style rich-text editor in the web UI ([Quill](https://quilljs.com/) snow via CDN) for `.txt`, `.md`, `.html`, and `.htm`: formatting toolbar, page canvas, autosave every 30s, and Save / Undo / Redo in the editor shell; content is stored as HTML (UTF-8) and remains compatible with files saved by the previous Docs editor; legacy ANSI/Windows-1250 text is auto-detected on open and re-saved as UTF-8; other text/code files stay in a plain textarea
-- **Photos** — Google Photos-style image editor (top icon toolbar, crop/draw/rotate, Adjustments and Filters panels)
+- **Photos** — Google Photos-style image editor (top icon toolbar, crop/draw/rotate, Adjustments and Filters panels); Save exports JPEG for `.jpg`/`.jpeg`/`.webp` (and JPEG mime types) or PNG otherwise, and renames the file extension to match so Windows/desktop viewers do not mis-decode PNG bytes under a `.jpg` name
 - **Sheets** — Google Sheets-style grid for `.xlsx`, `.xls`, and `.csv` (formula bar, sheet tabs, search); saves only changed cells so untouched formulas and formatting stay intact
 - **PDF / video / audio / JSON** — dedicated viewers and players
 - **Open with…** — context-menu flyout lists FreeDrive apps for the file type (same list as the Open with dialog; unsupported types offer download)

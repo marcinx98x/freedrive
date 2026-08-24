@@ -217,28 +217,29 @@ pub async fn hydrate_file(
 
 /// Google Drive for desktop–style open: download once to a local plaintext cache,
 /// then serve byte ranges from disk (Explorer / default video player).
+/// Cache is invalidated when remote version or size no longer matches a sidecar meta file.
 pub async fn ensure_hydrated_plaintext(
     api: &ApiClient,
     db: &DbHandle,
     file_id: &str,
 ) -> AppResult<PathBuf> {
     let cache_path = hydrate_cache_path(file_id)?;
-    if cache_path.is_file() {
-        let meta = std::fs::metadata(&cache_path)?;
-        if meta.len() > 0 {
-            return Ok(cache_path);
-        }
+    let remote = api.get_file(file_id).await?;
+    if hydrate_cache_matches(&cache_path, remote.version, remote.size) {
+        return Ok(cache_path);
     }
 
     let lock = hydrate_file_lock(file_id);
     let _guard = lock.lock().await;
 
-    if cache_path.is_file() {
-        let meta = std::fs::metadata(&cache_path)?;
-        if meta.len() > 0 {
-            return Ok(cache_path);
-        }
+    let remote = api.get_file(file_id).await?;
+    if hydrate_cache_matches(&cache_path, remote.version, remote.size) {
+        return Ok(cache_path);
     }
+
+    // Drop stale/partial cache before re-download.
+    let _ = std::fs::remove_file(&cache_path);
+    let _ = std::fs::remove_file(hydrate_meta_path(&cache_path));
 
     let user_id = crate::auth_store::load_auth()
         .ok()
@@ -258,7 +259,61 @@ pub async fn ensure_hydrated_plaintext(
     }
     api.download_file_to_path(file_id, Some(&key_b64url), &cache_path)
         .await?;
+
+    if remote.size > 0 {
+        let got = std::fs::metadata(&cache_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if got != remote.size as u64 {
+            let _ = std::fs::remove_file(&cache_path);
+            let _ = std::fs::remove_file(hydrate_meta_path(&cache_path));
+            return Err(AppError::msg(format!(
+                "hydrate size mismatch for {}: got {got}, expected {}",
+                file_id, remote.size
+            )));
+        }
+    }
+
+    write_hydrate_meta(&cache_path, remote.version, remote.size)?;
     Ok(cache_path)
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct HydrateMeta {
+    version: i32,
+    size: i64,
+}
+
+fn hydrate_meta_path(cache_path: &Path) -> PathBuf {
+    let mut s = cache_path.as_os_str().to_owned();
+    s.push(".meta");
+    PathBuf::from(s)
+}
+
+fn hydrate_cache_matches(cache_path: &Path, version: i32, size: i64) -> bool {
+    let Ok(fs_meta) = std::fs::metadata(cache_path) else {
+        return false;
+    };
+    if fs_meta.len() == 0 {
+        return false;
+    }
+    if size > 0 && fs_meta.len() != size as u64 {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(hydrate_meta_path(cache_path)) else {
+        return false;
+    };
+    let Ok(meta) = serde_json::from_slice::<HydrateMeta>(&bytes) else {
+        return false;
+    };
+    meta.version == version && meta.size == size
+}
+
+fn write_hydrate_meta(cache_path: &Path, version: i32, size: i64) -> AppResult<()> {
+    let meta = HydrateMeta { version, size };
+    let bytes = serde_json::to_vec(&meta).map_err(|e| AppError::msg(e.to_string()))?;
+    std::fs::write(hydrate_meta_path(cache_path), bytes)?;
+    Ok(())
 }
 
 fn hydrate_cache_path(file_id: &str) -> AppResult<PathBuf> {
@@ -280,6 +335,7 @@ fn hydrate_cache_path(file_id: &str) -> AppResult<PathBuf> {
 /// Drop cached plaintext so the next open re-downloads (and Stream mode frees disk).
 pub fn clear_hydrate_cache_for_file(file_id: &str) {
     if let Ok(path) = hydrate_cache_path(file_id) {
+        let _ = std::fs::remove_file(hydrate_meta_path(&path));
         let _ = std::fs::remove_file(path);
     }
 }

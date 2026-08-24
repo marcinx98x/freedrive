@@ -176,7 +176,7 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 - **Explorer nav pane:** after a successful provider connect, Windows shows a pinned **FreeDrive** entry (branded icon) in the left sidebar via CLSID `Desktop\NameSpace` + SyncRootManager. Connect always refreshes `IconResource` / `DefaultIcon` (so NSIS updates pick up the new exe). **Sign out** disconnects the provider but **keeps** the sidebar pin; **uninstall** (NSIS) removes NameSpace + SyncRootManager keys. Prefer **Unregister Explorer integration** in settings only when recovering a broken registration.
 - Requires **Windows 10 1809+**. CfAPI connects synchronously on startup / login (`connect-first` recovery if Windows already has the sync root registered).
 - Integration state lives in `%APPDATA%\FreeDrive\sync.db` (`cf_sync_root_registered`, `cf_finalize_complete`, `cf_shell_registered`). Updating or reinstalling the app does not reset a working registration.
-- Hydrate cache (temporary plaintext while a file is open): `%APPDATA%\FreeDrive\hydrate_cache` — cleared when Stream frees space after close.
+- Hydrate cache (temporary plaintext while a file is open): `%APPDATA%\FreeDrive\hydrate_cache` — each file has a `.meta` sidecar (`version` + `size`); stale or partial caches are discarded and re-downloaded. Cleared when Stream frees space after close. If a local preview looks corrupt after a web edit, delete that file’s cache entry (or the whole `hydrate_cache` folder) and reopen, or install a desktop build that includes version-aware hydrate.
 
 #### CfAPI recovery (`0x80070057` / “cloud file provider is not running”)
 

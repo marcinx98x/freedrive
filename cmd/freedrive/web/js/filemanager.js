@@ -5889,8 +5889,14 @@ const FileManager = (() => {
 
         editorState.onSave = async () => {
             const fileName = document.getElementById('editor-file-name').value.trim() || file.name;
-            const exportBlob = await canvasToBlobWithFilters(canvas, adjustment);
-            const ok = await saveBlobToExistingFile(file, exportBlob, 'image/png', fileName);
+            const exportSpec = imageExportMimeAndName(file, fileName);
+            const exportBlob = await canvasToBlobWithFilters(
+                canvas,
+                adjustment,
+                exportSpec.mime,
+                exportSpec.quality,
+            );
+            const ok = await saveBlobToExistingFile(file, exportBlob, exportSpec.mime, exportSpec.name);
             return ok;
         };
         editorState.cleanup = () => {
@@ -5926,14 +5932,46 @@ const FileManager = (() => {
         });
     }
 
-    async function canvasToBlobWithFilters(canvas, adjustment) {
+    function ensureImageExtension(name, ext) {
+        const base = String(name || 'image').replace(/\.[^.\\/]+$/, '');
+        return `${base}${ext}`;
+    }
+
+    /** Match export MIME + filename extension so PC viewers decode correctly after rotate/save. */
+    function imageExportMimeAndName(file, preferredName) {
+        const mime = String(file?.mime_type || '').toLowerCase();
+        const name = preferredName || file?.name || 'image';
+        const lower = name.toLowerCase();
+        const wantJpeg = mime.includes('jpeg')
+            || mime.includes('jpg')
+            || mime.includes('webp')
+            || /\.jpe?g$/i.test(lower)
+            || /\.webp$/i.test(lower);
+        if (wantJpeg) {
+            return { mime: 'image/jpeg', quality: 0.92, name: ensureImageExtension(name, '.jpg') };
+        }
+        return { mime: 'image/png', quality: undefined, name: ensureImageExtension(name, '.png') };
+    }
+
+    async function canvasToBlobWithFilters(canvas, adjustment, mimeType = 'image/png', quality) {
         const off = document.createElement('canvas');
         off.width = canvas.width;
         off.height = canvas.height;
         const c = off.getContext('2d');
         c.filter = `brightness(${100 + adjustment.brightness}%) contrast(${100 + adjustment.contrast}%) saturate(${100 + adjustment.saturation}%) blur(${adjustment.blur}px) opacity(${adjustment.opacity}%)`;
+        // JPEG has no alpha — fill white so transparent regions do not become black.
+        if (String(mimeType).includes('jpeg') || String(mimeType).includes('jpg')) {
+            c.fillStyle = '#ffffff';
+            c.fillRect(0, 0, off.width, off.height);
+        }
         c.drawImage(canvas, 0, 0);
-        return await new Promise((resolve) => off.toBlob((b) => resolve(b), 'image/png'));
+        return await new Promise((resolve) => {
+            if (quality != null) {
+                off.toBlob((b) => resolve(b), mimeType, quality);
+            } else {
+                off.toBlob((b) => resolve(b), mimeType);
+            }
+        });
     }
 
     function rotateCanvas(canvas, ctx, degrees) {

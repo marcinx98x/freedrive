@@ -774,8 +774,10 @@ async fn mirror_file_if_needed(
     file: &crate::api::types::FileRecord,
 ) -> AppResult<bool> {
     let local_path = local_dir.join(sanitize_name(&file.name));
+    let expected = file.size.max(0) as u64;
     let needs = match std::fs::metadata(&local_path) {
-        Ok(meta) => meta.len() < file.size.max(0) as u64,
+        // Refresh when size differs (grew or shrank) — e.g. web rotate/re-encode.
+        Ok(meta) => meta.len() != expected,
         Err(_) => true,
     };
     if !needs {

@@ -852,6 +852,17 @@ impl ApiClient {
         }
     }
 
+    pub async fn get_file(&self, file_id: &str) -> AppResult<FileRecord> {
+        self.request_json(
+            reqwest::Method::GET,
+            &format!("/files/{}", file_id),
+            None,
+            false,
+            2,
+        )
+        .await
+    }
+
     pub async fn patch_file(
         &self,
         file_id: &str,
@@ -1594,13 +1605,22 @@ impl ApiClient {
             let ciphertext = tokio::fs::read(&enc_path).await?;
             let plaintext = crypto::decrypt_file(&ciphertext, &key, &iv)?;
             drop(ciphertext);
-            tokio::fs::write(dest, &plaintext).await?;
+            // Atomic replace so partial plaintext never stays as the cache file.
+            let plain_tmp = dest.with_extension("plain.tmp");
+            let _ = tokio::fs::remove_file(&plain_tmp).await;
+            tokio::fs::write(&plain_tmp, &plaintext).await?;
             drop(plaintext);
+            tokio::fs::rename(&plain_tmp, dest).await?;
             Ok::<(), AppError>(())
         }
         .await;
 
         let _ = tokio::fs::remove_file(&enc_path).await;
+        if result.is_err() {
+            let plain_tmp = dest.with_extension("plain.tmp");
+            let _ = tokio::fs::remove_file(&plain_tmp).await;
+            let _ = tokio::fs::remove_file(dest).await;
+        }
         result
     }
 
