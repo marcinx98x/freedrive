@@ -780,7 +780,7 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **User avatar** — circular profile photo from `GET /api/v1/me` (`avatar_url` data-URL), with initials fallback
 - **Profile menu** — storage bar (`{used} of {total} used`) from `/me/storage`, Manage storage (web), Sign out
 - **Device identification** — sessions appear as `Mobile (…)` on the account Devices list
-- **File / folder actions** — bottom sheet: share, manage access, star, copy link, rename, **Change colour** (same 24-swatch palette as web; `PATCH /folders/{id}` with empty colour for default `#5f6368`), move, info, Move to bin; list/grid folder icons tint from server `color`
+- **File / folder actions** — bottom sheet: share, manage access, star, copy link, rename, **Change colour** (same 24-swatch palette as web; `PATCH /folders/{id}` with empty colour for default `#5f6368`), move, info, Move to bin; list/grid folder icons remount SVG fill and tint the icon chip from server `color` (optimistic local patch so the tint appears immediately and survives soft refresh)
 - **File actions** — open, share a decrypted copy, download, star/unstar, and **Move to bin** (soft-delete on the server; item appears in Bin / Trash; permanent delete from Bin). Desktop My Drive poll drops matching Explorer placeholders within ~20s; creating the same name again does not revive the trashed folder into My Drive
 - **Cross-device decryption** — syncs password-wrapped account and file keys so encrypted files can be opened on Android
 - **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON), spreadsheets (`.xlsx` / `.xls` / `.csv`), PDF (open with another app)
