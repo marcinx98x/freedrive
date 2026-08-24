@@ -32,10 +32,15 @@ export type ItemTarget =
   | { kind: "file"; item: FileItem }
   | { kind: "folder"; item: FolderItem };
 
+export type ItemChangedPatch = {
+  folderId: string;
+  color: string;
+};
+
 interface ItemActionsSheetProps {
   target: ItemTarget | null;
   onClose: () => void;
-  onChanged: () => void;
+  onChanged: (patch?: ItemChangedPatch) => void;
 }
 
 type Dialog = "none" | "rename" | "move" | "info" | "color" | "share";
@@ -422,10 +427,14 @@ export function ItemActionsSheet({ target, onClose, onChanged }: ItemActionsShee
                       ]}
                       onPress={() =>
                         void run(async () => {
-                          await api.updateFolder(target.item.id, {
-                            color: storeFolderColor(c),
+                          const stored = storeFolderColor(c);
+                          const updated = await api.updateFolder(target.item.id, {
+                            color: stored,
                           });
-                          onChanged();
+                          onChanged({
+                            folderId: target.item.id,
+                            color: updated?.color ?? stored,
+                          });
                           onClose();
                         })
                       }

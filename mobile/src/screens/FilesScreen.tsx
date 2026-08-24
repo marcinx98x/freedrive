@@ -386,7 +386,16 @@ export function FilesScreen({ navigation }: Props) {
       <ItemActionsSheet
         target={menuTarget}
         onClose={() => setMenuTarget(null)}
-        onChanged={() => refreshTab({ soft: true })}
+        onChanged={(patch) => {
+          if (patch?.folderId) {
+            setMyDriveFolders((prev) =>
+              prev.map((f) =>
+                f.id === patch.folderId ? { ...f, color: patch.color } : f,
+              ),
+            );
+          }
+          void refreshTab({ soft: true });
+        }}
       />
       <NewFolderDialog
         visible={folderDialog}
@@ -471,6 +480,7 @@ export function FilesScreen({ navigation }: Props) {
         <FlatList
           key={viewMode === "grid" && tab === "my-drive" ? `grid-${gridCols}` : "list"}
           data={entries}
+          extraData={myDriveFolders.map((f) => f.color || "").join("|")}
           keyExtractor={(item) => `${item.kind}-${item.item.id}`}
           renderItem={renderItem}
           numColumns={viewMode === "grid" && tab === "my-drive" ? gridCols : 1}

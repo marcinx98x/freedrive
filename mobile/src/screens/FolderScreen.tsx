@@ -304,7 +304,16 @@ export function FolderScreen({ route, navigation }: Props) {
       <ItemActionsSheet
         target={menuTarget}
         onClose={() => setMenuTarget(null)}
-        onChanged={() => load({ soft: true })}
+        onChanged={(patch) => {
+          if (patch?.folderId) {
+            setFolders((prev) =>
+              prev.map((f) =>
+                f.id === patch.folderId ? { ...f, color: patch.color } : f,
+              ),
+            );
+          }
+          void load({ soft: true });
+        }}
       />
       <NewFolderDialog
         visible={folderDialog}
@@ -341,6 +350,7 @@ export function FolderScreen({ route, navigation }: Props) {
         <FlatList
           key={`grid-${viewMode}-${gridCols}`}
           data={entries}
+          extraData={folders.map((f) => f.color || "").join("|")}
           keyExtractor={(item) => `${item.kind}-${item.item.id}`}
           renderItem={renderItem}
           numColumns={viewMode === "grid" ? gridCols : 1}
