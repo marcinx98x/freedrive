@@ -86,6 +86,7 @@ FreeDrive is ideal for:
 ### 1. Drive-like File Management UX
 
 - Folder-based navigation and root view
+- **Folder colour** is shared across web and Android (same 24-swatch palette, default `#5f6368`, synced with `PATCH /folders/{id}`; empty colour = default)
 - Unified page headers across Home, My Drive, Recent, Starred, Shared with me, Trash, and other tabs
 - Home Suggested folders: cards use the same `--fd-folder-fill` tint as My Drive; Suggested files: list view with Name / Reason suggested / Owner / Location (parent folder name), or grid tiles
 - List/grid view switching with Recent and Starred collections
