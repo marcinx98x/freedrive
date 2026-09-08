@@ -10,6 +10,7 @@ import {
   prepareNewFileKey,
   rawKeyToStandardBase64,
 } from "../crypto";
+import { assertTransferAllowed } from "../settings/wifiGate";
 
 /** Above this, in-memory JS encrypt (plain + cipher + base64) OOMs on typical phones. */
 export const JS_ENCRYPT_MAX_BYTES = 8 * 1024 * 1024;
@@ -168,6 +169,14 @@ export async function pickAndUploadFiles(
   folderId: string | null,
   onProgress?: (p: UploadProgress) => void,
 ): Promise<FileItem[]> {
+  try {
+    await assertTransferAllowed();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    Alert.alert("Wi-Fi required", msg);
+    return [];
+  }
+
   const result = await DocumentPicker.getDocumentAsync({
     multiple: true,
     copyToCacheDirectory: true,
@@ -183,6 +192,7 @@ export async function pickAndUploadFiles(
     const name = asset.name || "file";
     onProgress?.({ current: i + 1, total, name });
     try {
+      await assertTransferAllowed();
       uploaded.push(await uploadOne(asset, folderId));
     } catch (err) {
       failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
@@ -223,6 +233,7 @@ export async function createEncryptedBinaryFile(opts: {
   bytes: Uint8Array;
   folderId: string | null;
 }): Promise<FileItem> {
+  await assertTransferAllowed();
   const plaintext = opts.bytes;
   const prepared = await prepareNewEncryptedFile(plaintext);
   const dir = FileSystem.cacheDirectory;

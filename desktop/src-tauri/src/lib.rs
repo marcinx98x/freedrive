@@ -9,6 +9,7 @@ mod db;
 mod error;
 mod my_drive;
 mod my_drive_shell;
+mod session;
 mod state;
 mod sync;
 
@@ -129,6 +130,7 @@ pub fn run() {
             commands::rotate_crypto_key,
         ])
         .setup(|app| {
+            crate::session::register_app(app.handle().clone());
             let state = app.state::<AppState>();
             let _ = commands::init_api_from_storage(&state);
 

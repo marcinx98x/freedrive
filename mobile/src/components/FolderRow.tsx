@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { Computer, FolderItem } from "../api/types";
-import { colors, radii, spacing } from "../theme";
+import { radii, spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { formatRelativeDate } from "../utils/format";
 import { resolveFolderColor } from "../utils/folderColors";
 import { Icon } from "./Icon";
@@ -14,6 +15,8 @@ interface FolderRowProps {
 }
 
 export function FolderRow({ folder, onPress, onMenuPress }: FolderRowProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const folderTint = resolveFolderColor(folder.color);
   return (
     <Pressable style={styles.row} onPress={onPress}>
@@ -42,6 +45,8 @@ interface ComputerRowProps {
 }
 
 export function ComputerRow({ computer, onPress, onMenuPress }: ComputerRowProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.icon}>
@@ -63,6 +68,8 @@ export function ComputerRow({ computer, onPress, onMenuPress }: ComputerRowProps
 }
 
 export function FolderGridTile({ folder, onPress, onMenuPress, columns = 2 }: FolderRowProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const folderTint = resolveFolderColor(folder.color);
   return (
     <Pressable style={[styles.tile, { width: `${100 / columns}%` }]} onPress={onPress}>
@@ -79,67 +86,69 @@ export function FolderGridTile({ folder, onPress, onMenuPress, columns = 2 }: Fo
   );
 }
 
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    gap: spacing.md,
-  },
-  icon: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.sm,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  meta: {
-    flex: 1,
-    minWidth: 0,
-  },
-  name: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  sub: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  menu: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tile: {
-    paddingHorizontal: spacing.xs,
-    marginBottom: spacing.md,
-  },
-  tilePreview: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.sm,
-  },
-  tileMenu: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tileName: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: "500",
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+      gap: spacing.md,
+    },
+    icon: {
+      width: 40,
+      height: 40,
+      borderRadius: radii.sm,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    meta: {
+      flex: 1,
+      minWidth: 0,
+    },
+    name: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: "500",
+    },
+    sub: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      marginTop: 2,
+    },
+    menu: {
+      width: 32,
+      height: 32,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    tile: {
+      paddingHorizontal: spacing.xs,
+      marginBottom: spacing.md,
+    },
+    tilePreview: {
+      width: "100%",
+      aspectRatio: 1,
+      borderRadius: radii.md,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: spacing.sm,
+    },
+    tileMenu: {
+      position: "absolute",
+      top: 4,
+      right: 4,
+      width: 28,
+      height: 28,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    tileName: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "500",
+    },
+  });
+}

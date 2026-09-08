@@ -27,7 +27,9 @@ import { SheetEditorView, loadAndSerializeSheet } from "../components/SheetEdito
 import {
   canPrefetchMedia,
   downloadAndDecrypt,
+  isImageFile,
   isTooLargeForInAppPreview,
+  isVideoFile,
   saveEncryptedContent,
   writePlainCache,
   type GalleryItem,
@@ -37,6 +39,14 @@ import type { ParsedSpreadsheet } from "../utils/sheetCodec";
 type Props = NativeStackScreenProps<RootStackParamList, "FilePreview">;
 
 type UriCache = Record<string, string>;
+
+function itemIsVideo(item: GalleryItem): boolean {
+  return isVideoFile(item);
+}
+
+function itemIsImage(item: GalleryItem): boolean {
+  return isImageFile(item);
+}
 
 function VideoPreview({ uri }: { uri: string }) {
   const player = useVideoPlayer(uri, (p) => {
@@ -131,6 +141,8 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   const currentMime = current?.mime_type || initialMime;
   const currentTitle = current?.name || initialTitle;
   const currentFileId = current?.id || initialFileId;
+  const currentIsImage = current ? itemIsImage(current) : mode === "image";
+  const currentIsVideo = current ? itemIsVideo(current) : mode === "video";
 
   const ensureLoaded = useCallback(
     async (item: GalleryItem) => {
@@ -172,20 +184,20 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   const prefetchNeighbors = useCallback(
     (index: number) => {
       if (!paging) return;
-      // Only load the current page for large media; neighbor prefetch of multi-hundred-MB
-      // videos can OOM or saturate disk/network while the user is still watching one clip.
-      const indexes =
-        mode === "video"
-          ? [index]
-          : [index - 1, index, index + 1];
+      // Prefetch image neighbors; only load the current page for videos
+      // (large clips can OOM or saturate the network).
+      const indexes = [index - 1, index, index + 1];
       for (const i of indexes) {
         const item = gallery[i];
         if (!item) continue;
-        if (i !== index && !canPrefetchMedia(item)) continue;
+        if (i !== index) {
+          if (itemIsVideo(item)) continue;
+          if (!canPrefetchMedia(item)) continue;
+        }
         void ensureLoaded(item);
       }
     },
-    [ensureLoaded, gallery, mode, paging],
+    [ensureLoaded, gallery, paging],
   );
 
   useEffect(() => {
@@ -341,7 +353,7 @@ export function FilePreviewScreen({ route, navigation }: Props) {
       headerTintColor: colors.text,
       headerRight: () => (
         <View style={styles.headerActions}>
-          {mode === "image" && currentFileId ? (
+          {currentIsImage && currentFileId ? (
             <>
               <Pressable
                 onPress={() => void rotateCurrent()}
@@ -434,6 +446,7 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     navigation,
     mode,
     currentTitle,
+    currentIsImage,
     initialTitle,
     currentFileId,
     currentUri,
@@ -453,9 +466,9 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     sheetUri,
   ]);
 
-  if (mode === "image" && paging) {
+  if ((mode === "image" || mode === "video") && paging) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, currentIsVideo ? styles.videoSafe : null]}>
         <FlatList
           ref={listRef}
           data={gallery}
@@ -472,18 +485,25 @@ export function FilePreviewScreen({ route, navigation }: Props) {
           onMomentumScrollEnd={onMomentumScrollEnd}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
-          renderItem={({ item }) => {
+          renderItem={({ item, index }) => {
             const uri = uriById[item.id];
             const loading = !!loadingIds[item.id];
             const error = errorById[item.id];
+            const active = index === pageIndex;
+            const video = itemIsVideo(item);
             return (
               <View
                 style={[
                   styles.page,
+                  video ? styles.videoSafe : null,
                   { width: pageWidth, paddingBottom: insets.bottom },
                 ]}
               >
-                {uri ? (
+                {uri && video && active ? (
+                  <VideoPreview uri={uri} />
+                ) : uri && video ? (
+                  <View style={styles.video} />
+                ) : uri ? (
                   <Image source={{ uri }} style={styles.image} resizeMode="contain" />
                 ) : loading ? (
                   <ActivityIndicator color={colors.accent} />
@@ -511,60 +531,6 @@ export function FilePreviewScreen({ route, navigation }: Props) {
         ) : (
           <ActivityIndicator color={colors.accent} />
         )}
-      </View>
-    );
-  }
-
-  if (mode === "video" && paging) {
-    return (
-      <View style={[styles.center, styles.videoSafe]}>
-        <FlatList
-          ref={listRef}
-          data={gallery}
-          keyExtractor={(item) => item.id}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          initialScrollIndex={Math.min(initialIndex, gallery.length - 1)}
-          getItemLayout={(_, index) => ({
-            length: pageWidth,
-            offset: pageWidth * index,
-            index,
-          })}
-          onMomentumScrollEnd={onMomentumScrollEnd}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-          renderItem={({ item, index }) => {
-            const uri = uriById[item.id];
-            const loading = !!loadingIds[item.id];
-            const error = errorById[item.id];
-            const active = index === pageIndex;
-            return (
-              <View
-                style={[
-                  styles.page,
-                  styles.videoSafe,
-                  { width: pageWidth, paddingBottom: insets.bottom },
-                ]}
-              >
-                {uri && active ? (
-                  <VideoPreview uri={uri} />
-                ) : uri ? (
-                  <View style={styles.video} />
-                ) : loading ? (
-                  <ActivityIndicator color={colors.accent} />
-                ) : error ? (
-                  <Text style={styles.hint}>{error}</Text>
-                ) : (
-                  <ActivityIndicator color={colors.accent} />
-                )}
-              </View>
-            );
-          }}
-        />
-        <Text style={[styles.counter, { bottom: spacing.lg + insets.bottom }]}>
-          {pageIndex + 1} / {gallery.length}
-        </Text>
       </View>
     );
   }

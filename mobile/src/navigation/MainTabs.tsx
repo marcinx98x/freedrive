@@ -14,7 +14,7 @@ import { FilesStack } from "./FilesStack";
 import { HomeScreen } from "../screens/HomeScreen";
 import { SharedScreen } from "../screens/SharedScreen";
 import { StarredScreen } from "../screens/StarredScreen";
-import { colors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import type { MainTabParamList, RootStackParamList } from "./types";
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -27,6 +27,7 @@ const tabIcons: Record<keyof MainTabParamList, IconName> = {
 };
 
 function TabIcon({ route, focused }: { route: keyof MainTabParamList; focused: boolean }) {
+  const { colors } = useTheme();
   return (
     <View
       style={{
@@ -52,6 +53,7 @@ function MainTabsChrome() {
   const isLandscape = useWideLayout();
   const { openCreateMenu } = useCreateActions();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { colors } = useTheme();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -67,7 +69,7 @@ function MainTabsChrome() {
             visible={drawerOpen}
             onClose={() => setDrawerOpen(false)}
             onNavigate={(route) => navigation.navigate(route)}
-            onSettings={() => setProfileOpen(true)}
+            onSettings={() => navigation.navigate("Settings")}
           />
           <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
         </>

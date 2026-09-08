@@ -48,4 +48,5 @@ export type RootStackParamList = {
     }>;
     index?: number;
   };
+  Settings: undefined;
 };

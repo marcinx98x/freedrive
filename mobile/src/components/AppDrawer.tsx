@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -12,7 +12,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "../api/client";
 import type { StorageInfo } from "../api/types";
-import { colors, radii, spacing } from "../theme";
+import { radii, spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { formatBytes } from "../utils/format";
 import { Icon, type IconName } from "./Icon";
 import { Logo } from "./Logo";
@@ -30,11 +31,14 @@ function DrawerItem({
   icon,
   label,
   onPress,
+  styles,
 }: {
   icon: IconName;
   label: string;
   onPress?: () => void;
+  styles: ReturnType<typeof makeStyles>;
 }) {
+  const { colors } = useTheme();
   return (
     <Pressable
       style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
@@ -47,6 +51,8 @@ function DrawerItem({
 }
 
 export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawerProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const panelWidth = Math.min(320, width * 0.78);
@@ -146,8 +152,8 @@ export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawe
           </View>
           <View style={styles.divider} />
 
-          <DrawerItem icon="clock" label="Recent" onPress={() => go("Recent")} />
-          <DrawerItem icon="trash" label="Bin" onPress={() => go("Trash")} />
+          <DrawerItem icon="clock" label="Recent" onPress={() => go("Recent")} styles={styles} />
+          <DrawerItem icon="trash" label="Bin" onPress={() => go("Trash")} styles={styles} />
           <DrawerItem
             icon="settings"
             label="Settings"
@@ -155,8 +161,9 @@ export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawe
               onClose();
               onSettings?.();
             }}
+            styles={styles}
           />
-          <DrawerItem icon="help" label="Help and feedback" onPress={onClose} />
+          <DrawerItem icon="help" label="Help and feedback" onPress={onClose} styles={styles} />
 
           <View style={styles.divider} />
           <View style={styles.storage}>
@@ -179,75 +186,77 @@ export function AppDrawer({ visible, onClose, onNavigate, onSettings }: AppDrawe
   );
 }
 
-const styles = StyleSheet.create({
-  backdropWrap: {
-    flex: 1,
-    flexDirection: "row",
-  },
-  backdropFill: {
-    backgroundColor: colors.overlay,
-  },
-  backdrop: { flex: 1 },
-  panel: {
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.md,
-    borderTopRightRadius: radii.lg,
-    borderBottomRightRadius: radii.lg,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  headerTitle: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "600",
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginVertical: spacing.sm,
-  },
-  item: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 14,
-    borderRadius: radii.pill,
-  },
-  itemPressed: { backgroundColor: colors.surface },
-  itemLabel: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  storage: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  storageRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  barTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.surfaceElevated,
-    overflow: "hidden",
-  },
-  barFill: {
-    height: "100%",
-    backgroundColor: "#F9AB00",
-  },
-  storageMeta: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    marginTop: spacing.sm,
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    backdropWrap: {
+      flex: 1,
+      flexDirection: "row",
+    },
+    backdropFill: {
+      backgroundColor: colors.overlay,
+    },
+    backdrop: { flex: 1 },
+    panel: {
+      backgroundColor: colors.bg,
+      paddingHorizontal: spacing.md,
+      borderTopRightRadius: radii.lg,
+      borderBottomRightRadius: radii.lg,
+    },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    headerTitle: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: "600",
+    },
+    divider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      marginVertical: spacing.sm,
+    },
+    item: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.lg,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 14,
+      borderRadius: radii.pill,
+    },
+    itemPressed: { backgroundColor: colors.surface },
+    itemLabel: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: "500",
+    },
+    storage: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    storageRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.lg,
+      marginBottom: spacing.md,
+    },
+    barTrack: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: colors.surfaceElevated,
+      overflow: "hidden",
+    },
+    barFill: {
+      height: "100%",
+      backgroundColor: "#F9AB00",
+    },
+    storageMeta: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      marginTop: spacing.sm,
+    },
+  });
+}

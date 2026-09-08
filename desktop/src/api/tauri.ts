@@ -150,6 +150,10 @@ export function onCryptoUnlockFailed(cb: (message: string) => void) {
   return listen<string>("crypto-unlock-failed", (e) => cb(e.payload));
 }
 
+export function onSessionExpired(cb: () => void) {
+  return listen<void>("session-expired", () => cb());
+}
+
 export function formatRelativeTime(iso: string | null): string {
   if (!iso) return "Never";
   const diff = Date.now() - new Date(iso).getTime();

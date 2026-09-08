@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api } from "./api/tauri";
+import { api, onSessionExpired } from "./api/tauri";
 import { ForceChangePassword } from "./screens/ForceChangePassword";
 import { MainApp } from "./screens/MainApp";
 import { OnboardingWizard } from "./screens/OnboardingWizard";
@@ -64,6 +64,19 @@ function MainShell() {
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    onSessionExpired(() => {
+      setUser(null);
+      setScreen("signin");
+    }).then((u) => {
+      unsub = u;
+    });
+    return () => {
+      unsub?.();
+    };
+  }, []);
 
   const handleLoginSuccess = async () => {
     const auth = await api.getAuthState();

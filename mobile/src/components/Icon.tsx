@@ -1,6 +1,6 @@
 import React from "react";
 import Svg, { Path } from "react-native-svg";
-import { colors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 
 // SVG icon set shared with the desktop app (desktop/src/components/NavIcons.tsx)
 // plus extra Material-style glyphs used by the mobile UI.
@@ -110,10 +110,12 @@ interface IconProps {
   color?: string;
 }
 
-export function Icon({ name, size = 24, color = colors.text }: IconProps) {
+export function Icon({ name, size = 24, color }: IconProps) {
+  const { colors } = useTheme();
+  const fill = color ?? colors.text;
   return (
-    <Svg key={color} width={size} height={size} viewBox="0 0 24 24">
-      <Path d={paths[name]} fill={color} />
+    <Svg key={fill} width={size} height={size} viewBox="0 0 24 24">
+      <Path d={paths[name]} fill={fill} />
     </Svg>
   );
 }

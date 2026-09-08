@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, AppState, View } from "react-native";
-import { NavigationContainer, DarkTheme } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme, DefaultTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { LinkingOptions } from "@react-navigation/native";
 import { api } from "../api/client";
@@ -11,6 +11,7 @@ import { LoginScreen } from "../screens/LoginScreen";
 import { ForceChangePasswordScreen } from "../screens/ForceChangePasswordScreen";
 import { RecentScreen } from "../screens/RecentScreen";
 import { SearchScreen } from "../screens/SearchScreen";
+import { SettingsScreen } from "../screens/SettingsScreen";
 import { TrashScreen } from "../screens/TrashScreen";
 import { TwoFactorScreen } from "../screens/TwoFactorScreen";
 import {
@@ -19,23 +20,11 @@ import {
   registerForPushNotifications,
   startPushRegistrationRetries,
 } from "../notifications/push";
-import { colors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { MainTabs } from "./MainTabs";
 import type { RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-
-const navTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: colors.bg,
-    card: colors.bg,
-    text: colors.text,
-    border: colors.border,
-    primary: colors.accent,
-  },
-};
 
 const linking: LinkingOptions<RootStackParamList> = {
   prefixes: ["freedrive://"],
@@ -48,6 +37,7 @@ const linking: LinkingOptions<RootStackParamList> = {
           Files: "files",
         },
       },
+      Settings: "settings",
     },
   },
 };
@@ -56,9 +46,25 @@ const PENDING_POLL_MS = 2500;
 
 export function RootNavigator() {
   const { booting, signedIn, user } = useAuth();
+  const { colors, resolved } = useTheme();
   const navRef = useRef<any>(null);
   const shownChallengeRef = useRef<string | null>(null);
   const mustChangePassword = Boolean(user?.must_change_password);
+
+  const navTheme = useMemo(
+    () => ({
+      ...(resolved === "light" ? DefaultTheme : DarkTheme),
+      colors: {
+        ...(resolved === "light" ? DefaultTheme.colors : DarkTheme.colors),
+        background: colors.bg,
+        card: colors.bg,
+        text: colors.text,
+        border: colors.border,
+        primary: colors.accent,
+      },
+    }),
+    [colors, resolved],
+  );
 
   useEffect(() => {
     if (!signedIn || mustChangePassword) return;
@@ -185,6 +191,11 @@ export function RootNavigator() {
               name="FilePreview"
               component={FilePreviewScreen}
               options={{ headerShown: true }}
+            />
+            <Stack.Screen
+              name="Settings"
+              component={SettingsScreen}
+              options={{ headerShown: true, title: "Settings" }}
             />
           </>
         )}

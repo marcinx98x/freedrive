@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
-import { colors, spacing } from "../theme";
+import { spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { Icon, type IconName } from "./Icon";
 
 const RAIL_WIDTH = 80;
@@ -37,6 +38,8 @@ function focusedTabName(rootState: {
 }
 
 export function SideNav({ onCreate, onMenuPress }: Props) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const activeTab = useNavigationState((state) =>
@@ -95,63 +98,65 @@ export function SideNav({ onCreate, onMenuPress }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  rail: {
-    alignSelf: "stretch",
-    backgroundColor: colors.bg,
-    alignItems: "center",
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: colors.border,
-  },
-  menuBtn: {
-    width: 48,
-    height: 48,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.sm,
-  },
-  createBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: colors.fab,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  createPressed: {
-    opacity: 0.85,
-  },
-  section: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: spacing.md,
-    width: "100%",
-  },
-  item: {
-    alignItems: "center",
-    width: "100%",
-    paddingHorizontal: 4,
-  },
-  iconWrap: {
-    width: 56,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconWrapActive: {
-    backgroundColor: colors.fab,
-  },
-  label: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: "500",
-    marginTop: 4,
-    textAlign: "center",
-  },
-  labelActive: {
-    color: colors.text,
-    fontWeight: "600",
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    rail: {
+      alignSelf: "stretch",
+      backgroundColor: colors.bg,
+      alignItems: "center",
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderRightColor: colors.border,
+    },
+    menuBtn: {
+      width: 48,
+      height: 48,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: spacing.sm,
+    },
+    createBtn: {
+      width: 56,
+      height: 56,
+      borderRadius: 16,
+      backgroundColor: colors.fab,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    createPressed: {
+      opacity: 0.85,
+    },
+    section: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      gap: spacing.md,
+      width: "100%",
+    },
+    item: {
+      alignItems: "center",
+      width: "100%",
+      paddingHorizontal: 4,
+    },
+    iconWrap: {
+      width: 56,
+      height: 32,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    iconWrapActive: {
+      backgroundColor: colors.fab,
+    },
+    label: {
+      color: colors.textSecondary,
+      fontSize: 11,
+      fontWeight: "500",
+      marginTop: 4,
+      textAlign: "center",
+    },
+    labelActive: {
+      color: colors.text,
+      fontWeight: "600",
+    },
+  });
+}

@@ -13,6 +13,7 @@ import {
 } from "../crypto";
 import type { RootStackParamList } from "../navigation/types";
 import { isSpreadsheetFile } from "./sheetCodec";
+import { assertTransferAllowed } from "../settings/wifiGate";
 
 type DownloadsNativeModule = {
   beginDownload(fileName: string): Promise<number>;
@@ -81,7 +82,7 @@ type PreviewNav = {
 };
 
 export type OpenFileOptions = {
-  /** Sibling files from the current list (images filtered for swipe gallery). */
+  /** Sibling files from the current list (images + videos for swipe gallery). */
   gallery?: FileItem[];
 };
 
@@ -148,6 +149,10 @@ export function isVideoFile(file: Pick<FileItem, "name" | "mime_type">): boolean
   const mime = (file.mime_type || "").toLowerCase();
   if (mime.startsWith("video/")) return true;
   return /\.(mp4|webm|mkv|mov|m4v|avi|3gp)$/i.test(file.name);
+}
+
+export function isMediaFile(file: Pick<FileItem, "name" | "mime_type">): boolean {
+  return isImageFile(file) || isVideoFile(file);
 }
 
 function isImage(mime: string): boolean {
@@ -250,6 +255,7 @@ export async function downloadAndDecrypt(
   mime: string;
   bytes: Uint8Array;
 }> {
+  await assertTransferAllowed();
   const needBytes = opts?.needBytes === true;
   const size = fileSizeHint(file);
   const nativeOk = hasNativeDecrypt();
@@ -288,6 +294,7 @@ export async function saveEncryptedContent(opts: {
   mimeType: string;
   plaintext: Uint8Array;
 }): Promise<FileItem> {
+  await assertTransferAllowed();
   const key = await ensureFileKey(opts.fileId);
   const { ciphertext, ivB64 } = await encryptFileBytes(opts.plaintext, key);
   const dir = FileSystem.cacheDirectory;
@@ -341,6 +348,12 @@ export async function openFile(
   opts?: OpenFileOptions,
 ): Promise<void> {
   try {
+    await assertTransferAllowed();
+  } catch (err) {
+    Alert.alert("Wi-Fi required", err instanceof Error ? err.message : String(err));
+    return;
+  }
+  try {
     if (
       (isVideoFile(file) || isImageFile(file)) &&
       isTooLargeForInAppPreview(file)
@@ -373,8 +386,8 @@ export async function openFile(
       needBytes: wantsText,
     });
 
-    if (navigation && (isImage(mime) || isImageFile(file))) {
-      const gallerySrc = (opts?.gallery ?? []).filter(isImageFile);
+    if (navigation && (isImage(mime) || isImageFile(file) || isVideo(mime) || isVideoFile(file))) {
+      const gallerySrc = (opts?.gallery ?? []).filter(isMediaFile);
       const gallery: GalleryItem[] =
         gallerySrc.length > 0
           ? gallerySrc.map(toGalleryItem)
@@ -384,34 +397,12 @@ export async function openFile(
         gallery.unshift(toGalleryItem(file));
         index = 0;
       }
+      const mode = isVideo(mime) || isVideoFile(file) ? "video" : "image";
       navigation.navigate("FilePreview", {
         title: file.name,
         uri,
         mime,
-        mode: "image",
-        fileId: file.id,
-        gallery,
-        index,
-      });
-      return;
-    }
-
-    if (navigation && (isVideo(mime) || isVideoFile(file))) {
-      const gallerySrc = (opts?.gallery ?? []).filter(isVideoFile);
-      const gallery: GalleryItem[] =
-        gallerySrc.length > 0
-          ? gallerySrc.map(toGalleryItem)
-          : [toGalleryItem(file)];
-      let index = gallery.findIndex((g) => g.id === file.id);
-      if (index < 0) {
-        gallery.unshift(toGalleryItem(file));
-        index = 0;
-      }
-      navigation.navigate("FilePreview", {
-        title: file.name,
-        uri,
-        mime,
-        mode: "video",
+        mode,
         fileId: file.id,
         gallery,
         index,

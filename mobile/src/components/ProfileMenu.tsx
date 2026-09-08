@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -14,6 +14,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import type { StorageInfo, User } from "../api/types";
+import { type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { formatBytes } from "../utils/format";
 import { UserAvatar } from "./UserAvatar";
 
@@ -31,6 +33,8 @@ function displayName(user: User | null): string {
 }
 
 export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user, serverUrl, logout } = useAuth();
   const { width } = useWindowDimensions();
@@ -190,140 +194,142 @@ export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  backdropWrap: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  backdropFill: {
-    backgroundColor: "rgba(0,0,0,0.55)",
-  },
-  backdrop: { flex: 1 },
-  spacer: { flex: 1 },
-  panel: {
-    backgroundColor: "#1E1F20",
-    borderWidth: 1,
-    borderColor: "#3C4043",
-    borderRadius: 16,
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.45,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 12,
-    alignSelf: "flex-start",
-  },
-  closeBtn: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
-  },
-  closeText: {
-    color: "#9AA0A6",
-    fontSize: 22,
-    lineHeight: 24,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-    marginBottom: 20,
-    paddingRight: 28,
-  },
-  headerText: { flex: 1, minWidth: 0 },
-  greeting: {
-    color: "#E3E3E3",
-    fontSize: 22,
-    fontWeight: "400",
-    marginBottom: 4,
-  },
-  email: {
-    color: "#9AA0A6",
-    fontSize: 14,
-  },
-  actions: {
-    marginBottom: 20,
-  },
-  actionBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#3C4043",
-    backgroundColor: "#28292A",
-    alignItems: "center",
-  },
-  actionBtnText: {
-    color: "#E3E3E3",
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  storage: {
-    marginBottom: 16,
-  },
-  storageRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  warnBadge: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "#F9AB00",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  warnText: {
-    color: "#202124",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  storageLabel: {
-    color: "#9AA0A6",
-    fontSize: 13,
-    flexShrink: 1,
-  },
-  storageLink: {
-    marginLeft: "auto",
-    color: "#A8C7FA",
-    fontSize: 13,
-  },
-  barTrack: {
-    height: 4,
-    borderRadius: 999,
-    backgroundColor: "#28292A",
-    overflow: "hidden",
-  },
-  barFill: {
-    height: "100%",
-    backgroundColor: "#A8C7FA",
-    borderRadius: 999,
-  },
-  footer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#3C4043",
-  },
-  footerLink: {
-    color: "#A8C7FA",
-    fontSize: 12,
-  },
-  footerDot: {
-    color: "#9AA0A6",
-    fontSize: 12,
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    backdropWrap: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "flex-start",
+    },
+    backdropFill: {
+      backgroundColor: colors.overlay,
+    },
+    backdrop: { flex: 1 },
+    spacer: { flex: 1 },
+    panel: {
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      paddingTop: 20,
+      paddingHorizontal: 20,
+      paddingBottom: 16,
+      shadowColor: "#000",
+      shadowOpacity: 0.45,
+      shadowRadius: 28,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 12,
+      alignSelf: "flex-start",
+    },
+    closeBtn: {
+      position: "absolute",
+      top: 12,
+      right: 12,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 1,
+    },
+    closeText: {
+      color: colors.textSecondary,
+      fontSize: 22,
+      lineHeight: 24,
+    },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 16,
+      marginBottom: 20,
+      paddingRight: 28,
+    },
+    headerText: { flex: 1, minWidth: 0 },
+    greeting: {
+      color: colors.text,
+      fontSize: 22,
+      fontWeight: "400",
+      marginBottom: 4,
+    },
+    email: {
+      color: colors.textSecondary,
+      fontSize: 14,
+    },
+    actions: {
+      marginBottom: 20,
+    },
+    actionBtn: {
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+    },
+    actionBtnText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "500",
+    },
+    storage: {
+      marginBottom: 16,
+    },
+    storageRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 8,
+    },
+    warnBadge: {
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: "#F9AB00",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    warnText: {
+      color: "#202124",
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    storageLabel: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      flexShrink: 1,
+    },
+    storageLink: {
+      marginLeft: "auto",
+      color: colors.accent,
+      fontSize: 13,
+    },
+    barTrack: {
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: colors.surface,
+      overflow: "hidden",
+    },
+    barFill: {
+      height: "100%",
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+    },
+    footer: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingTop: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    footerLink: {
+      color: colors.accent,
+      fontSize: 12,
+    },
+    footerDot: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+  });
+}

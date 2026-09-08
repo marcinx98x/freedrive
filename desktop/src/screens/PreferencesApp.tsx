@@ -5,6 +5,7 @@ import {
   onCryptoKeysSynced,
   onCryptoRecoverySetup,
   onCryptoUnlocked,
+  onSessionExpired,
 } from "../api/tauri";
 import { FreeDriveTab } from "../components/FreeDriveTab";
 import { MyComputerTab } from "../components/MyComputerTab";
@@ -67,6 +68,20 @@ export function PreferencesApp() {
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    onSessionExpired(() => {
+      setUser(null);
+      setBootstrapError("Session expired — sign in from the main FreeDrive window.");
+      void getCurrentWindow().close();
+    }).then((u) => {
+      unsub = u;
+    });
+    return () => {
+      unsub?.();
+    };
+  }, []);
 
   useEffect(() => {
     const unsubs: (() => void)[] = [];

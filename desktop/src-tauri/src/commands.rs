@@ -347,8 +347,10 @@ pub async fn restore_sync_on_startup(state: &AppState, app: &AppHandle) -> AppRe
 
 pub fn init_api_from_storage(state: &AppState) -> AppResult<()> {
     if let Some(auth) = load_auth()? {
-        let client = ApiClient::from_auth(&auth);
-        state.set_api(client);
+        match state.api() {
+            Ok(client) => client.sync_tokens_from_auth(&auth),
+            Err(_) => state.set_api(ApiClient::from_auth(&auth)),
+        }
     }
     Ok(())
 }
@@ -568,6 +570,7 @@ async fn finish_login(
     success: &LoginSuccess,
     password: Option<&str>,
 ) -> Result<(), String> {
+    crate::session::reset_fired();
     let normalized_url = server_url.trim_end_matches('/').to_string();
 
     let folders_to_remap = {

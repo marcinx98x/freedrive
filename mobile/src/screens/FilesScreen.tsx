@@ -37,7 +37,8 @@ import { useRegisterCreateHandlers } from "../create/CreateActionsContext";
 import { useGridColumns } from "../hooks/useGridColumns";
 import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
-import { colors, spacing } from "../theme";
+import { spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { openFile } from "../utils/openFile";
 import {
   createEncryptedBinaryFile,
@@ -92,6 +93,8 @@ function sortMyDriveEntries(
 }
 
 export function FilesScreen({ navigation }: Props) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [tab, setTab] = useState<FilesTab>("my-drive");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -385,7 +388,7 @@ export function FilesScreen({ navigation }: Props) {
           visible={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           onNavigate={(route) => navigation.navigate(route)}
-          onSettings={() => setProfileOpen(true)}
+          onSettings={() => navigation.navigate("Settings")}
         />
       ) : null}
       <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
@@ -531,52 +534,54 @@ export function FilesScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  tabs: {
-    flexDirection: "row",
-    paddingHorizontal: spacing.lg,
-    gap: spacing.xl,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  tab: {
-    paddingVertical: spacing.md,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-  },
-  tabActive: { borderBottomColor: colors.accent },
-  tabText: { color: colors.textSecondary, fontSize: 15, fontWeight: "500" },
-  tabTextActive: { color: colors.text },
-  banner: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: spacing.md,
-  },
-  bannerText: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
-  error: {
-    color: colors.danger,
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  gridRow: {
-    paddingHorizontal: spacing.lg,
-    flexDirection: "row",
-  },
-  emptyContainer: { flexGrow: 1 },
-  uploadOverlay: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.xl,
-    gap: spacing.md,
-  },
-  uploadText: {
-    color: colors.text,
-    textAlign: "center",
-    fontSize: 14,
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    tabs: {
+      flexDirection: "row",
+      paddingHorizontal: spacing.lg,
+      gap: spacing.xl,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    tab: {
+      paddingVertical: spacing.md,
+      borderBottomWidth: 2,
+      borderBottomColor: "transparent",
+    },
+    tabActive: { borderBottomColor: colors.accent },
+    tabText: { color: colors.textSecondary, fontSize: 15, fontWeight: "500" },
+    tabTextActive: { color: colors.text },
+    banner: {
+      marginHorizontal: spacing.lg,
+      marginTop: spacing.md,
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: spacing.md,
+    },
+    bannerText: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
+    error: {
+      color: colors.danger,
+      paddingHorizontal: spacing.lg,
+      marginBottom: spacing.sm,
+    },
+    gridRow: {
+      paddingHorizontal: spacing.lg,
+      flexDirection: "row",
+    },
+    emptyContainer: { flexGrow: 1 },
+    uploadOverlay: {
+      flex: 1,
+      backgroundColor: colors.overlay,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: spacing.xl,
+      gap: spacing.md,
+    },
+    uploadText: {
+      color: colors.text,
+      textAlign: "center",
+      fontSize: 14,
+    },
+  });
+}

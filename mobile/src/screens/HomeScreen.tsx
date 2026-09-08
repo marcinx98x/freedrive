@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -31,7 +31,8 @@ import { SearchBar } from "../components/SearchBar";
 import { useGridColumns } from "../hooks/useGridColumns";
 import { useWideLayout } from "../hooks/useWideLayout";
 import type { MainTabParamList, RootStackParamList } from "../navigation/types";
-import { colors, radii, spacing } from "../theme";
+import { radii, spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { openFile } from "../utils/openFile";
 
 type Props = CompositeScreenProps<
@@ -113,6 +114,8 @@ function activityLabel(action: string): string {
 }
 
 export function HomeScreen({ navigation }: Props) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const isLandscape = useWideLayout();
   const gridCols = useGridColumns();
   const [tab, setTab] = useState<HomeTab>("suggested");
@@ -229,13 +232,13 @@ export function HomeScreen({ navigation }: Props) {
           style={[styles.toggleBtn, viewMode === "list" && styles.toggleActive]}
           onPress={() => changeViewMode("list")}
         >
-          <Icon name="list" size={16} color={viewMode === "list" ? "#0B1C2C" : colors.text} />
+          <Icon name="list" size={16} color={viewMode === "list" ? colors.bg : colors.text} />
         </Pressable>
         <Pressable
           style={[styles.toggleBtn, viewMode === "grid" && styles.toggleActive]}
           onPress={() => changeViewMode("grid")}
         >
-          <Icon name="grid" size={16} color={viewMode === "grid" ? "#0B1C2C" : colors.text} />
+          <Icon name="grid" size={16} color={viewMode === "grid" ? colors.bg : colors.text} />
         </Pressable>
       </View>
     </View>
@@ -252,7 +255,7 @@ export function HomeScreen({ navigation }: Props) {
           visible={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           onNavigate={(route) => navigation.navigate(route)}
-          onSettings={() => setProfileOpen(true)}
+          onSettings={() => navigation.navigate("Settings")}
         />
       ) : null}
       <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
@@ -370,85 +373,87 @@ export function HomeScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  tabs: {
-    flexDirection: "row",
-    paddingHorizontal: spacing.lg,
-    gap: spacing.xl,
-  },
-  tab: {
-    paddingVertical: spacing.md,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-  },
-  tabActive: { borderBottomColor: colors.accent },
-  tabText: { color: colors.textSecondary, fontSize: 15, fontWeight: "500" },
-  tabTextActive: { color: colors.accent },
-  card: {
-    flex: 1,
-    backgroundColor: "#0E0E0F",
-    borderTopLeftRadius: radii.lg,
-    borderTopRightRadius: radii.lg,
-    marginHorizontal: spacing.xs,
-    overflow: "hidden",
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  cardHeaderTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  toggle: {
-    flexDirection: "row",
-    backgroundColor: colors.surface,
-    borderRadius: radii.pill,
-    padding: 2,
-  },
-  toggleBtn: {
-    width: 40,
-    height: 32,
-    borderRadius: radii.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  toggleActive: {
-    backgroundColor: colors.accentSoft,
-  },
-  error: {
-    color: colors.danger,
-    paddingHorizontal: spacing.lg,
-    marginVertical: spacing.sm,
-  },
-  gridRow: {
-    paddingHorizontal: spacing.lg,
-    flexDirection: "row",
-  },
-  listBottom: { paddingBottom: spacing.lg },
-  emptyContainer: { flexGrow: 1 },
-  activityRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    gap: spacing.md,
-  },
-  activityIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.sm,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  activityMeta: { flex: 1, minWidth: 0 },
-  activityName: { color: colors.text, fontSize: 16, fontWeight: "500" },
-  activitySub: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    tabs: {
+      flexDirection: "row",
+      paddingHorizontal: spacing.lg,
+      gap: spacing.xl,
+    },
+    tab: {
+      paddingVertical: spacing.md,
+      borderBottomWidth: 2,
+      borderBottomColor: "transparent",
+    },
+    tabActive: { borderBottomColor: colors.accent },
+    tabText: { color: colors.textSecondary, fontSize: 15, fontWeight: "500" },
+    tabTextActive: { color: colors.accent },
+    card: {
+      flex: 1,
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radii.lg,
+      borderTopRightRadius: radii.lg,
+      marginHorizontal: spacing.xs,
+      overflow: "hidden",
+    },
+    cardHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.md,
+      paddingBottom: spacing.sm,
+    },
+    cardHeaderTitle: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: "500",
+    },
+    toggle: {
+      flexDirection: "row",
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radii.pill,
+      padding: 2,
+    },
+    toggleBtn: {
+      width: 40,
+      height: 32,
+      borderRadius: radii.pill,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    toggleActive: {
+      backgroundColor: colors.accentSoft,
+    },
+    error: {
+      color: colors.danger,
+      paddingHorizontal: spacing.lg,
+      marginVertical: spacing.sm,
+    },
+    gridRow: {
+      paddingHorizontal: spacing.lg,
+      flexDirection: "row",
+    },
+    listBottom: { paddingBottom: spacing.lg },
+    emptyContainer: { flexGrow: 1 },
+    activityRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+      gap: spacing.md,
+    },
+    activityIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: radii.sm,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    activityMeta: { flex: 1, minWidth: 0 },
+    activityName: { color: colors.text, fontSize: 16, fontWeight: "500" },
+    activitySub: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
+  });
+}

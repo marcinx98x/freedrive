@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
-import { colors, radii, spacing } from "../theme";
+import { radii, spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { Icon } from "./Icon";
 import { UserAvatar } from "./UserAvatar";
 
@@ -21,6 +22,9 @@ export function SearchBar({
   onAvatarPress,
   placeholder = "Search in Drive",
 }: SearchBarProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <View style={styles.row}>
       {onMenuPress ? (
@@ -49,34 +53,36 @@ export function SearchBar({
   );
 }
 
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  inputWrap: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.lg,
-    height: 48,
-  },
-  input: {
-    flex: 1,
-    color: colors.text,
-    fontSize: 16,
-    padding: 0,
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    iconBtn: {
+      width: 40,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    inputWrap: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      backgroundColor: colors.surface,
+      borderRadius: radii.pill,
+      paddingHorizontal: spacing.lg,
+      height: 48,
+    },
+    input: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 16,
+      padding: 0,
+    },
+  });
+}

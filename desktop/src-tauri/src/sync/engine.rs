@@ -631,18 +631,64 @@ impl SyncEngine {
                 *self.server_ready_until.lock() = None;
                 let detail = error.to_string();
                 sync_log(format!("sync waiting for session: {}", detail));
-                let message = if detail.to_lowercase().contains("session expired") {
-                    "Session expired — sign in again"
-                } else {
-                    "Waiting for server…"
-                };
-                self.set_status(SyncStatusKind::Offline, message);
+                if detail.to_lowercase().contains("session expired")
+                    && self.recover_session_after_auth_error().await
+                {
+                    *self.server_ready_until.lock() =
+                        Some(Instant::now() + Duration::from_secs(15));
+                    return true;
+                }
+                // Terminal expiry soft-invalidates inside try_refresh (session-expired event).
+                // Transient failures keep waiting without sticky “sign in again”.
+                self.set_status(SyncStatusKind::Offline, "Waiting for server…");
                 false
             }
             Err(_) => {
                 *self.server_ready_until.lock() = None;
                 sync_log("sync waiting for session: request timed out");
                 self.set_status(SyncStatusKind::Offline, "Waiting for server…");
+                false
+            }
+        }
+    }
+
+    async fn recover_session_after_auth_error(&self) -> bool {
+        if let Ok(Some(auth)) = crate::auth_store::load_auth() {
+            self.api.sync_tokens_from_auth(&auth);
+            if tokio::time::timeout(Duration::from_secs(10), self.api.get_me())
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .is_some()
+            {
+                sync_log("sync session recovered from keyring tokens");
+                return true;
+            }
+        }
+        match self.api.try_refresh().await {
+            Ok(true) => {
+                match tokio::time::timeout(Duration::from_secs(10), self.api.get_me()).await {
+                    Ok(Ok(_)) => {
+                        sync_log("sync session recovered after refresh");
+                        true
+                    }
+                    Ok(Err(e)) => {
+                        sync_log(format!("sync session still invalid after refresh: {}", e));
+                        false
+                    }
+                    Err(_) => {
+                        sync_log("sync session check timed out after refresh");
+                        false
+                    }
+                }
+            }
+            Ok(false) => {
+                // soft_invalidate already ran inside try_refresh
+                sync_log("sync session refresh rejected by server");
+                false
+            }
+            Err(e) => {
+                sync_log(format!("sync session refresh failed: {}", e));
                 false
             }
         }

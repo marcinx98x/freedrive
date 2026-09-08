@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -6,8 +6,9 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { radii, spacing, type ThemeColors } from "../theme";
+import { useTheme } from "../theme/ThemeContext";
 import { Icon } from "./Icon";
-import { colors, radii, spacing } from "../theme";
 
 type Props = {
   onUpload: () => void;
@@ -22,6 +23,8 @@ export function CreateFab({
   onDocument,
   onSpreadsheet,
 }: Props) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [open, setOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
@@ -100,7 +103,7 @@ export function CreateFab({
           <Icon
             name={open ? "close" : "plus"}
             size={28}
-            color={open ? "#1A1C2C" : colors.text}
+            color={open ? colors.bg : colors.text}
           />
         </Pressable>
       </View>
@@ -108,53 +111,55 @@ export function CreateFab({
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: "flex-end",
-    alignItems: "flex-end",
-    zIndex: 40,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: colors.overlay,
-  },
-  stack: {
-    paddingRight: spacing.lg,
-    alignItems: "flex-end",
-    gap: spacing.md,
-  },
-  camera: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: "#5C3D4A",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  main: {
-    width: 60,
-    height: 60,
-    borderRadius: 18,
-    backgroundColor: colors.fab,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mainOpen: {
-    backgroundColor: colors.accentSoft,
-  },
-  pill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    backgroundColor: "#2B3548",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radii.pill,
-  },
-  pillText: {
-    color: colors.text,
-    fontWeight: "600",
-    fontSize: 15,
-  },
-});
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    wrap: {
+      ...StyleSheet.absoluteFill,
+      justifyContent: "flex-end",
+      alignItems: "flex-end",
+      zIndex: 40,
+    },
+    overlay: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: colors.overlay,
+    },
+    stack: {
+      paddingRight: spacing.lg,
+      alignItems: "flex-end",
+      gap: spacing.md,
+    },
+    camera: {
+      width: 48,
+      height: 48,
+      borderRadius: 14,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    main: {
+      width: 60,
+      height: 60,
+      borderRadius: 18,
+      backgroundColor: colors.fab,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    mainOpen: {
+      backgroundColor: colors.accentSoft,
+    },
+    pill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      backgroundColor: colors.surfaceElevated,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
+      borderRadius: radii.pill,
+    },
+    pillText: {
+      color: colors.text,
+      fontWeight: "600",
+      fontSize: 15,
+    },
+  });
+}

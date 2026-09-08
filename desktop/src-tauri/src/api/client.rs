@@ -18,9 +18,19 @@ use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 
+use std::sync::OnceLock;
+
 use std::time::Duration;
 
 use parking_lot::RwLock;
+
+use tokio::sync::Mutex as AsyncMutex;
+
+static REFRESH_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+
+fn refresh_lock() -> &'static AsyncMutex<()> {
+    REFRESH_LOCK.get_or_init(|| AsyncMutex::new(()))
+}
 
 fn desktop_device_name() -> String {
     hostname::get()
@@ -221,6 +231,14 @@ impl ApiClient {
 
     }
 
+    /// Keep in-memory tokens aligned with keyring / other ApiClient clones (shared Arc).
+    pub fn sync_tokens_from_auth(&self, auth: &StoredAuth) {
+        let mut inner = self.inner.write();
+        inner.server_url = auth.server_url.trim_end_matches('/').to_string();
+        inner.access_token = auth.access_token.clone();
+        inner.refresh_token = auth.refresh_token.clone();
+    }
+
     /// Fast, unauthenticated readiness probe used before starting a full scan.
     pub async fn check_health(&self) -> AppResult<()> {
         let (url, http) = {
@@ -359,71 +377,74 @@ impl ApiClient {
 
 
     pub async fn try_refresh(&self) -> AppResult<bool> {
+        let _guard = refresh_lock().lock().await;
 
-        let (url, refresh_token, http) = {
-
+        let tokens_before = {
             let inner = self.inner.read();
-
             (
-
-                format!("{}/api/v1/auth/refresh", inner.server_url),
-
+                inner.access_token.clone(),
                 inner.refresh_token.clone(),
-
-                inner.http.clone(),
-
             )
-
         };
 
+        if let Ok(Some(auth)) = crate::auth_store::load_auth() {
+            self.sync_tokens_from_auth(&auth);
+        }
 
+        let tokens_after = {
+            let inner = self.inner.read();
+            (
+                inner.access_token.clone(),
+                inner.refresh_token.clone(),
+            )
+        };
+        if tokens_after != tokens_before {
+            return Ok(true);
+        }
+
+        let (url, refresh_token, http) = {
+            let inner = self.inner.read();
+            (
+                format!("{}/api/v1/auth/refresh", inner.server_url),
+                inner.refresh_token.clone(),
+                inner.http.clone(),
+            )
+        };
 
         let res = apply_device_headers(http.post(&url))
-
             .json(&serde_json::json!({ "refresh_token": refresh_token }))
-
             .send()
-
             .await?;
 
-
-
-        if !res.status().is_success() {
-
-            return Ok(false);
-
+        let status = res.status();
+        if !status.is_success() {
+            // Definitive auth rejection → soft logout. Transient 5xx stays as Err.
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                crate::session::soft_invalidate_if_needed();
+                return Ok(false);
+            }
+            return Err(AppError::msg(format!(
+                "token refresh failed ({})",
+                status.as_u16()
+            )));
         }
-
-
 
         let data: RefreshResponse = res.json().await?;
-
         {
-
             let mut inner = self.inner.write();
-
             inner.access_token = data.tokens.access_token.clone();
-
             inner.refresh_token = data.tokens.refresh_token.clone();
-
         }
-
-
 
         if let Ok(Some(mut auth)) = crate::auth_store::load_auth() {
-
             auth.access_token = data.tokens.access_token;
-
             auth.refresh_token = data.tokens.refresh_token;
-
             let _ = save_auth(&auth);
-
         }
 
-
-
         Ok(true)
-
     }
 
 
@@ -1376,6 +1397,10 @@ impl ApiClient {
 
                     let msg = e.to_string();
 
+                    if msg.contains("auth retry") {
+                        continue;
+                    }
+
                     if !auth_retry && msg.contains("session expired") {
 
                         if self.try_refresh().await? {
@@ -1518,6 +1543,9 @@ impl ApiClient {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     let msg = e.to_string();
+                    if msg.contains("auth retry") {
+                        continue;
+                    }
                     if !auth_retry && msg.contains("session expired") {
                         if self.try_refresh().await? {
                             auth_retry = true;
@@ -1566,7 +1594,7 @@ impl ApiClient {
 
         if res.status() == reqwest::StatusCode::UNAUTHORIZED {
             if self.try_refresh().await? {
-                return Err(AppError::msg("session expired"));
+                return Err(AppError::msg("auth retry"));
             }
             return Err(AppError::msg("session expired"));
         }
@@ -1742,7 +1770,9 @@ impl ApiClient {
                 .await?;
 
             if res.status() == reqwest::StatusCode::UNAUTHORIZED {
-                let _ = self.try_refresh().await?;
+                if self.try_refresh().await? {
+                    continue;
+                }
                 return Err(AppError::msg("session expired"));
             }
             if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -1855,7 +1885,7 @@ impl ApiClient {
 
             if self.try_refresh().await? {
 
-                return Err(AppError::msg("session expired"));
+                return Err(AppError::msg("auth retry"));
 
             }
 

@@ -733,8 +733,10 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **Stream (default)** keeps cloud placeholders (download on open/thumbnail, upload on close only when content changed, then free local space); large photos that Windows cancels mid-fetch are pinned from the hydrate cache so they remain openable (**0.1.31+**); **Mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files); poll **removes** local placeholders after remote Move to bin so Explorer matches My Drive
 - **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, removes Explorer NameSpace/SyncRootManager pins, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder); prefer NSIS over MSI for this cleanup
-- Independent release tags: `desktop-v0.1.31` (server tags remain `v1.x.x`)
+- Independent release tags: `desktop-v0.1.33` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
+- **0.1.33+** — On true session expiry (refresh rejected), desktop soft-signs out like Google Drive: clears tokens, returns to sign-in, keeps local My Drive / sync files; false “session expired” after long uptime remains fixed (shared ApiClient tokens + serialized refresh)
+- **0.1.32+** — Desktop no longer shows false “session expired” after long uptime: shared token sync across ApiClient clones, serialized refresh, and sync preflight recovery from keyring
 - **0.1.31+** — Stream: opening large images no longer leaves placeholders empty when Windows cancels `FETCH_DATA` — real download progress, chunked `TRANSFER_DATA`, and pin-from-cache after cancel
 - **0.1.30+** — Stream My Drive: `CANCEL_FETCH_DATA` + provider progress so Explorer thumbnails/opens do not fail with `0x8007018E`; open/thumbnail close does not upload when plaintext hash matches last hydrate; dehydrate only after a real content upload
 - **0.1.29+** — My Drive pull on remote-newer always replaces local bytes (then optional Stream dehydrate); size mismatch also triggers refresh (heals prior stamp-without-copy). Upload skips when remote version cannot be verified
@@ -776,9 +778,9 @@ To update an existing install, run the new `FreeDrive_*_x64-setup.exe` (in-place
 The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app (Expo / React Native). It connects to the same REST API as the web UI and desktop client.
 
 - **Sign in** with server URL, email, password, and 2FA when enabled (authenticator / backup code, or email code; **Send code by email** when TOTP is preferred and email is available)
-- **Drive-like dark UI** — bottom tabs (Home, Starred, Shared, Files) on portrait; pill search bar, list/grid toggle, sort chip
+- **Drive-like UI** — bottom tabs (Home, Starred, Shared, Files) on portrait; pill search bar, list/grid toggle, sort chip; theme follows Settings (system / light / dark)
 - **Landscape NavRail** — when width > height (phone rotate / tablet landscape): narrow left rail with menu ≡, Create, and vertically centered primary tabs; portrait (including tablet) keeps phone chrome; Create uses rail `+` in landscape and FAB in portrait
-- **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings, Help) with storage usage from `GET /api/v1/me/storage` (portrait and landscape)
+- **Navigation drawer** — hamburger opens a slide-in drawer (Recent, Bin, Settings → in-app settings screen, Help) with storage usage from `GET /api/v1/me/storage` (portrait and landscape)
 - **Files stack** — Files tab nests My Drive home and Folder screens; Shared can open a folder under that stack
 - **Files** — My Drive and Computers tabs, folder navigation, search by name, pull-to-refresh; large folders load in pages (`page_size` / `page_token`) with infinite scroll (`onEndReached`) so the first screen stays fast; grid view uses square tiles and more columns on wide screens
 - **Create FAB** — on Files / Folder screens, actions nearest the `+` are Folder, then Upload, Spreadsheet, Document (camera stub reserved)
@@ -795,8 +797,8 @@ The [`mobile/`](mobile/) directory contains the **FreeDrive Mobile** Android app
 - **In-app preview** — images, video (native-controls player via `expo-video`), plain text (Markdown/JSON), spreadsheets (`.xlsx` / `.xls` / `.csv`), PDF (open with another app)
 - **Large media** — images/videos over **100 MiB** are not opened in-app (Save / Share / Cancel instead) to avoid OOM crashes; smaller files may decrypt via native AES-GCM on disk
 - **Spreadsheet editor** — SheetJS grid with formula bar and sheet tabs; Edit / Save uploads via `POST /api/v1/files/{id}/content`
-- **Image gallery** — swipe between photos in the same loaded list; background decrypt for neighbors; counter and image content pad above the Android system nav bar (same pattern as video)
-- **Video gallery** — swipe between videos in the same loaded list (active player only; safe-area padding above the system nav bar)
+- **Settings** — Drive-style settings screen (drawer → Settings; avatar still opens profile): Manage storage, system notification settings, theme (system/light/dark), clear documents cache with current usage, Wi‑Fi-only transfers via `expo-network` (APK **versionCode 55+**)
+- **Media gallery** — swipe between photos and videos in the same loaded list (mixed order as on web); videos play on the active page; image neighbors prefetch in the background; counter and content pad above the Android system nav bar (APK **versionCode 53+**)
 - **Text / spreadsheet / PDF preview** — FilePreview editors also reserve bottom safe-area so controls and last lines are not covered by the system nav bar
 - **Edit & save** — text Edit/Save, sheet Edit/Save, and image Rotate/Save re-encrypt and upload via the same native multipart path to `POST /api/v1/files/{id}/content` with `content_hash` so unchanged content does not create a new server version (APK **versionCode 52+**)
 - **Android downloads** — native `FreeDriveDownloads` module (Expo config plugin under `mobile/plugins/with-freedrive-downloads/`) writes into the shared Downloads collection via MediaStore; shows an ongoing “Downloading…” status notification, then a tappable “Download complete” notification that opens the file (Android 13+ may ask for notification permission)
