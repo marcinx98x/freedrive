@@ -45,6 +45,7 @@ pub fn clear_registration_state(db: &DbHandle) -> AppResult<()> {
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     config_set(&conn, CF_REGISTERED_KEY, "false")?;
     config_set(&conn, CF_FINALIZE_COMPLETE_KEY, "false")?;
+    config_set(&conn, crate::cfapi::storage_provider::CF_STATUS_PROPS_KEY, "false")?;
     Ok(())
 }
 
@@ -83,21 +84,40 @@ pub fn sync_root_identity_bytes(db: &DbHandle) -> AppResult<Vec<u8>> {
 
 pub fn ensure_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
     if is_registered(db)? {
-        return Ok(());
+        // Upgrade path: CfRegister-only installs need WinRT Status property defs.
+        match crate::cfapi::storage_provider::ensure_status_props(db, sync_root) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                cfapi_register_log(format!(
+                    "Status props migrate warning (continuing): {}",
+                    e
+                ));
+                return Ok(());
+            }
+        }
     }
 
-    match register_sync_root(db, sync_root) {
+    match crate::cfapi::storage_provider::register_via_winrt(db, sync_root) {
         Ok(()) => mark_registered(db),
-        Err(e) if register_error_is_recoverable(&e) => {
-            cfapi_register_log(&format!(
-                "register failed (recoverable), retrying after unregister: {}",
+        Err(e) => {
+            cfapi_register_log(format!(
+                "WinRT register failed, falling back to CfRegisterSyncRoot: {}",
                 e
             ));
-            unregister_sync_root(sync_root)?;
-            register_sync_root(db, sync_root)?;
-            mark_registered(db)
+            match register_sync_root(db, sync_root) {
+                Ok(()) => mark_registered(db),
+                Err(e2) if register_error_is_recoverable(&e2) => {
+                    cfapi_register_log(&format!(
+                        "register failed (recoverable), retrying after unregister: {}",
+                        e2
+                    ));
+                    unregister_sync_root(sync_root)?;
+                    register_sync_root(db, sync_root)?;
+                    mark_registered(db)
+                }
+                Err(e2) => Err(e2),
+            }
         }
-        Err(e) => Err(e),
     }
 }
 

@@ -431,6 +431,13 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
             e
         ));
     }
+    if let Err(e) = crate::cfapi::storage_provider::set_status_property(path) {
+        sync_log(format!(
+            "cfapi: finalize Status property warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
     if let Some(parent) = path.parent() {
         notify_directory_updated(parent);
     }

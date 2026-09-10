@@ -96,7 +96,7 @@ fn current_user_sid_string() -> AppResult<String> {
     }
 }
 
-fn icon_resource_path() -> String {
+pub(crate) fn icon_resource_path() -> String {
     // Prefer the running binary (NSIS/Tauri embeds icon at index 0).
     if let Ok(exe) = std::env::current_exe() {
         if exe.is_file() {

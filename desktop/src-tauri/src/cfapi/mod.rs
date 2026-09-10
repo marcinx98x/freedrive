@@ -20,6 +20,8 @@ mod shell_register;
 #[cfg(windows)]
 pub use shell_register::refresh_offline_context_menu;
 #[cfg(windows)]
+mod storage_provider;
+#[cfg(windows)]
 mod util;
 #[cfg(windows)]
 pub use util::notify_directory_updated;
@@ -118,6 +120,10 @@ fn start_inner(db: &DbHandle, api: ApiClient) -> Result<(), String> {
     let registered = register::is_registered(db).map_err(|e| e.to_string())?;
 
     if registered {
+        // One-time migrate CfRegister-only roots so Explorer Status definitions exist.
+        if let Err(e) = storage_provider::ensure_status_props(db, &sync_root) {
+            cfapi_log(&format!("Status props ensure warning: {}", e));
+        }
         connect_and_finalize(db, &sync_root, api)?;
         return Ok(());
     }
@@ -154,6 +160,13 @@ fn try_recover_existing_registration(
         Ok(()) => {
             register::mark_registered(db).map_err(|e| e.to_string())?;
             cfapi_log("recovered existing OS registration");
+            if !storage_provider::has_status_props(db).unwrap_or(false) {
+                connection::disconnect();
+                if let Err(e) = storage_provider::ensure_status_props(db, sync_root) {
+                    cfapi_log(&format!("Status props after recover warning: {}", e));
+                }
+                connection::connect(db, sync_root, api.clone()).map_err(|e| e.to_string())?;
+            }
             complete_connect_finalize(db, sync_root, api)?;
             Ok(true)
         }
@@ -199,7 +212,17 @@ fn complete_connect_finalize(
     cfapi_log("explorer integration started");
 
     spawn_prefetch_my_drive(db.clone(), sync_root.to_path_buf(), api);
+    spawn_status_property_backfill(my_drive_path);
     Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_status_property_backfill(my_drive: PathBuf) {
+    std::thread::spawn(move || {
+        cfapi_log("Status property backfill started");
+        let n = storage_provider::backfill_status_properties(&my_drive);
+        cfapi_log(&format!("Status property backfill painted {}", n));
+    });
 }
 
 #[cfg(windows)]
@@ -323,6 +346,7 @@ pub fn unregister(state: &AppState) -> Result<(), String> {
     shell_register::purge_all_freedrive_shell_entries();
     util::notify_shell_updated();
 
+    storage_provider::unregister_winrt_only(&state.db);
     register::unregister_sync_root(&sync_root).map_err(|e| {
         let msg = format!(
             "unregister failed: {} (local DB flag kept; run recovery or restart app)",
@@ -352,6 +376,7 @@ pub fn unregister_for_uninstall(db: &crate::db::DbHandle) {
     // Always wipe any leftover FreeDrive!* SyncRootManager keys (stale DB flags).
     shell_register::purge_all_freedrive_shell_entries();
     util::notify_shell_updated();
+    storage_provider::unregister_winrt_only(db);
     if let Err(e) = register::unregister_sync_root(&sync_root) {
         cfapi_log(&format!("uninstall unregister sync root: {}", e));
     }
