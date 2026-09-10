@@ -190,6 +190,12 @@ fn write_sync_root_registry_to_hive(
             },
         )
         .map_err(|e| AppError::msg(format!("set Context failed: {}", e)))?;
+    root_key
+        .set_value(
+            "CustomStateHandler",
+            &crate::cfapi::custom_state::custom_state_clsid_string(),
+        )
+        .map_err(|e| AppError::msg(format!("set CustomStateHandler failed: {}", e)))?;
 
     let user_sync_roots = root_key
         .create_subkey("UserSyncRoots")
@@ -392,6 +398,107 @@ fn delete_namespace_pin() {
     }
 }
 
+fn paths_equal_ci(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
+    norm(a).eq_ignore_ascii_case(&norm(b))
+}
+
+fn namespace_pin_targets_sync_root(clsid: &str, sync_root: &Path) -> bool {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let init_path = format!(
+        "{}\\{}\\Instance\\InitPropertyBag",
+        CLSID_KEY, clsid
+    );
+    let Ok(init) = hkcu.open_subkey(&init_path) else {
+        return false;
+    };
+    let Ok(target) = init.get_value::<String, _>("TargetFolderPath") else {
+        return false;
+    };
+    paths_equal_ci(&target, &sync_root.to_string_lossy())
+}
+
+fn namespace_pin_looks_like_freedrive(ns_name: &str) -> bool {
+    let name = ns_name.trim();
+    name.eq_ignore_ascii_case(SHELL_PROVIDER_NAME) || name.starts_with(&format!("{}!", SHELL_PROVIDER_NAME))
+}
+
+fn delete_namespace_clsid(clsid: &str) {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok(ns_parent) = hkcu.open_subkey_with_flags(DESKTOP_NAMESPACE_KEY, KEY_WRITE) {
+        let _ = ns_parent.delete_subkey_all(clsid);
+    }
+    if let Ok(clsid_parent) = hkcu.open_subkey_with_flags(CLSID_KEY, KEY_WRITE) {
+        let _ = clsid_parent.delete_subkey_all(clsid);
+    }
+    if let Ok(hide) = hkcu.open_subkey_with_flags(HIDE_DESKTOP_ICONS_KEY, KEY_SET_VALUE) {
+        let _ = hide.delete_value(clsid);
+    }
+}
+
+/// Remove WinRT auto-pins that duplicate our branded FreeDrive NameSpace entry.
+pub fn purge_duplicate_freedrive_namespace_pins(sync_root: &Path) {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(ns_parent) = hkcu.open_subkey_with_flags(DESKTOP_NAMESPACE_KEY, KEY_READ | KEY_WRITE)
+    else {
+        return;
+    };
+    let Ok(names) = ns_parent.enum_keys().collect::<Result<Vec<_>, _>>() else {
+        return;
+    };
+
+    for clsid in names {
+        if clsid.eq_ignore_ascii_case(SHELL_NAMESPACE_CLSID) {
+            continue;
+        }
+        let ns_label = ns_parent
+            .open_subkey(&clsid)
+            .ok()
+            .and_then(|k| k.get_value::<String, _>("").ok())
+            .unwrap_or_default();
+        let by_name = namespace_pin_looks_like_freedrive(&ns_label);
+        let by_path = namespace_pin_targets_sync_root(&clsid, sync_root);
+        if by_name || by_path {
+            delete_namespace_clsid(&clsid);
+            shell_log(&format!(
+                "purged duplicate Explorer NameSpace pin clsid={} label={} path_match={}",
+                clsid, ns_label, by_path
+            ));
+        }
+    }
+}
+
+/// Remove every FreeDrive-looking Desktop\\NameSpace pin (uninstall), including WinRT duplicates.
+fn purge_all_freedrive_namespace_pins() {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(ns_parent) = hkcu.open_subkey_with_flags(DESKTOP_NAMESPACE_KEY, KEY_READ | KEY_WRITE)
+    else {
+        delete_namespace_pin();
+        return;
+    };
+    let Ok(names) = ns_parent.enum_keys().collect::<Result<Vec<_>, _>>() else {
+        delete_namespace_pin();
+        return;
+    };
+    for clsid in names {
+        let ns_label = ns_parent
+            .open_subkey(&clsid)
+            .ok()
+            .and_then(|k| k.get_value::<String, _>("").ok())
+            .unwrap_or_default();
+        let is_ours = clsid.eq_ignore_ascii_case(SHELL_NAMESPACE_CLSID);
+        if is_ours || namespace_pin_looks_like_freedrive(&ns_label) {
+            delete_namespace_clsid(&clsid);
+            shell_log(&format!(
+                "purged Explorer NameSpace pin clsid={} label={}",
+                clsid, ns_label
+            ));
+        }
+    }
+    // Ensure branded CLSID/HideDesktopIcons leftovers are gone even if NameSpace enum missed them.
+    delete_namespace_pin();
+}
+
 fn delete_sync_root_registry_from_hive(hive: HKEY, sync_root_id: &str) -> AppResult<()> {
     let hk = RegKey::predef(hive);
     let manager = hk
@@ -415,6 +522,17 @@ pub fn ensure_shell_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()>
     let sync_root_id = sync_root_shell_id(db)?;
     let identity = sync_root_identity_bytes(db)?;
 
+    // Drop leftover FreeDrive!* keys from old accounts / CfRegister-only installs so
+    // Explorer does not bind Status to a root without CustomStateHandler / property defs.
+    let stale = purge_stale_freedrive_sync_roots(&sync_root_id);
+    if !stale.is_empty() {
+        shell_log(&format!(
+            "removed {} stale SyncRootManager key(s); keep={}",
+            stale.len(),
+            sync_root_id
+        ));
+    }
+
     match write_sync_root_registry(&sync_root_id, sync_root, &identity) {
         Ok(()) => shell_log(&format!("shell SyncRootManager ok id={}", sync_root_id)),
         Err(e) => {
@@ -428,7 +546,14 @@ pub fn ensure_shell_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()>
         }
     }
 
+    if let Err(e) = crate::cfapi::custom_state::register_custom_state_com_registry() {
+        shell_log(&format!("CustomStateHandler COM registry warning: {}", e));
+    }
+    crate::cfapi::custom_state::start_custom_state_com_server();
+
     ensure_namespace_pinned(sync_root)?;
+    // WinRT Register also pins a second Desktop\NameSpace CLSID for the same path.
+    purge_duplicate_freedrive_namespace_pins(sync_root);
     refresh_offline_context_menu(db)?;
     mark_shell_registered(db)?;
     shell_log(&format!("shell registered id={}", sync_root_id));
@@ -447,11 +572,86 @@ pub fn unregister_shell(db: &DbHandle) -> AppResult<()> {
     if is_shell_registered(db)? || sync_root_registry_valid(&sync_root_id, &sid) {
         delete_sync_root_registry(&sync_root_id)?;
     }
-    delete_namespace_pin();
+    purge_all_freedrive_namespace_pins();
     delete_context_menu_registration();
+    crate::cfapi::custom_state::unregister_custom_state_com_registry();
     clear_shell_registration_state(db)?;
     shell_log("shell unregistered");
     Ok(())
+}
+
+/// All FreeDrive!* SyncRootManager ids in HKLM + HKCU (deduped).
+pub fn list_freedrive_sync_root_ids() -> Vec<String> {
+    let prefix = format!("{}!", SHELL_PROVIDER_NAME);
+    let mut out = Vec::new();
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let hk = RegKey::predef(hive);
+        let Ok(manager) = hk.open_subkey(SYNC_ROOT_MANAGER_KEY) else {
+            continue;
+        };
+        let Ok(names) = manager.enum_keys().collect::<Result<Vec<_>, _>>() else {
+            continue;
+        };
+        for name in names {
+            if name.starts_with(&prefix) && !out.iter().any(|e: &String| e == &name) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// True when active sync root registry is missing or has empty CustomStateHandler.
+pub fn active_sync_root_missing_custom_state(keep_id: &str) -> bool {
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let hk = RegKey::predef(hive);
+        let key_path = format!("{}\\{}", SYNC_ROOT_MANAGER_KEY, keep_id);
+        if let Ok(root) = hk.open_subkey(&key_path) {
+            match root.get_value::<String, _>("CustomStateHandler") {
+                Ok(v) if !v.trim().is_empty() => return false,
+                _ => return true,
+            }
+        }
+    }
+    true
+}
+
+/// True when Extra FreeDrive!* keys exist besides `keep_id` (dual / stale roots).
+pub fn has_stale_freedrive_sync_roots(keep_id: &str) -> bool {
+    list_freedrive_sync_root_ids()
+        .into_iter()
+        .any(|id| id != keep_id)
+}
+
+/// Remove every FreeDrive!* SyncRootManager key except `keep_id` (registry only).
+/// Callers should WinRT-Unregister stale ids first when possible.
+pub fn purge_stale_freedrive_sync_roots(keep_id: &str) -> Vec<String> {
+    let prefix = format!("{}!", SHELL_PROVIDER_NAME);
+    let mut removed = Vec::new();
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let hk = RegKey::predef(hive);
+        let Ok(manager) = hk.open_subkey_with_flags(SYNC_ROOT_MANAGER_KEY, KEY_READ | KEY_WRITE)
+        else {
+            continue;
+        };
+        let Ok(names) = manager.enum_keys().collect::<Result<Vec<_>, _>>() else {
+            continue;
+        };
+        for name in names {
+            if name.starts_with(&prefix) && name != keep_id {
+                match manager.delete_subkey_all(&name) {
+                    Ok(()) => {
+                        shell_log(&format!("purged stale SyncRootManager key {}", name));
+                        if !removed.iter().any(|e: &String| e == &name) {
+                            removed.push(name);
+                        }
+                    }
+                    Err(e) => shell_log(&format!("purge stale key {} failed: {}", name, e)),
+                }
+            }
+        }
+    }
+    removed
 }
 
 /// Delete every FreeDrive SyncRootManager entry + NameSpace pin (uninstall / stale cleanup).
@@ -475,7 +675,7 @@ pub fn purge_all_freedrive_shell_entries() {
             }
         }
     }
-    delete_namespace_pin();
+    purge_all_freedrive_namespace_pins();
     delete_context_menu_registration();
 }
 

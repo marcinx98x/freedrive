@@ -5,6 +5,8 @@ pub use callbacks::init_app_handle;
 #[cfg(windows)]
 mod connection;
 #[cfg(windows)]
+pub mod custom_state;
+#[cfg(windows)]
 mod placeholders;
 #[cfg(windows)]
 pub use placeholders::{
@@ -68,7 +70,19 @@ pub fn start(state: &AppState) -> Result<(), String> {
     if !connection::is_connected() && registered {
         let sync_root = crate::auth_store::sync_root_dir(false).map_err(|e| e.to_string())?;
         cfapi_log("reconnecting to registered sync root");
-        return connect_and_finalize(db, &sync_root, api);
+        match connect_and_finalize(db, &sync_root, api.clone()) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_missing_sync_root_error(&e) => {
+                cfapi_log(&format!(
+                    "reconnect failed (sync root missing under path), re-registering: {}",
+                    e
+                ));
+                connection::disconnect();
+                let _ = register::clear_registration_state(db);
+                return start_inner(db, api);
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     match start_inner(db, api) {
@@ -83,16 +97,48 @@ pub fn start(state: &AppState) -> Result<(), String> {
     }
 }
 
+/// HRESULT / message when the folder is no longer a CfAPI sync root (e.g. after Unregister).
+#[cfg(windows)]
+fn is_missing_sync_root_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("0x80070186")
+        || lower.contains("only supported on files under a cloud sync root")
+}
+
 /// Start CfAPI and verify the provider is connected (retries once on failure).
 #[cfg(windows)]
 pub fn ensure_connected(state: &AppState) -> Result<(), String> {
-    start(state)?;
+    match start(state) {
+        Ok(()) => {}
+        Err(e) if is_missing_sync_root_error(&e) => {
+            cfapi_log(&format!(
+                "ensure_connected: missing sync root, clearing DB and re-registering: {}",
+                e
+            ));
+            connection::disconnect();
+            let _ = register::clear_registration_state(&state.db);
+            start(state)?;
+        }
+        Err(e) => return Err(e),
+    }
     if connection::is_connected() {
         return Ok(());
     }
     cfapi_log("provider not connected after start, retrying connect");
     connection::disconnect();
-    start(state)?;
+    match start(state) {
+        Ok(()) => {}
+        Err(e) if is_missing_sync_root_error(&e) => {
+            cfapi_log(&format!(
+                "ensure_connected retry: missing sync root, re-registering: {}",
+                e
+            ));
+            connection::disconnect();
+            let _ = register::clear_registration_state(&state.db);
+            start(state)?;
+        }
+        Err(e) => return Err(e),
+    }
     if !connection::is_connected() {
         return Err(
             "Could not connect File Explorer integration. Restart the app or run recovery."
@@ -124,8 +170,18 @@ fn start_inner(db: &DbHandle, api: ApiClient) -> Result<(), String> {
         if let Err(e) = storage_provider::ensure_status_props(db, &sync_root) {
             cfapi_log(&format!("Status props ensure warning: {}", e));
         }
-        connect_and_finalize(db, &sync_root, api)?;
-        return Ok(());
+        match connect_and_finalize(db, &sync_root, api.clone()) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_missing_sync_root_error(&e) => {
+                cfapi_log(&format!(
+                    "registered root missing under path, clearing and re-registering: {}",
+                    e
+                ));
+                connection::disconnect();
+                let _ = register::clear_registration_state(db);
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     if try_recover_existing_registration(db, &sync_root, api.clone())? {
@@ -246,8 +302,8 @@ fn ensure_my_drive_placeholder(
     sync_root: &std::path::Path,
 ) -> Result<(), String> {
     use crate::cfapi::placeholders::{
-        create_named_folder_placeholder, ensure_cloud_placeholder, is_duplicate_placeholder_error,
-        MY_DRIVE_FOLDER_NAME,
+        convert_directory_to_placeholder, create_named_folder_placeholder,
+        ensure_cloud_placeholder, is_duplicate_placeholder_error, MY_DRIVE_FOLDER_NAME,
     };
     use crate::my_drive::resolve_my_drive_root_id;
 
@@ -258,10 +314,27 @@ fn ensure_my_drive_placeholder(
             cfapi_log("My Drive placeholder created");
             Ok(())
         }
-        Err(e) if is_duplicate_placeholder_error(&e) => {
-            cfapi_log("My Drive placeholder already exists");
-            ensure_cloud_placeholder(&my_drive_path, "folder", &remote_id)
-                .map_err(|e| e.to_string())?;
+        Err(e) if is_duplicate_placeholder_error(&e) || my_drive_path.is_dir() => {
+            cfapi_log(&format!(
+                "My Drive placeholder create skipped ({}), converting existing folder",
+                e
+            ));
+            match convert_directory_to_placeholder(&my_drive_path, "folder", &remote_id) {
+                Ok(()) => {
+                    cfapi_log("My Drive folder converted to cloud placeholder");
+                }
+                Err(conv_err) => {
+                    cfapi_log(&format!(
+                        "My Drive convert warning (continuing): {}",
+                        conv_err
+                    ));
+                    if let Err(ens_err) =
+                        ensure_cloud_placeholder(&my_drive_path, "folder", &remote_id)
+                    {
+                        cfapi_log(&format!("My Drive ensure_cloud warning: {}", ens_err));
+                    }
+                }
+            }
             Ok(())
         }
         Err(e) => Err(e.to_string()),
@@ -324,6 +397,7 @@ fn prefetch_my_drive_contents(
 /// Disconnect from sync root (keeps registration for next login).
 #[cfg(windows)]
 pub fn stop() {
+    custom_state::stop_custom_state_com_server();
     connection::disconnect();
 }
 
@@ -345,6 +419,8 @@ pub fn unregister(state: &AppState) -> Result<(), String> {
     }
     shell_register::purge_all_freedrive_shell_entries();
     util::notify_shell_updated();
+    custom_state::unregister_custom_state_com_registry();
+    custom_state::stop_custom_state_com_server();
 
     storage_provider::unregister_winrt_only(&state.db);
     register::unregister_sync_root(&sync_root).map_err(|e| {
@@ -376,6 +452,8 @@ pub fn unregister_for_uninstall(db: &crate::db::DbHandle) {
     // Always wipe any leftover FreeDrive!* SyncRootManager keys (stale DB flags).
     shell_register::purge_all_freedrive_shell_entries();
     util::notify_shell_updated();
+    custom_state::unregister_custom_state_com_registry();
+    custom_state::stop_custom_state_com_server();
     storage_provider::unregister_winrt_only(db);
     if let Err(e) = register::unregister_sync_root(&sync_root) {
         cfapi_log(&format!("uninstall unregister sync root: {}", e));

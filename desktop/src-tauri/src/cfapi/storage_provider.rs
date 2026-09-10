@@ -7,7 +7,10 @@
 use crate::cfapi::register::{
     mark_registered, sync_root_identity_bytes, unregister_sync_root,
 };
-use crate::cfapi::shell_register::{icon_resource_path, sync_root_shell_id};
+use crate::cfapi::shell_register::{
+    active_sync_root_missing_custom_state, has_stale_freedrive_sync_roots, icon_resource_path,
+    list_freedrive_sync_root_ids, purge_stale_freedrive_sync_roots, sync_root_shell_id,
+};
 use crate::cfapi::util::PROVIDER_ID;
 use crate::cfapi::placeholders::is_dehydrated_placeholder;
 use crate::db::{config_get, config_set, DbHandle};
@@ -131,6 +134,37 @@ fn build_sync_root_info(db: &DbHandle, sync_root: &Path) -> AppResult<StoragePro
     Ok(info)
 }
 
+fn unregister_winrt_id(id: &str) {
+    match StorageProviderSyncRootManager::Unregister(&HSTRING::from(id)) {
+        Ok(()) => sp_log(format!("StorageProviderSyncRootManager.Unregister id={}", id)),
+        Err(e) => sp_log(format!(
+            "StorageProviderSyncRootManager.Unregister id={} (ok if missing): {} (0x{:08X})",
+            id,
+            e,
+            e.code().0 as u32
+        )),
+    }
+}
+
+/// Unregister every FreeDrive!* WinRT sync root (and the active id), then drop stale registry keys.
+fn purge_stale_and_unregister_winrt(keep_id: &str) {
+    let mut ids = list_freedrive_sync_root_ids();
+    if !ids.iter().any(|e| e == keep_id) {
+        ids.push(keep_id.to_string());
+    }
+    for id in &ids {
+        unregister_winrt_id(id);
+    }
+    let removed = purge_stale_freedrive_sync_roots(keep_id);
+    if !removed.is_empty() {
+        sp_log(format!(
+            "purged {} stale FreeDrive SyncRootManager key(s); keep={}",
+            removed.len(),
+            keep_id
+        ));
+    }
+}
+
 /// Register sync root via WinRT (includes CfAPI registration) with Status property def.
 pub fn register_via_winrt(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
     if !sync_root.is_dir() {
@@ -138,8 +172,11 @@ pub fn register_via_winrt(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
             .map_err(|e| AppError::msg(format!("create sync root: {}", e)))?;
     }
 
-    let info = build_sync_root_info(db, sync_root)?;
     let id = sync_root_shell_id(db)?;
+    // Avoid dual FreeDrive!* roots (Explorer may bind Status to the stale one).
+    purge_stale_and_unregister_winrt(&id);
+
+    let info = build_sync_root_info(db, sync_root)?;
     sp_log(format!(
         "StorageProviderSyncRootManager.Register id={} path={}",
         id,
@@ -153,13 +190,16 @@ pub fn register_via_winrt(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
         ))
     })?;
     mark_status_props(db)?;
+    sp_log(format!(
+        "Status property definitions registered id={} CustomStateHandler expected after shell refresh",
+        id
+    ));
     Ok(())
 }
 
 fn unregister_winrt(db: &DbHandle) {
     if let Ok(id) = sync_root_shell_id(db) {
-        let _ = StorageProviderSyncRootManager::Unregister(&HSTRING::from(id.as_str()));
-        sp_log(format!("StorageProviderSyncRootManager.Unregister id={}", id));
+        purge_stale_and_unregister_winrt(&id);
     }
 }
 
@@ -167,13 +207,49 @@ pub fn unregister_winrt_only(db: &DbHandle) {
     unregister_winrt(db);
 }
 
-/// Ensure Status property definitions exist (one-time migrate from CfRegister-only installs).
+/// Whether Explorer Status registration must be (re)applied despite `cf_status_props_v1`.
+fn needs_status_props_repair(db: &DbHandle) -> AppResult<bool> {
+    let keep_id = sync_root_shell_id(db)?;
+    if !has_status_props(db)? {
+        sp_log(format!(
+            "Status repair needed: cf_status_props_v1 unset; keep={}",
+            keep_id
+        ));
+        return Ok(true);
+    }
+    if has_stale_freedrive_sync_roots(&keep_id) {
+        let extras: Vec<_> = list_freedrive_sync_root_ids()
+            .into_iter()
+            .filter(|id| id != &keep_id)
+            .collect();
+        sp_log(format!(
+            "Status repair needed: stale FreeDrive sync roots {:?}; keep={}",
+            extras, keep_id
+        ));
+        return Ok(true);
+    }
+    if active_sync_root_missing_custom_state(&keep_id) {
+        sp_log(format!(
+            "Status repair needed: active root missing CustomStateHandler; keep={}",
+            keep_id
+        ));
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Ensure Status property definitions exist (migrate CfRegister-only / dual-root installs).
 pub fn ensure_status_props(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
-    if has_status_props(db)? {
+    if !needs_status_props_repair(db)? {
         return Ok(());
     }
 
-    sp_log("migrating sync root registration for Explorer Status property definitions");
+    let keep_id = sync_root_shell_id(db)?;
+    sp_log(format!(
+        "migrating sync root registration for Explorer Status; keep={} path={}",
+        keep_id,
+        sync_root.display()
+    ));
     crate::cfapi::connection::disconnect();
     unregister_winrt(db);
     if let Err(e) = unregister_sync_root(sync_root) {

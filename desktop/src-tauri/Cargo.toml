@@ -1,6 +1,6 @@
 [package]
 name = "freedrive-desktop"
-version = "0.1.38"
+version = "0.1.42"
 description = "FreeDrive Desktop Sync Client"
 authors = ["marci"]
 edition = "2021"
@@ -45,6 +45,7 @@ winreg = "0.55"
 urlencoding = "2"
 
 [target.'cfg(windows)'.dependencies]
+windows-core = "0.58"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Storage_CloudFilters",
@@ -54,7 +55,9 @@ windows = { version = "0.58", features = [
     "Win32_System_IO",
     "Win32_System_CorrelationVector",
     "Win32_System_Threading",
+    "Win32_System_Com",
     "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
     "Foundation",
     "Foundation_Collections",
     "Storage",
