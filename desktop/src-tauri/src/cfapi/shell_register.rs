@@ -11,6 +11,8 @@ use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKE
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 pub const CF_SHELL_REGISTERED_KEY: &str = "cf_shell_registered";
+/// Set after SyncRootManager rewrite without CustomStateHandler (0.1.46+).
+pub const CF_STATUS_NO_CUSTOM_HANDLER_KEY: &str = "cf_status_no_custom_handler_v1";
 
 const SHELL_PROVIDER_NAME: &str = "FreeDrive";
 const SHELL_ACCOUNT_FALLBACK: &str = "default";
@@ -45,9 +47,21 @@ fn mark_shell_registered(db: &DbHandle) -> AppResult<()> {
     Ok(())
 }
 
+fn mark_no_custom_handler(db: &DbHandle) -> AppResult<()> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    config_set(&conn, CF_STATUS_NO_CUSTOM_HANDLER_KEY, "true")?;
+    Ok(())
+}
+
+pub fn has_no_custom_handler(db: &DbHandle) -> AppResult<bool> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    Ok(config_get(&conn, CF_STATUS_NO_CUSTOM_HANDLER_KEY)?.as_deref() == Some("true"))
+}
+
 pub fn clear_shell_registration_state(db: &DbHandle) -> AppResult<()> {
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     config_set(&conn, CF_SHELL_REGISTERED_KEY, "false")?;
+    config_set(&conn, CF_STATUS_NO_CUSTOM_HANDLER_KEY, "false")?;
     Ok(())
 }
 
@@ -190,12 +204,9 @@ fn write_sync_root_registry_to_hive(
             },
         )
         .map_err(|e| AppError::msg(format!("set Context failed: {}", e)))?;
-    root_key
-        .set_value(
-            "CustomStateHandler",
-            &crate::cfapi::custom_state::custom_state_clsid_string(),
-        )
-        .map_err(|e| AppError::msg(format!("set CustomStateHandler failed: {}", e)))?;
+    // Native CfAPI Status only — CustomStateHandler painted a blank "paper" glyph
+    // beside cloud/check/sync even when GetItemProperties returned empty.
+    let _ = root_key.delete_value("CustomStateHandler");
 
     let user_sync_roots = root_key
         .create_subkey("UserSyncRoots")
@@ -522,8 +533,7 @@ pub fn ensure_shell_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()>
     let sync_root_id = sync_root_shell_id(db)?;
     let identity = sync_root_identity_bytes(db)?;
 
-    // Drop leftover FreeDrive!* keys from old accounts / CfRegister-only installs so
-    // Explorer does not bind Status to a root without CustomStateHandler / property defs.
+    // Drop leftover FreeDrive!* keys from old accounts / dual-root installs.
     let stale = purge_stale_freedrive_sync_roots(&sync_root_id);
     if !stale.is_empty() {
         shell_log(&format!(
@@ -534,11 +544,15 @@ pub fn ensure_shell_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()>
     }
 
     match write_sync_root_registry(&sync_root_id, sync_root, &identity) {
-        Ok(()) => shell_log(&format!("shell SyncRootManager ok id={}", sync_root_id)),
+        Ok(()) => {
+            shell_log(&format!("shell SyncRootManager ok id={}", sync_root_id));
+            let _ = mark_no_custom_handler(db);
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.to_ascii_lowercase().contains("already exists") {
                 shell_log(&format!("shell SyncRootManager already exists id={}", sync_root_id));
+                let _ = mark_no_custom_handler(db);
             } else {
                 // NameSpace pin can still show the folder even if SyncRootManager write fails.
                 shell_log(&format!("shell SyncRootManager warning: {}", e));
@@ -546,10 +560,7 @@ pub fn ensure_shell_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()>
         }
     }
 
-    if let Err(e) = crate::cfapi::custom_state::register_custom_state_com_registry() {
-        shell_log(&format!("CustomStateHandler COM registry warning: {}", e));
-    }
-    crate::cfapi::custom_state::start_custom_state_com_server();
+    // Do not register/start CustomStateHandler COM — native CfAPI Status glyphs only.
 
     ensure_namespace_pinned(sync_root)?;
     // WinRT Register also pins a second Desktop\NameSpace CLSID for the same path.
@@ -601,19 +612,30 @@ pub fn list_freedrive_sync_root_ids() -> Vec<String> {
     out
 }
 
-/// True when active sync root registry is missing or has empty CustomStateHandler.
-pub fn active_sync_root_missing_custom_state(keep_id: &str) -> bool {
+/// Remove CustomStateHandler from the active sync root in HKLM/HKCU (native Status only).
+pub fn clear_custom_state_handler_value(keep_id: &str) {
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let hk = RegKey::predef(hive);
+        let key_path = format!("{}\\{}", SYNC_ROOT_MANAGER_KEY, keep_id);
+        if let Ok(root) = hk.open_subkey_with_flags(&key_path, KEY_SET_VALUE) {
+            let _ = root.delete_value("CustomStateHandler");
+        }
+    }
+}
+
+/// True when active sync root still has a non-empty CustomStateHandler (paper Status).
+pub fn active_sync_root_has_custom_state(keep_id: &str) -> bool {
     for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         let hk = RegKey::predef(hive);
         let key_path = format!("{}\\{}", SYNC_ROOT_MANAGER_KEY, keep_id);
         if let Ok(root) = hk.open_subkey(&key_path) {
             match root.get_value::<String, _>("CustomStateHandler") {
-                Ok(v) if !v.trim().is_empty() => return false,
-                _ => return true,
+                Ok(v) if !v.trim().is_empty() => return true,
+                _ => {}
             }
         }
     }
-    true
+    false
 }
 
 /// True when Extra FreeDrive!* keys exist besides `keep_id` (dual / stale roots).

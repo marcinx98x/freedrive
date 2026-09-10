@@ -90,6 +90,12 @@ func (s *FolderService) Create(ctx context.Context, folder *domain.Folder) error
 	}
 
 	if err := s.folderRepo.Create(ctx, folder); err != nil {
+		// Concurrent create or unique index race — resolve again.
+		again, resolveErr := s.folderRepo.GetByParentName(ctx, folder.ParentID, folder.Name, folder.OwnerID)
+		if resolveErr == nil && again != nil && !again.IsTrashed {
+			*folder = *again
+			return nil
+		}
 		return err
 	}
 

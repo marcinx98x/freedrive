@@ -11,7 +11,7 @@ use crate::crypto::key_to_b64url;
 use crate::db::{
     get_file_key, insert_activity, my_drive_delete_placeholder,
     my_drive_delete_placeholders_under_prefix, my_drive_get_placeholder,
-    my_drive_upsert_placeholder, store_file_key, DbHandle,
+    my_drive_reparent_direct_children, my_drive_upsert_placeholder, store_file_key, DbHandle,
 };
 use crate::error::{AppError, AppResult};
 use crate::my_drive::{
@@ -21,13 +21,25 @@ use crate::my_drive::{
 use crate::sync::log::sync_log;
 use crate::sync::suppress::WatcherSuppress;
 use crate::sync::{DOWNLOAD_CONCURRENCY, UPLOAD_CONCURRENCY};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+
+/// Serialize ensure_my_drive_folder_relative per path (watcher + poll race).
+fn folder_ensure_lock(relative: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let key = relative.replace('/', "\\").to_ascii_lowercase();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(key)
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
 
 static MY_DRIVE_UPLOAD_IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -251,7 +263,7 @@ async fn poll_my_drive_folder(
         .await;
     }
 
-    for folder in &contents.folders {
+    for folder in unique_remote_folders_for_poll(db, parent_relative, &contents.folders) {
         let sub_rel = join_my_drive_relative(parent_relative, &folder.name);
         Box::pin(poll_my_drive_folder(
             api,
@@ -488,6 +500,45 @@ fn path_has_reparse_point(path: &Path) -> bool {
         let _ = path;
         false
     }
+}
+
+/// When the server still has duplicate same-name folders under one parent, poll only one.
+fn unique_remote_folders_for_poll<'a>(
+    db: &DbHandle,
+    parent_relative: &str,
+    folders: &'a [crate::api::types::Folder],
+) -> Vec<&'a crate::api::types::Folder> {
+    let mut by_name: HashMap<String, &crate::api::types::Folder> = HashMap::new();
+    let mut skipped = 0u32;
+    for folder in folders {
+        let key = sanitize_name(&folder.name).to_ascii_lowercase();
+        let child_rel = join_my_drive_relative(parent_relative, &sanitize_name(&folder.name));
+        let mapped_id = db
+            .lock()
+            .ok()
+            .and_then(|conn| my_drive_get_placeholder(&conn, &child_rel).ok().flatten())
+            .map(|(id, _, _)| id);
+        match by_name.get(&key) {
+            None => {
+                by_name.insert(key, folder);
+            }
+            Some(existing) => {
+                skipped += 1;
+                if mapped_id.as_deref() == Some(folder.id.as_str())
+                    && mapped_id.as_deref() != Some(existing.id.as_str())
+                {
+                    by_name.insert(key, folder);
+                }
+            }
+        }
+    }
+    if skipped > 0 {
+        sync_log(format!(
+            "My Drive poll skipped {} duplicate same-name folder(s) under {}",
+            skipped, parent_relative
+        ));
+    }
+    by_name.into_values().collect()
 }
 
 /// Create missing local placeholders for remote children (e.g. after Trash→Restore).
@@ -1051,13 +1102,30 @@ pub async fn ensure_my_drive_folder_relative(
     folder_relative: &str,
 ) -> AppResult<String> {
     let folder_relative = folder_relative.replace('/', "\\");
+    let lock = folder_ensure_lock(&folder_relative);
+    let _guard = lock.lock().await;
+    ensure_my_drive_folder_relative_locked(api, db, &folder_relative).await
+}
+
+async fn ensure_my_drive_folder_relative_locked(
+    api: &ApiClient,
+    db: &DbHandle,
+    folder_relative: &str,
+) -> AppResult<String> {
     if folder_relative.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) {
         return resolve_my_drive_root_id(db);
     }
 
     if let Ok(conn) = db.lock() {
-        if let Some((remote_id, item_type, _)) = my_drive_get_placeholder(&conn, &folder_relative)? {
+        if let Some((remote_id, item_type, _)) = my_drive_get_placeholder(&conn, folder_relative)? {
             if item_type == "folder" {
+                let n = my_drive_reparent_direct_children(&conn, folder_relative, &remote_id)?;
+                if n > 0 {
+                    sync_log(format!(
+                        "My Drive reparented {} child mapping(s) under {}",
+                        n, folder_relative
+                    ));
+                }
                 return Ok(remote_id);
             }
         }
@@ -1097,6 +1165,13 @@ pub async fn ensure_my_drive_folder_relative(
             api_folder_parent_id(&current_parent),
             None,
         )?;
+        let n = my_drive_reparent_direct_children(&conn, &built_relative, &folder.id)?;
+        if n > 0 {
+            sync_log(format!(
+                "My Drive reparented {} child mapping(s) under {}",
+                n, built_relative
+            ));
+        }
         current_parent = folder.id;
     }
 

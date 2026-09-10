@@ -1,22 +1,22 @@
-//! WinRT Storage Provider registration + Explorer Status column icons.
+//! WinRT Storage Provider registration for Explorer cloud Status.
 //!
-//! CfRegisterSyncRoot alone does not populate Explorer Status. CloudMirror-style
-//! `StorageProviderSyncRootManager.Register` with property definitions +
-//! `StorageProviderItemProperties::SetAsync(IconResource)` does.
+//! Status glyphs (cloud / check / sync) come from Windows CfAPI placeholder state.
+//! We do **not** paint custom IconResource via SetAsync / CustomStateHandler — that
+//! stacked a blank "paper" glyph next to the native Status icons.
 
 use crate::cfapi::register::{
     mark_registered, sync_root_identity_bytes, unregister_sync_root,
 };
 use crate::cfapi::shell_register::{
-    active_sync_root_missing_custom_state, has_stale_freedrive_sync_roots, icon_resource_path,
-    list_freedrive_sync_root_ids, purge_stale_freedrive_sync_roots, sync_root_shell_id,
+    active_sync_root_has_custom_state, clear_custom_state_handler_value,
+    has_stale_freedrive_sync_roots, icon_resource_path, list_freedrive_sync_root_ids,
+    purge_stale_freedrive_sync_roots, sync_root_shell_id,
 };
-use crate::cfapi::util::PROVIDER_ID;
-use crate::cfapi::placeholders::is_dehydrated_placeholder;
+use crate::cfapi::util::{notify_directory_updated, notify_shell_updated, PROVIDER_ID};
 use crate::db::{config_get, config_set, DbHandle};
 use crate::error::{AppError, AppResult};
 use crate::sync::log::sync_log;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use windows::core::HSTRING;
 use windows::Foundation::Collections::IIterable;
 use windows::Security::Cryptography::CryptographicBuffer;
@@ -24,18 +24,19 @@ use windows::Storage::Provider::{
     StorageProviderHardlinkPolicy, StorageProviderHydrationPolicy,
     StorageProviderHydrationPolicyModifier, StorageProviderInSyncPolicy,
     StorageProviderItemProperties, StorageProviderItemProperty,
-    StorageProviderItemPropertyDefinition, StorageProviderPopulationPolicy,
-    StorageProviderSyncRootInfo, StorageProviderSyncRootManager,
+    StorageProviderPopulationPolicy, StorageProviderSyncRootInfo,
+    StorageProviderSyncRootManager,
 };
-use windows::Storage::{StorageFile, StorageFolder};
+use windows::Storage::{IStorageItem, StorageFile, StorageFolder};
+use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEITEM, SHCNF_PATHW};
 
 pub const CF_STATUS_PROPS_KEY: &str = "cf_status_props_v1";
-pub const STATUS_PROPERTY_ID: i32 = 1;
-
-/// Cloud / online-only glyph (imageres).
-const ICON_ONLINE_ONLY: &str = r"%SystemRoot%\System32\imageres.dll,-506";
-/// Locally available / synced glyph (imageres).
-const ICON_AVAILABLE_LOCAL: &str = r"%SystemRoot%\System32\imageres.dll,-102";
+/// Set after WinRT re-Register without custom Status property definitions.
+pub const CF_STATUS_NATIVE_ONLY_KEY: &str = "cf_status_native_only_v1";
+/// Legacy 0.1.45 clear flag (superseded by v2).
+pub const CF_STATUS_PROPS_CLEARED_KEY: &str = "cf_status_props_cleared_v1";
+/// Set after 0.1.46+ SetAsync(empty) walk + shell ASSOCCHANGED.
+pub const CF_STATUS_PROPS_CLEARED_V2_KEY: &str = "cf_status_props_cleared_v2";
 
 fn sp_log(message: impl AsRef<str>) {
     let line = format!("cfapi: {}", message.as_ref());
@@ -57,6 +58,31 @@ fn mark_status_props(db: &DbHandle) -> AppResult<()> {
 pub fn clear_status_props_state(db: &DbHandle) -> AppResult<()> {
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     config_set(&conn, CF_STATUS_PROPS_KEY, "false")?;
+    config_set(&conn, CF_STATUS_NATIVE_ONLY_KEY, "false")?;
+    config_set(&conn, CF_STATUS_PROPS_CLEARED_KEY, "false")?;
+    config_set(&conn, CF_STATUS_PROPS_CLEARED_V2_KEY, "false")?;
+    Ok(())
+}
+
+fn has_native_only(db: &DbHandle) -> AppResult<bool> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    Ok(config_get(&conn, CF_STATUS_NATIVE_ONLY_KEY)?.as_deref() == Some("true"))
+}
+
+fn mark_native_only(db: &DbHandle) -> AppResult<()> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    config_set(&conn, CF_STATUS_NATIVE_ONLY_KEY, "true")?;
+    Ok(())
+}
+
+fn has_status_props_cleared_v2(db: &DbHandle) -> AppResult<bool> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    Ok(config_get(&conn, CF_STATUS_PROPS_CLEARED_V2_KEY)?.as_deref() == Some("true"))
+}
+
+fn mark_status_props_cleared_v2(db: &DbHandle) -> AppResult<()> {
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    config_set(&conn, CF_STATUS_PROPS_CLEARED_V2_KEY, "true")?;
     Ok(())
 }
 
@@ -117,19 +143,8 @@ fn build_sync_root_info(db: &DbHandle, sync_root: &Path) -> AppResult<StoragePro
     info.SetContext(&context)
         .map_err(|e| AppError::msg(format!("SetContext: {}", e)))?;
 
-    let defs = info
-        .StorageProviderItemPropertyDefinitions()
-        .map_err(|e| AppError::msg(format!("StorageProviderItemPropertyDefinitions: {}", e)))?;
-    let status_def = StorageProviderItemPropertyDefinition::new()
-        .map_err(|e| AppError::msg(format!("StorageProviderItemPropertyDefinition::new: {}", e)))?;
-    status_def
-        .SetId(STATUS_PROPERTY_ID)
-        .map_err(|e| AppError::msg(format!("property SetId: {}", e)))?;
-    status_def
-        .SetDisplayNameResource(&HSTRING::from("Status"))
-        .map_err(|e| AppError::msg(format!("property SetDisplayNameResource: {}", e)))?;
-    defs.Append(&status_def)
-        .map_err(|e| AppError::msg(format!("property Append: {}", e)))?;
+    // Do not append StorageProviderItemPropertyDefinition for Status — Explorer
+    // then only shows native CfAPI glyphs (cloud / check / sync arrows).
 
     Ok(info)
 }
@@ -165,7 +180,7 @@ fn purge_stale_and_unregister_winrt(keep_id: &str) {
     }
 }
 
-/// Register sync root via WinRT (includes CfAPI registration) with Status property def.
+/// Register sync root via WinRT (includes CfAPI registration) without custom Status props.
 pub fn register_via_winrt(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
     if !sync_root.is_dir() {
         std::fs::create_dir_all(sync_root)
@@ -178,7 +193,7 @@ pub fn register_via_winrt(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
 
     let info = build_sync_root_info(db, sync_root)?;
     sp_log(format!(
-        "StorageProviderSyncRootManager.Register id={} path={}",
+        "StorageProviderSyncRootManager.Register id={} path={} (native Status only)",
         id,
         sync_root.display()
     ));
@@ -189,9 +204,11 @@ pub fn register_via_winrt(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
             e.code().0 as u32
         ))
     })?;
+    clear_custom_state_handler_value(&id);
     mark_status_props(db)?;
+    mark_native_only(db)?;
     sp_log(format!(
-        "Status property definitions registered id={} CustomStateHandler expected after shell refresh",
+        "WinRT sync root registered id={} without custom Status property defs / CustomStateHandler",
         id
     ));
     Ok(())
@@ -217,6 +234,13 @@ fn needs_status_props_repair(db: &DbHandle) -> AppResult<bool> {
         ));
         return Ok(true);
     }
+    if !has_native_only(db)? {
+        sp_log(format!(
+            "Status repair needed: migrate off custom Status property defs; keep={}",
+            keep_id
+        ));
+        return Ok(true);
+    }
     if has_stale_freedrive_sync_roots(&keep_id) {
         let extras: Vec<_> = list_freedrive_sync_root_ids()
             .into_iter()
@@ -228,9 +252,9 @@ fn needs_status_props_repair(db: &DbHandle) -> AppResult<bool> {
         ));
         return Ok(true);
     }
-    if active_sync_root_missing_custom_state(&keep_id) {
+    if active_sync_root_has_custom_state(&keep_id) {
         sp_log(format!(
-            "Status repair needed: active root missing CustomStateHandler; keep={}",
+            "Status repair needed: CustomStateHandler still present (paper Status); keep={}",
             keep_id
         ));
         return Ok(true);
@@ -238,7 +262,7 @@ fn needs_status_props_repair(db: &DbHandle) -> AppResult<bool> {
     Ok(false)
 }
 
-/// Ensure Status property definitions exist (migrate CfRegister-only / dual-root installs).
+/// Ensure WinRT sync root is registered without custom Status property definitions.
 pub fn ensure_status_props(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
     if !needs_status_props_repair(db)? {
         return Ok(());
@@ -246,7 +270,7 @@ pub fn ensure_status_props(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
 
     let keep_id = sync_root_shell_id(db)?;
     sp_log(format!(
-        "migrating sync root registration for Explorer Status; keep={} path={}",
+        "migrating sync root registration for native-only Status; keep={} path={}",
         keep_id,
         sync_root.display()
     ));
@@ -260,7 +284,7 @@ pub fn ensure_status_props(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
     match register_via_winrt(db, sync_root) {
         Ok(()) => {
             mark_registered(db)?;
-            sp_log("Status property registration ok");
+            sp_log("native-only Status registration ok");
             Ok(())
         }
         Err(e) => {
@@ -273,93 +297,156 @@ pub fn ensure_status_props(db: &DbHandle, sync_root: &Path) -> AppResult<()> {
     }
 }
 
-/// Set Explorer Status icon for a file under the sync root.
-pub fn set_status_property(path: &Path) -> AppResult<()> {
-    if !path.is_file() {
-        return Ok(());
+fn notify_item_updated(path: &Path) {
+    let wide = crate::cfapi::util::path_to_wide(path);
+    unsafe {
+        SHChangeNotify(
+            SHCNE_UPDATEITEM,
+            SHCNF_PATHW,
+            Some(wide.as_ptr() as *const _),
+            None,
+        );
     }
-    let online_only = is_dehydrated_placeholder(path);
-    let (value, icon) = if online_only {
-        ("Available when online", ICON_ONLINE_ONLY)
-    } else {
-        ("Available on this device", ICON_AVAILABLE_LOCAL)
-    };
-    // Prefer system icon; fall back to FreeDrive icon if SetAsync rejects imageres.
-    set_status_property_with_icon(path, value, icon).or_else(|e| {
-        sp_log(format!(
-            "Status SetAsync imageres failed {}, retry with app icon",
-            e
-        ));
-        set_status_property_with_icon(path, value, &icon_resource_path())
-    })
 }
 
-fn set_status_property_with_icon(path: &Path, value: &str, icon: &str) -> AppResult<()> {
+fn empty_property_iterable() -> AppResult<IIterable<StorageProviderItemProperty>> {
+    let empty: Vec<Option<StorageProviderItemProperty>> = Vec::new();
+    empty
+        .try_into()
+        .map_err(|e| AppError::msg(format!("empty IIterable: {}", e)))
+}
+
+fn set_async_clear_item(item: &IStorageItem, path: &Path) -> AppResult<()> {
+    let iterable = empty_property_iterable()?;
+    StorageProviderItemProperties::SetAsync(item, &iterable)
+        .map_err(|e| AppError::msg(format!("SetAsync clear: {}", e)))?
+        .get()
+        .map_err(|e| AppError::msg(format!("SetAsync clear.get: {}", e)))?;
+    notify_item_updated(path);
+    Ok(())
+}
+
+/// Prefer parent StorageFolder + TryGetItemAsync (CloudMirror-style); fallback GetFileFromPathAsync.
+fn clear_item_properties(path: &Path) -> AppResult<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::msg("clear Status: no parent"))?;
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| AppError::msg("clear Status: no file name"))?;
+
+    let parent_h = HSTRING::from(parent.to_string_lossy().as_ref());
+    if let Ok(op) = StorageFolder::GetFolderFromPathAsync(&parent_h) {
+        if let Ok(folder) = op.get() {
+            let name_h = HSTRING::from(name);
+            if let Ok(item_op) = folder.TryGetItemAsync(&name_h) {
+                match item_op.get() {
+                    Ok(item) => return set_async_clear_item(&item, path),
+                    Err(_) => {}
+                }
+            }
+        }
+    }
+
     let path_h = HSTRING::from(path.to_string_lossy().as_ref());
     let file = StorageFile::GetFileFromPathAsync(&path_h)
         .map_err(|e| AppError::msg(format!("GetFileFromPathAsync: {}", e)))?
         .get()
         .map_err(|e| AppError::msg(format!("GetFileFromPathAsync.get: {}", e)))?;
-
-    let prop = StorageProviderItemProperty::new()
-        .map_err(|e| AppError::msg(format!("StorageProviderItemProperty::new: {}", e)))?;
-    prop.SetId(STATUS_PROPERTY_ID)
-        .map_err(|e| AppError::msg(format!("SetId: {}", e)))?;
-    prop.SetValue(&HSTRING::from(value))
-        .map_err(|e| AppError::msg(format!("SetValue: {}", e)))?;
-    // Never pass empty IconResource — Explorer can crash.
-    let icon = if icon.trim().is_empty() {
-        ICON_ONLINE_ONLY
-    } else {
-        icon
-    };
-    prop.SetIconResource(&HSTRING::from(icon))
-        .map_err(|e| AppError::msg(format!("SetIconResource: {}", e)))?;
-
-    let iterable: IIterable<StorageProviderItemProperty> = vec![Some(prop)]
-        .try_into()
-        .map_err(|e| AppError::msg(format!("IIterable: {}", e)))?;
+    let iterable = empty_property_iterable()?;
     StorageProviderItemProperties::SetAsync(&file, &iterable)
-        .map_err(|e| AppError::msg(format!("SetAsync: {}", e)))?
+        .map_err(|e| AppError::msg(format!("SetAsync clear: {}", e)))?
         .get()
-        .map_err(|e| AppError::msg(format!("SetAsync.get: {}", e)))?;
-    sp_log(format!(
-        "storage provider property set {} value={}",
-        path.display(),
-        value
-    ));
+        .map_err(|e| AppError::msg(format!("SetAsync clear.get: {}", e)))?;
+    notify_item_updated(path);
     Ok(())
 }
 
-/// Best-effort walk of My Drive files to paint Status icons after reconnect.
-pub fn backfill_status_properties(my_drive: &Path) -> u32 {
+/// Walk My Drive and clear cached custom Status properties. Returns (cleared, failed).
+pub fn clear_cached_status_properties(my_drive: &Path) -> (u32, u32) {
     if !my_drive.is_dir() {
-        return 0;
+        sp_log(format!(
+            "clear cached Status skipped (missing): {}",
+            my_drive.display()
+        ));
+        return (0, 0);
     }
-    let mut painted = 0u32;
-    backfill_recursive(my_drive, &mut painted, 0);
-    painted
-}
 
-fn backfill_recursive(dir: &Path, painted: &mut u32, depth: u32) {
-    if depth > 32 || *painted >= 2_000 {
-        return;
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            backfill_recursive(&path, painted, depth + 1);
-        } else if path.is_file() {
-            if set_status_property(&path).is_ok() {
-                *painted += 1;
+    let mut cleared = 0u32;
+    let mut failed = 0u32;
+    let mut stack: Vec<PathBuf> = vec![my_drive.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                sp_log(format!("clear Status read_dir {}: {}", dir.display(), e));
+                failed += 1;
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            match clear_item_properties(&path) {
+                Ok(()) => cleared += 1,
+                Err(e) => {
+                    failed += 1;
+                    // Cap noisy logs (large trees).
+                    if failed <= 40 || failed % 500 == 0 {
+                        sp_log(format!("clear Status props {}: {}", path.display(), e));
+                    }
+                }
             }
         }
-        if *painted >= 2_000 {
-            return;
-        }
     }
+    notify_directory_updated(my_drive);
+    notify_shell_updated();
+    sp_log(format!(
+        "cleared cached Status properties on {} file(s) (failed={}) under {}",
+        cleared,
+        failed,
+        my_drive.display()
+    ));
+    (cleared, failed)
+}
+
+/// One-time migration (v2): clear SetAsync-cached Status paper icons + shell refresh.
+pub fn ensure_cached_status_cleared(db: &DbHandle, my_drive: &Path) -> AppResult<u32> {
+    if has_status_props_cleared_v2(db)? {
+        return Ok(0);
+    }
+    if !my_drive.is_dir() {
+        return Err(AppError::msg(format!(
+            "clear Status v2: My Drive missing {}",
+            my_drive.display()
+        )));
+    }
+    let (n, failed) = clear_cached_status_properties(my_drive);
+    // Mark done even with per-file failures (handler removal is the main fix);
+    // only refuse when the tree itself was unreadable (n==0 && failed==0 already handled).
+    if n == 0 && failed > 0 && failed >= 10 {
+        sp_log(format!(
+            "clear Status v2: all attempts failed (failed={}); will retry next start",
+            failed
+        ));
+        return Err(AppError::msg(format!(
+            "clear Status v2 failed for {} file(s)",
+            failed
+        )));
+    }
+    mark_status_props_cleared_v2(db)?;
+    Ok(n)
+}
+
+/// No-op: custom Status IconResource stacks a blank paper glyph next to Windows
+/// CfAPI Status (cloud / check / sync). Native glyphs only.
+pub fn set_status_property(_path: &Path) -> AppResult<()> {
+    Ok(())
 }

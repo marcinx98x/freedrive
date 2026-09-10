@@ -70,6 +70,10 @@ pub fn start(state: &AppState) -> Result<(), String> {
     if !connection::is_connected() && registered {
         let sync_root = crate::auth_store::sync_root_dir(false).map_err(|e| e.to_string())?;
         cfapi_log("reconnecting to registered sync root");
+        // Same migrate as start_inner — reconnect used to skip WinRT/native-only Status repair.
+        if let Err(e) = storage_provider::ensure_status_props(db, &sync_root) {
+            cfapi_log(&format!("Status props ensure warning (reconnect): {}", e));
+        }
         match connect_and_finalize(db, &sync_root, api.clone()) {
             Ok(()) => return Ok(()),
             Err(e) if is_missing_sync_root_error(&e) => {
@@ -268,16 +272,21 @@ fn complete_connect_finalize(
     cfapi_log("explorer integration started");
 
     spawn_prefetch_my_drive(db.clone(), sync_root.to_path_buf(), api);
-    spawn_status_property_backfill(my_drive_path);
+    spawn_clear_cached_status_props(db.clone(), my_drive_path);
     Ok(())
 }
 
 #[cfg(windows)]
-fn spawn_status_property_backfill(my_drive: PathBuf) {
+fn spawn_clear_cached_status_props(db: DbHandle, my_drive: PathBuf) {
     std::thread::spawn(move || {
-        cfapi_log("Status property backfill started");
-        let n = storage_provider::backfill_status_properties(&my_drive);
-        cfapi_log(&format!("Status property backfill painted {}", n));
+        cfapi_log("clearing cached custom Status properties (v2 one-time)");
+        match storage_provider::ensure_cached_status_cleared(&db, &my_drive) {
+            Ok(n) => cfapi_log(&format!(
+                "cached Status clear finished; files touched={}",
+                n
+            )),
+            Err(e) => cfapi_log(&format!("cached Status clear failed: {}", e)),
+        }
     });
 }
 

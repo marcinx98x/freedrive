@@ -50,20 +50,23 @@ func (r *FolderRepo) GetByID(ctx context.Context, id string) (*domain.Folder, er
 }
 
 // GetByParentName finds a folder by parent + name + owner, including trashed rows
-// (needed so Create can restore instead of colliding with UNIQUE).
+// (needed so Create can rename trashed instead of colliding with UNIQUE).
+// Prefers live folders, then oldest created_at (stable keeper for legacy duplicates).
 func (r *FolderRepo) GetByParentName(ctx context.Context, parentID *string, name, ownerID string) (*domain.Folder, error) {
 	f := &domain.Folder{}
 	var err error
 	if parentID == nil || *parentID == "" {
 		err = r.reader.QueryRowContext(ctx,
 			`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
-			 FROM folders WHERE parent_id IS NULL AND name = ? AND owner_id = ?`,
+			 FROM folders WHERE parent_id IS NULL AND name = ? AND owner_id = ?
+			 ORDER BY is_trashed ASC, created_at ASC, id ASC LIMIT 1`,
 			name, ownerID,
 		).Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt)
 	} else {
 		err = r.reader.QueryRowContext(ctx,
 			`SELECT id, name, parent_id, owner_id, color, is_starred, is_trashed, trashed_at, created_at, updated_at
-			 FROM folders WHERE parent_id = ? AND name = ? AND owner_id = ?`,
+			 FROM folders WHERE parent_id = ? AND name = ? AND owner_id = ?
+			 ORDER BY is_trashed ASC, created_at ASC, id ASC LIMIT 1`,
 			*parentID, name, ownerID,
 		).Scan(&f.ID, &f.Name, &f.ParentID, &f.OwnerID, &f.Color, &f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt)
 	}

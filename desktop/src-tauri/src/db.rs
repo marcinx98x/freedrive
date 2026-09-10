@@ -1160,6 +1160,24 @@ pub fn my_drive_upsert_placeholder(
     Ok(())
 }
 
+/// Set `parent_remote_id` for direct children of `parent_relative` to `parent_remote_id`.
+/// Fixes stale parents after duplicate root folders (e.g. multiple Serwis) are merged.
+pub fn my_drive_reparent_direct_children(
+    conn: &Connection,
+    parent_relative: &str,
+    parent_remote_id: &str,
+) -> AppResult<u32> {
+    let parent_relative = normalize_my_drive_relative_path(parent_relative);
+    let updated = conn.execute(
+        "UPDATE my_drive_placeholders
+         SET parent_remote_id = ?1
+         WHERE relative_path LIKE (?2 || '\\%')
+           AND instr(substr(relative_path, length(?2) + 2), '\\') = 0",
+        params![parent_remote_id, parent_relative],
+    )?;
+    Ok(updated as u32)
+}
+
 /// Returns `(remote_id, item_type, remote_version)`.
 pub fn my_drive_get_placeholder(
     conn: &Connection,
@@ -1410,6 +1428,53 @@ mod tests {
         assert!(my_drive_get_placeholder(&conn, "My Drive\\Other")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn my_drive_reparent_direct_children_updates_one_level() {
+        let conn = test_conn();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\Serwis",
+            "serwis-new",
+            "folder",
+            None,
+            None,
+        )
+        .unwrap();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\Serwis\\Routery",
+            "routery",
+            "folder",
+            Some("serwis-old"),
+            None,
+        )
+        .unwrap();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\Serwis\\Routery\\Deep",
+            "deep",
+            "folder",
+            Some("routery"),
+            None,
+        )
+        .unwrap();
+        let n = my_drive_reparent_direct_children(&conn, "My Drive\\Serwis", "serwis-new").unwrap();
+        assert_eq!(n, 1);
+        let mut stmt = conn
+            .prepare(
+                "SELECT parent_remote_id FROM my_drive_placeholders WHERE relative_path = ?1",
+            )
+            .unwrap();
+        let parent: String = stmt
+            .query_row(["My Drive\\Serwis\\Routery"], |r| r.get(0))
+            .unwrap();
+        assert_eq!(parent, "serwis-new");
+        let deep_parent: String = stmt
+            .query_row(["My Drive\\Serwis\\Routery\\Deep"], |r| r.get(0))
+            .unwrap();
+        assert_eq!(deep_parent, "routery");
     }
 
     #[test]

@@ -752,6 +752,16 @@ impl ApiClient {
         name: &str,
         parent_id: Option<&str>,
     ) -> AppResult<Folder> {
+        // List-first avoids racing create-first under NULL parent (SQLite UNIQUE
+        // historically allowed multiple root folders with the same name).
+        let contents = match parent_id {
+            Some(parent) => self.get_folder_contents(parent).await?,
+            None => self.get_my_drive_root().await?,
+        };
+        if let Some(existing) = contents.folders.into_iter().find(|f| f.name == name) {
+            return Ok(existing);
+        }
+
         match self.create_folder(name, parent_id).await {
             Ok(folder) => Ok(folder),
             Err(e) => {

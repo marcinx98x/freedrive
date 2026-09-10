@@ -180,10 +180,26 @@ pub async fn fetch_folder_contents(
         folder_id
     };
 
+    // Prefer a single folder per name when listing (legacy root duplicates).
+    let mut folders_by_name: std::collections::HashMap<String, &crate::api::types::Folder> =
+        std::collections::HashMap::new();
+    for folder in &contents.folders {
+        let key = folder.name.to_ascii_lowercase();
+        folders_by_name.entry(key).or_insert(folder);
+    }
+    if folders_by_name.len() < contents.folders.len() {
+        crate::sync::log::sync_log(format!(
+            "My Drive listing deduped {}→{} folders under {}",
+            contents.folders.len(),
+            folders_by_name.len(),
+            parent_relative
+        ));
+    }
+
     let parent_base = PathBuf::from(parent_relative);
     {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-        for folder in &contents.folders {
+        for folder in folders_by_name.values() {
             let rel = parent_base
                 .join(&folder.name)
                 .to_string_lossy()
@@ -196,6 +212,7 @@ pub async fn fetch_folder_contents(
                 parent_remote,
                 None,
             )?;
+            let _ = crate::db::my_drive_reparent_direct_children(&conn, &rel, &folder.id);
         }
         for file in &contents.files {
             let rel = parent_base

@@ -1,17 +1,14 @@
 //! Explorer CustomStateHandler: COM `IStorageProviderItemPropertySource`.
 //!
-//! Without this, `SetAsync` alone does not paint Status glyphs. Nextcloud-style:
-//! SyncRootManager\...\CustomStateHandler = {CLSID}, LocalServer32 = this exe,
-//! and `CoRegisterClassObject` while FreeDrive is running.
+//! Registered under SyncRootManager so Explorer treats FreeDrive as a full cloud
+//! provider. We intentionally return **no** custom item properties / IconResource:
+//! Windows CfAPI already paints Status (cloud / check / sync). Extra IconResource
+//! was stacking a blank "paper" glyph next to those.
 
-use crate::cfapi::placeholders::is_dehydrated_placeholder;
-use crate::cfapi::shell_register::icon_resource_path;
-use crate::cfapi::storage_provider::STATUS_PROPERTY_ID;
 use crate::error::{AppError, AppResult};
 use crate::sync::log::sync_log;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use windows::core::{implement, Interface, GUID, HRESULT, HSTRING};
+use windows::core::{implement, Interface, GUID, HRESULT};
 use windows::Foundation::Collections::IIterable;
 use windows::Storage::Provider::{
     IStorageProviderItemPropertySource, IStorageProviderItemPropertySource_Impl,
@@ -39,51 +36,17 @@ fn cs_log(message: impl AsRef<str>) {
     sync_log(line);
 }
 
-fn system_icon(resource: i32) -> String {
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    format!(r"{}\System32\imageres.dll,{}", root, resource)
-}
-
-fn status_icon_for_path(path: &Path) -> (String, String) {
-    if is_dehydrated_placeholder(path) {
-        ("Available when online".into(), system_icon(-506))
-    } else {
-        let app = icon_resource_path();
-        if app.contains(".exe") || app.contains(".ico") {
-            ("Available on this device".into(), app)
-        } else {
-            ("Available on this device".into(), system_icon(-102))
-        }
-    }
-}
-
 #[implement(IStorageProviderItemPropertySource)]
 struct CustomStateHandler;
 
 impl IStorageProviderItemPropertySource_Impl for CustomStateHandler_Impl {
     fn GetItemProperties(
         &self,
-        item_path: &HSTRING,
+        _item_path: &windows::core::HSTRING,
     ) -> windows::core::Result<IIterable<StorageProviderItemProperty>> {
-        let path_str = item_path.to_string();
-        let path = Path::new(&path_str);
-        let (value, icon) = if path.exists() {
-            status_icon_for_path(path)
-        } else {
-            ("Available when online".into(), system_icon(-506))
-        };
-
-        let prop = StorageProviderItemProperty::new()?;
-        prop.SetId(STATUS_PROPERTY_ID)?;
-        prop.SetValue(&HSTRING::from(value.as_str()))?;
-        let icon = if icon.trim().is_empty() {
-            system_icon(-506)
-        } else {
-            icon
-        };
-        prop.SetIconResource(&HSTRING::from(icon.as_str()))?;
-
-        vec![Some(prop)]
+        // Empty = no custom Status icons. Native CfAPI glyphs only.
+        let empty: Vec<Option<StorageProviderItemProperty>> = Vec::new();
+        empty
             .try_into()
             .map_err(|_| windows::core::Error::from(HRESULT(0x80004005u32 as i32)))
     }

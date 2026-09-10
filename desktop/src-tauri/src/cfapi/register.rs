@@ -46,6 +46,26 @@ pub fn clear_registration_state(db: &DbHandle) -> AppResult<()> {
     config_set(&conn, CF_REGISTERED_KEY, "false")?;
     config_set(&conn, CF_FINALIZE_COMPLETE_KEY, "false")?;
     config_set(&conn, crate::cfapi::storage_provider::CF_STATUS_PROPS_KEY, "false")?;
+    config_set(
+        &conn,
+        crate::cfapi::storage_provider::CF_STATUS_NATIVE_ONLY_KEY,
+        "false",
+    )?;
+    config_set(
+        &conn,
+        crate::cfapi::storage_provider::CF_STATUS_PROPS_CLEARED_KEY,
+        "false",
+    )?;
+    config_set(
+        &conn,
+        crate::cfapi::storage_provider::CF_STATUS_PROPS_CLEARED_V2_KEY,
+        "false",
+    )?;
+    config_set(
+        &conn,
+        crate::cfapi::shell_register::CF_STATUS_NO_CUSTOM_HANDLER_KEY,
+        "false",
+    )?;
     Ok(())
 }
 

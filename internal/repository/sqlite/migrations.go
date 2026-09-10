@@ -20,28 +20,30 @@ func runMigrations(db *sql.DB) error {
 	migrations := []struct {
 		version int
 		sql     string
+		fn      func(*sql.DB) error
 	}{
-		{1, migrationV1},
-		{2, migrationV2},
-		{3, migrationV3},
-		{4, migrationV4},
-		{5, migrationV5},
-		{6, migrationV6},
-		{7, migrationV7},
-		{8, migrationV8},
-		{9, migrationV9},
-		{10, migrationV10},
-		{11, migrationV11},
-		{12, migrationV12},
-		{13, migrationV13},
-		{14, migrationV14},
-		{15, migrationV15},
-		{16, migrationV16},
-		{17, migrationV17},
-		{18, migrationV18},
-		{19, migrationV19},
-		{20, migrationV20},
-		{21, migrationV21},
+		{1, migrationV1, nil},
+		{2, migrationV2, nil},
+		{3, migrationV3, nil},
+		{4, migrationV4, nil},
+		{5, migrationV5, nil},
+		{6, migrationV6, nil},
+		{7, migrationV7, nil},
+		{8, migrationV8, nil},
+		{9, migrationV9, nil},
+		{10, migrationV10, nil},
+		{11, migrationV11, nil},
+		{12, migrationV12, nil},
+		{13, migrationV13, nil},
+		{14, migrationV14, nil},
+		{15, migrationV15, nil},
+		{16, migrationV16, nil},
+		{17, migrationV17, nil},
+		{18, migrationV18, nil},
+		{19, migrationV19, nil},
+		{20, migrationV20, nil},
+		{21, migrationV21, nil},
+		{22, "", migrationV22},
 	}
 
 	for _, m := range migrations {
@@ -54,8 +56,14 @@ func runMigrations(db *sql.DB) error {
 			continue
 		}
 
-		if _, err := db.Exec(m.sql); err != nil {
-			return fmt.Errorf("run migration %d: %w", m.version, err)
+		if m.fn != nil {
+			if err := m.fn(db); err != nil {
+				return fmt.Errorf("run migration %d: %w", m.version, err)
+			}
+		} else if m.sql != "" {
+			if _, err := db.Exec(m.sql); err != nil {
+				return fmt.Errorf("run migration %d: %w", m.version, err)
+			}
 		}
 
 		if _, err := db.Exec("INSERT INTO schema_migrations (version) VALUES (?)", m.version); err != nil {
@@ -64,6 +72,146 @@ func runMigrations(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// migrationV22 merges live duplicate folders (SQLite UNIQUE ignores NULL parent_id)
+// then adds a partial unique index that treats NULL parent as ''.
+func migrationV22(db *sql.DB) error {
+	if err := mergeDuplicateLiveFolders(db); err != nil {
+		return err
+	}
+	_, err := db.Exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_live_parent_name_owner
+ON folders(owner_id, name, IFNULL(parent_id, ''))
+WHERE is_trashed = 0;
+`)
+	return err
+}
+
+type liveFolderRow struct {
+	id        string
+	name      string
+	parentKey string
+	ownerID   string
+}
+
+func mergeDuplicateLiveFolders(db *sql.DB) error {
+	rows, err := db.Query(`
+		SELECT id, name, IFNULL(parent_id, ''), owner_id
+		FROM folders
+		WHERE is_trashed = 0
+		ORDER BY owner_id, name, IFNULL(parent_id, ''), created_at ASC, id ASC
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var all []liveFolderRow
+	for rows.Next() {
+		var r liveFolderRow
+		if err := rows.Scan(&r.id, &r.name, &r.parentKey, &r.ownerID); err != nil {
+			return err
+		}
+		all = append(all, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	type groupKey struct {
+		owner, name, parent string
+	}
+	groups := map[groupKey][]liveFolderRow{}
+	for _, r := range all {
+		k := groupKey{r.ownerID, r.name, r.parentKey}
+		groups[k] = append(groups[k], r)
+	}
+
+	for _, g := range groups {
+		if len(g) < 2 {
+			continue
+		}
+		keeper := g[0].id
+		for _, dup := range g[1:] {
+			if err := absorbLiveFolder(db, keeper, dup.id, dup.name); err != nil {
+				return fmt.Errorf("absorb %s into %s: %w", dup.id, keeper, err)
+			}
+		}
+	}
+	return nil
+}
+
+// absorbLiveFolder moves children/files from absorbID under keepID, then trashes absorbID.
+func absorbLiveFolder(db *sql.DB, keepID, absorbID, absorbName string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := absorbLiveFolderTx(tx, keepID, absorbID, absorbName); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func absorbLiveFolderTx(tx *sql.Tx, keepID, absorbID, absorbName string) error {
+	childRows, err := tx.Query(`SELECT id, name FROM folders WHERE parent_id = ? AND is_trashed = 0`, absorbID)
+	if err != nil {
+		return err
+	}
+	type child struct{ id, name string }
+	var children []child
+	for childRows.Next() {
+		var c child
+		if err := childRows.Scan(&c.id, &c.name); err != nil {
+			childRows.Close()
+			return err
+		}
+		children = append(children, c)
+	}
+	childRows.Close()
+	if err := childRows.Err(); err != nil {
+		return err
+	}
+
+	for _, c := range children {
+		var existingID string
+		err := tx.QueryRow(
+			`SELECT id FROM folders WHERE parent_id = ? AND name = ? AND is_trashed = 0 LIMIT 1`,
+			keepID, c.name,
+		).Scan(&existingID)
+		if err == sql.ErrNoRows {
+			if _, err := tx.Exec(`UPDATE folders SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, keepID, c.id); err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := absorbLiveFolderTx(tx, existingID, c.id, c.name); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE files SET folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE folder_id = ? AND is_trashed = 0`,
+		keepID, absorbID,
+	); err != nil {
+		return err
+	}
+
+	suffix := absorbID
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	newName := fmt.Sprintf("%s (merged %s)", absorbName, suffix)
+	_, err = tx.Exec(
+		`UPDATE folders SET name = ?, is_trashed = 1, trashed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		newName, absorbID,
+	)
+	return err
 }
 
 const migrationV1 = `
