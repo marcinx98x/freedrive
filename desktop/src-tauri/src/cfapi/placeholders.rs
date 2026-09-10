@@ -2,6 +2,7 @@ use crate::api::types::{FileRecord, Folder};
 use crate::cfapi::util::{
     cf_operation_param_size, file_fs_metadata, file_identity, folder_fs_metadata, path_to_wide,
 };
+use crate::cfapi::util::notify_directory_updated;
 use crate::sync::log::sync_log;
 use crate::error::{AppError, AppResult};
 use std::path::{Path, PathBuf};
@@ -9,16 +10,16 @@ use windows::core::{HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, NTSTATUS, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
     CfConvertToPlaceholder, CfCreatePlaceholders, CfDehydratePlaceholder, CfExecute,
-    CfGetPlaceholderStateFromAttributeTag, CfUpdatePlaceholder, CF_CALLBACK_INFO,
-    CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE, CF_CONVERT_FLAG_MARK_IN_SYNC, CF_CREATE_FLAG_NONE,
-    CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS,
-    CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_7,
-    CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
+    CfGetPlaceholderStateFromAttributeTag, CfSetInSyncState, CfUpdatePlaceholder,
+    CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE, CF_CONVERT_FLAG_MARK_IN_SYNC,
+    CF_CREATE_FLAG_NONE, CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA, CF_IN_SYNC_STATE_IN_SYNC,
+    CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
+    CF_OPERATION_PARAMETERS_0_7, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
     CF_PLACEHOLDER_STATE_PARTIAL, CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK,
-    CF_PLACEHOLDER_STATE_PLACEHOLDER, CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
-    CF_UPDATE_FLAG_ENABLE_ON_DEMAND_POPULATION,
+    CF_PLACEHOLDER_STATE_PLACEHOLDER, CF_SET_IN_SYNC_FLAG_NONE,
+    CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION, CF_UPDATE_FLAG_ENABLE_ON_DEMAND_POPULATION,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, GetFileAttributesW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -367,6 +368,77 @@ pub fn dehydrate_placeholder_file(path: &Path) -> AppResult<()> {
         let _ = CloseHandle(handle);
     }
     result
+}
+
+fn mark_file_in_sync(path: &Path) -> AppResult<()> {
+    let wide = path_to_wide(path);
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        .map_err(|e| AppError::msg(format!("open file for CfSetInSyncState: {}", e)))?
+    };
+    let result = unsafe {
+        CfSetInSyncState(
+            handle,
+            CF_IN_SYNC_STATE_IN_SYNC,
+            CF_SET_IN_SYNC_FLAG_NONE,
+            None,
+        )
+        .map_err(|e| AppError::msg(format!("CfSetInSyncState: {}", e)))
+    };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    result
+}
+
+/// After a Stream upload: ensure cloud placeholder, dehydrate local bytes, mark In-Sync,
+/// and refresh the parent folder so Explorer Status (cloud icon) updates.
+pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    if remote_id.is_empty() {
+        return Err(AppError::msg("finalize_stream_placeholder: empty remote id"));
+    }
+
+    if !is_dehydrated_placeholder(path) {
+        match dehydrate_placeholder_file(path) {
+            Ok(()) => {}
+            Err(e) if is_not_cloud_file_error(&e) => {
+                sync_log(format!(
+                    "cfapi: finalize converting plain file {}",
+                    path.display()
+                ));
+                convert_file_to_placeholder(path, remote_id)?;
+                dehydrate_placeholder_file(path)?;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    if let Err(e) = mark_file_in_sync(path) {
+        sync_log(format!(
+            "cfapi: finalize In-Sync warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        notify_directory_updated(parent);
+    }
+    sync_log(format!(
+        "cfapi: finalize stream placeholder ok {}",
+        path.display()
+    ));
+    Ok(())
 }
 
 /// True when the cloud file has no (or incomplete) local content — reading it would FETCH_DATA.

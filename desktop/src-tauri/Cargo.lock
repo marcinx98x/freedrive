@@ -27,6 +27,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures",
+ "zeroize",
 ]
 
 [[package]]
@@ -41,6 +42,18 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+]
+
+[[package]]
+name = "aes-gcm-stream"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d763ade72c376e5db452ec14f4c966fc907c036ef5cd2972a888e69fe2f811e5"
+dependencies = [
+ "aes",
+ "cipher",
+ "ghash",
+ "zeroize",
 ]
 
 [[package]]
@@ -1186,9 +1199,10 @@ dependencies = [
 
 [[package]]
 name = "freedrive-desktop"
-version = "0.1.34"
+version = "0.1.37"
 dependencies = [
  "aes-gcm",
+ "aes-gcm-stream",
  "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
@@ -5998,6 +6012,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
 
 [[package]]
 name = "zerotrie"

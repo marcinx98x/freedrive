@@ -17,8 +17,8 @@ pub use provider::{
 #[cfg(windows)]
 pub use sync::{
     delete_my_drive_path, ensure_my_drive_folder_path, free_up_my_drive_path, hydrate_my_drive_path,
-    is_free_up_in_progress, is_path_under_active_free_up, poll_my_drive, upload_my_drive_path,
-    MyDriveBusyCb, MyDrivePollStats,
+    is_free_up_in_progress, is_path_under_active_free_up, poll_my_drive, try_claim_my_drive_upload,
+    upload_my_drive_path, MyDriveBusyCb, MyDrivePollStats,
 };
 
 #[cfg(not(windows))]

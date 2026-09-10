@@ -12,8 +12,6 @@ use rand::RngCore;
 
 use reqwest::multipart::{Form, Part};
 
-use sha2::{Digest, Sha256};
-
 use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
@@ -51,10 +49,12 @@ fn http_api_error(status: reqwest::StatusCode, text: &str) -> AppError {
     AppError::http(code, text.to_string())
 }
 
-fn content_hash_hex(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hex::encode(hasher.finalize())
+fn new_upload_temp_path() -> PathBuf {
+    let mut temp_path = std::env::temp_dir();
+    let mut suffix = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut suffix);
+    temp_path.push(format!("freedrive-upload-{}.enc", hex::encode(suffix)));
+    temp_path
 }
 
 fn is_transient_gateway_status(status: reqwest::StatusCode) -> bool {
@@ -1085,24 +1085,40 @@ impl ApiClient {
         folder_id: Option<&str>,
         existing_key: Option<[u8; 32]>,
     ) -> AppResult<PreparedUpload> {
-        let plaintext = std::fs::read(local_path)?;
-        let original_size = plaintext.len();
-        let content_hash = content_hash_hex(&plaintext);
         let mime = mime_guess::from_path(local_path)
             .first_or_octet_stream()
             .to_string();
-
         let key = existing_key.unwrap_or_else(generate_file_key);
-        let (ciphertext, iv) = crypto::encrypt_file(&plaintext, &key)?;
+        let temp_path = new_upload_temp_path();
 
-        let body = if (original_size as u64) <= SMALL_UPLOAD_BYTES {
-            UploadBody::Memory(ciphertext)
+        let streamed = match crypto::encrypt_file_streaming(local_path, &key, &temp_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(e);
+            }
+        };
+        if streamed.encrypted_size != streamed.original_size + 16 {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(AppError::msg(format!(
+                "encrypt size mismatch: encrypted={} original={}",
+                streamed.encrypted_size, streamed.original_size
+            )));
+        }
+
+        // Keep tiny ciphertext in RAM; larger stays on disk for multipart/resumable slices.
+        let body = if streamed.original_size <= SMALL_UPLOAD_BYTES {
+            match std::fs::read(&temp_path) {
+                Ok(bytes) => {
+                    let _ = std::fs::remove_file(&temp_path);
+                    UploadBody::Memory(bytes)
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(AppError::msg(e.to_string()));
+                }
+            }
         } else {
-            let mut temp_path = std::env::temp_dir();
-            let mut suffix = [0u8; 8];
-            rand::thread_rng().fill_bytes(&mut suffix);
-            temp_path.push(format!("freedrive-upload-{}.enc", hex::encode(suffix)));
-            std::fs::write(&temp_path, &ciphertext)?;
             UploadBody::TempFile(temp_path)
         };
 
@@ -1111,10 +1127,10 @@ impl ApiClient {
             key,
             name: name.to_string(),
             mime,
-            iv_b64: crypto::iv_to_base64(&iv),
-            original_size,
+            iv_b64: crypto::iv_to_base64(&streamed.iv),
+            original_size: streamed.original_size as usize,
             folder_id: folder_id.map(|s| s.to_string()),
-            content_hash,
+            content_hash: streamed.content_hash,
         })
     }
 
@@ -1157,11 +1173,14 @@ impl ApiClient {
         on_progress: Option<UploadProgressCb>,
     ) -> AppResult<(FileRecord, [u8; 32])> {
         // Skip re-encrypt/upload when plaintext is unchanged (avoids spurious versions).
-        if let (Ok(bytes), Ok(remote)) = (std::fs::read(local_path), self.get_file(file_id).await) {
-            let hash = content_hash_hex(&bytes);
-            if !remote.content_hash.is_empty() && remote.content_hash == hash {
-                if let Some(key) = existing_key {
-                    return Ok((remote, key));
+        if let Ok(remote) = self.get_file(file_id).await {
+            if !remote.content_hash.is_empty() {
+                if let Ok(hash) = crypto::content_hash_file(local_path) {
+                    if remote.content_hash == hash {
+                        if let Some(key) = existing_key {
+                            return Ok((remote, key));
+                        }
+                    }
                 }
             }
         }

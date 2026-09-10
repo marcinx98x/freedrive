@@ -1,7 +1,7 @@
 use crate::api::ApiClient;
 use crate::cfapi::placeholders::{
     build_placeholder_infos, complete_fetch_placeholders, count_existing_children,
-    create_named_folder_placeholder, dehydrate_placeholder_file, ensure_cloud_placeholder,
+    create_named_folder_placeholder, ensure_cloud_placeholder, finalize_stream_placeholder,
     filter_new_entries, is_dehydrated_placeholder, is_duplicate_placeholder_error,
     mark_directory_populated, transfer_or_complete_fetch, transfer_placeholders_via_callback,
     PlaceholderEntry, MY_DRIVE_FOLDER_NAME,
@@ -98,6 +98,14 @@ pub fn clear_app_handle() {
             *guard = None;
         }
     }
+}
+
+fn sync_engine_from_app() -> Option<std::sync::Arc<crate::sync::engine::SyncEngine>> {
+    use tauri::Manager;
+    let slot = APP_HANDLE.get()?;
+    let app = slot.lock().ok()?.clone()?;
+    let state = app.try_state::<crate::state::AppState>()?;
+    state.sync_engine().ok()
 }
 
 fn cancelled_requests() -> &'static Mutex<HashSet<i64>> {
@@ -845,10 +853,8 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
     if crate::sync::should_skip_file(file_name) {
         return Ok(());
     }
-    let (api, db, sync_root) = with_context(|ctx| {
-        (ctx.api.clone(), ctx.db.clone(), ctx.sync_root.clone())
-    })
-    .ok_or_else(|| "cfapi context missing".to_string())?;
+    let (db, sync_root) = with_context(|ctx| (ctx.db.clone(), ctx.sync_root.clone()))
+        .ok_or_else(|| "cfapi context missing".to_string())?;
     if !path_is_under_my_drive(&sync_root, &full) {
         return Ok(());
     }
@@ -900,40 +906,68 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         remote_id
     ));
 
+    // Upload only through SyncEngine (shared semaphore + path dedupe). Never unbounded.
     tauri::async_runtime::spawn(async move {
-        let uploaded = match crate::my_drive::upload_my_drive_path(&api, &db, &full).await {
-            Ok(true) => true,
-            Ok(false) => false,
+        let Some(engine) = sync_engine_from_app() else {
+            cfapi_callback_log(&format!(
+                "NOTIFY_FILE_CLOSE upload skipped (no sync engine) {}",
+                full.display()
+            ));
+            return;
+        };
+        let uploaded = match engine.upload_my_drive_path_gated(&full).await {
+            Ok(Some(u)) => u,
+            Ok(None) => false,
             Err(e) => {
                 cfapi_callback_log(&format!("NOTIFY_FILE_CLOSE upload failed: {}", e));
                 false
             }
         };
-        // Only dehydrate after a real content upload — never after open/thumbnail no-op.
-        if !stream_mode || !uploaded {
+        if !stream_mode {
             return;
         }
-        if let Some(ref id) = remote_id {
-            if is_fetch_data_inflight(id) {
-                cfapi_callback_log(&format!(
-                    "NOTIFY_FILE_CLOSE dehydrate deferred (fetch in flight) {}",
-                    full.display()
-                ));
-                return;
-            }
-            clear_hydrate_cache_for_file(id);
+        // Prefer DB id after upload (new copies often lack FileIdentity until convert).
+        let id = remote_id.or_else(|| {
+            let relative = relative_path_from_sync_root(&sync_root, &full)?;
+            let conn = db.lock().ok()?;
+            crate::db::my_drive_get_placeholder(&conn, &relative)
+                .ok()
+                .flatten()
+                .filter(|(_, item_type, _)| item_type == "file")
+                .map(|(id, _, _)| id)
+        });
+        let Some(id) = id else {
+            return;
+        };
+        if is_fetch_data_inflight(&id) {
+            cfapi_callback_log(&format!(
+                "NOTIFY_FILE_CLOSE dehydrate deferred (fetch in flight) {}",
+                full.display()
+            ));
+            return;
         }
-        // Brief delay so editors release the handle before dehydrate.
+        if uploaded {
+            clear_hydrate_cache_for_file(&id);
+        }
+        // Brief delay so editors release the handle before dehydrate/convert.
         tokio::time::sleep(Duration::from_millis(400)).await;
-        if let Some(ref id) = remote_id {
-            if is_fetch_data_inflight(id) {
-                return;
+        if is_fetch_data_inflight(&id)
+            || is_path_under_active_free_up(&full)
+            || is_dehydrated_placeholder(&full)
+        {
+            // Already online-only: still refresh In-Sync / Status if needed.
+            if is_dehydrated_placeholder(&full) && !is_path_under_active_free_up(&full) {
+                if let Err(e) = finalize_stream_placeholder(&full, &id) {
+                    cfapi_callback_log(&format!(
+                        "NOTIFY_FILE_CLOSE finalize (already dehydrated) {}: {}",
+                        full.display(),
+                        e
+                    ));
+                }
             }
-        }
-        if is_path_under_active_free_up(&full) || is_dehydrated_placeholder(&full) {
             return;
         }
-        match dehydrate_placeholder_file(&full) {
+        match finalize_stream_placeholder(&full, &id) {
             Ok(()) => cfapi_callback_log(&format!(
                 "NOTIFY_FILE_CLOSE dehydrated {}",
                 full.display()

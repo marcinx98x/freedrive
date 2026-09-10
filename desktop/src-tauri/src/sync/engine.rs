@@ -2850,16 +2850,38 @@ impl SyncEngine {
             return Ok(());
         }
         self.mark_my_drive_busy("Syncing My Drive…");
-        let _permit = match self.acquire_upload_permit().await {
-            Ok(p) => p,
-            Err(e) => {
-                self.release_my_drive_busy(true);
-                return Err(e);
-            }
-        };
-        let result = crate::my_drive::upload_my_drive_path(&self.api, &self.db, path).await;
+        let result = self.upload_my_drive_path_gated(path).await;
         self.release_my_drive_busy(result.is_err());
         result.map(|_| ())
+    }
+
+    /// Shared My Drive upload entry: path dedupe + upload semaphore (max UPLOAD_CONCURRENCY).
+    /// Returns `Ok(None)` when another upload of the same path is already running.
+    pub async fn upload_my_drive_path_gated(
+        self: &Arc<Self>,
+        path: &Path,
+    ) -> AppResult<Option<bool>> {
+        let Some(_claim) = crate::my_drive::try_claim_my_drive_upload(path) else {
+            sync_log(format!(
+                "my drive upload skipped (already in flight) — {}",
+                path.display()
+            ));
+            return Ok(None);
+        };
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        sync_log(format!(
+            "my drive upload waiting for permit — {} ({} bytes)",
+            path.display(),
+            size
+        ));
+        let _permit = self.acquire_upload_permit().await?;
+        sync_log(format!(
+            "my drive upload started — {} ({} bytes)",
+            path.display(),
+            size
+        ));
+        let uploaded = crate::my_drive::upload_my_drive_path(&self.api, &self.db, path).await?;
+        Ok(Some(uploaded))
     }
 
     /// Explorer context menu: make My Drive path available offline (hydrate).

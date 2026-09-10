@@ -2,7 +2,8 @@ use crate::api::ApiClient;
 use crate::auth_store::sync_root_dir;
 use crate::cfapi::{
     convert_file_to_placeholder, create_file_placeholder, create_named_folder_placeholder,
-    dehydrate_placeholder_file, ensure_cloud_placeholder, is_dehydrated_placeholder,
+    dehydrate_placeholder_file, ensure_cloud_placeholder, finalize_stream_placeholder,
+    is_dehydrated_placeholder,
     is_duplicate_placeholder_error, is_not_cloud_file_error, mark_directory_partially_populated,
     notify_directory_updated, MY_DRIVE_FOLDER_NAME,
 };
@@ -27,6 +28,37 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+
+static MY_DRIVE_UPLOAD_IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn my_drive_upload_in_flight() -> &'static Mutex<HashSet<String>> {
+    MY_DRIVE_UPLOAD_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// RAII claim so close+watcher+poll cannot encrypt the same path concurrently.
+pub struct MyDriveUploadInFlightGuard {
+    key: String,
+}
+
+impl Drop for MyDriveUploadInFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = my_drive_upload_in_flight().lock() {
+            set.remove(&self.key);
+        }
+    }
+}
+
+/// Returns `None` when this path is already being uploaded.
+pub fn try_claim_my_drive_upload(path: &Path) -> Option<MyDriveUploadInFlightGuard> {
+    let key = path.to_string_lossy().to_ascii_lowercase();
+    let Ok(mut set) = my_drive_upload_in_flight().lock() else {
+        return Some(MyDriveUploadInFlightGuard { key });
+    };
+    if !set.insert(key.clone()) {
+        return None;
+    }
+    Some(MyDriveUploadInFlightGuard { key })
+}
 
 /// At most one free-up tree walk at a time so FETCH_DATA downloads are not starved.
 static FREE_UP_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
@@ -371,6 +403,13 @@ async fn upload_local_only_children(
     let upload_errors = Arc::new(AtomicU32::new(0));
     let mut join_set = JoinSet::new();
     for path in files_to_upload {
+        let Some(claim) = try_claim_my_drive_upload(&path) else {
+            sync_log(format!(
+                "My Drive local-scan upload skipped (already in flight) — {}",
+                path.display()
+            ));
+            continue;
+        };
         while join_set.len() >= UPLOAD_CONCURRENCY {
             if let Some(res) = join_set.join_next().await {
                 if let Err(e) = res {
@@ -379,6 +418,12 @@ async fn upload_local_only_children(
                 }
             }
         }
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        sync_log(format!(
+            "my drive upload waiting for permit — {} ({} bytes)",
+            path.display(),
+            size
+        ));
         let permit = match upload_sem.clone().acquire_owned().await {
             Ok(permit) => permit,
             Err(_) => break,
@@ -388,7 +433,13 @@ async fn upload_local_only_children(
         let uploaded = Arc::clone(&uploaded);
         let upload_errors = Arc::clone(&upload_errors);
         join_set.spawn(async move {
+            let _claim = claim;
             let _permit = permit;
+            sync_log(format!(
+                "my drive upload started — {} ({} bytes)",
+                path.display(),
+                size
+            ));
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -881,6 +932,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
                     "My Drive skip upload (unchanged hash) — {}",
                     file_name
                 ));
+                maybe_finalize_stream_after_upload(db, path, &remote_id);
                 return Ok(false);
             }
         }
@@ -905,9 +957,11 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
                 "My Drive skip upload (content unchanged) — {}",
                 file_name
             ));
+            maybe_finalize_stream_after_upload(db, path, &remote_id);
             return Ok(false);
         }
         sync_log(format!("My Drive updated — {}", file_name));
+        maybe_finalize_stream_after_upload(db, path, &rec.id);
         return Ok(true);
     }
 
@@ -924,7 +978,27 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         let _ = crate::db::my_drive_set_content_hash(&conn, &rec.id, &local_hash);
     }
     sync_log(format!("My Drive uploaded — {}", file_name));
+    drop(conn);
+    maybe_finalize_stream_after_upload(db, path, &rec.id);
     Ok(true)
+}
+
+/// Stream: convert+dehydrate+In-Sync so Explorer Status shows cloud after upload/poll.
+fn maybe_finalize_stream_after_upload(db: &DbHandle, path: &Path, remote_id: &str) {
+    if !crate::sync::engine::sync_mode_is_stream(db) {
+        return;
+    }
+    if is_path_under_active_free_up(path) {
+        return;
+    }
+    match finalize_stream_placeholder(path, remote_id) {
+        Ok(()) => {}
+        Err(e) => sync_log(format!(
+            "My Drive finalize stream placeholder skipped {}: {}",
+            path.display(),
+            e
+        )),
+    }
 }
 
 pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -> AppResult<()> {
