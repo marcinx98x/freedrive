@@ -3,7 +3,7 @@ use crate::auth_store::sync_root_dir;
 use crate::cfapi::{
     convert_file_to_placeholder, create_file_placeholder, create_named_folder_placeholder,
     dehydrate_placeholder_file, ensure_cloud_placeholder, finalize_stream_placeholder,
-    is_dehydrated_placeholder,
+    is_dehydrated_placeholder, refresh_placeholder_status,
     is_duplicate_placeholder_error, is_not_cloud_file_error, mark_directory_partially_populated,
     notify_directory_updated, MY_DRIVE_FOLDER_NAME,
 };
@@ -1034,7 +1034,7 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
     Ok(true)
 }
 
-/// Stream: convert+dehydrate+In-Sync so Explorer Status shows cloud after upload/poll.
+/// Stream: convert+In-Sync after upload (keep local bytes — Free up dehydrates).
 fn maybe_finalize_stream_after_upload(db: &DbHandle, path: &Path, remote_id: &str) {
     if !crate::sync::engine::sync_mode_is_stream(db) {
         return;
@@ -1253,6 +1253,7 @@ async fn hydrate_my_drive_file(
     };
     let cached = ensure_hydrated_plaintext(api, db, &remote_id).await?;
     crate::my_drive::pin_hydrated_cache_to_path(&cached, path)?;
+    crate::my_drive::mark_recent_hydrate(&remote_id);
     Ok(())
 }
 
@@ -1321,6 +1322,8 @@ pub async fn free_up_my_drive_path(
             tree_freed, relative
         ));
         sync_log(format!("My Drive freed folder — {}", relative));
+        // One shell refresh for the folder — not per-file (avoids FETCH_DATA thrash).
+        notify_directory_updated(path);
         return Ok(());
     }
     if path.is_file() {
@@ -1348,15 +1351,9 @@ async fn free_up_my_drive_file(
         return Ok(());
     }
 
-    let mut remote_id = {
-        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-        my_drive_get_placeholder(&conn, relative)?
-            .filter(|(_, ty, _)| ty == "file")
-            .map(|(id, _, _)| id)
-    };
-
-    // Prefer dehydrate without re-upload when the file is already tracked remotely.
-    if remote_id.is_none() {
+    // Google Drive–like: never free local bytes until cloud has the current content.
+    // upload_my_drive_path no-ops on unchanged hash; Err aborts Free up (keep local).
+    if !is_dehydrated_placeholder(path) {
         if let Err(e) = upload_my_drive_path(api, db, path).await {
             sync_log(format!(
                 "My Drive free-up upload failed {}: {}",
@@ -1365,16 +1362,15 @@ async fn free_up_my_drive_file(
             ));
             return Err(e);
         }
-        remote_id = {
-            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-            my_drive_get_placeholder(&conn, relative)?
-                .filter(|(_, ty, _)| ty == "file")
-                .map(|(id, _, _)| id)
-        };
     }
 
-    let remote_id = remote_id
-        .ok_or_else(|| AppError::msg(format!("no remote file id for {}", relative)))?;
+    let remote_id = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        my_drive_get_placeholder(&conn, relative)?
+            .filter(|(_, ty, _)| ty == "file")
+            .map(|(id, _, _)| id)
+    }
+    .ok_or_else(|| AppError::msg(format!("no remote file id for {}", relative)))?;
 
     // If local content exists, verify the cloud blob before dehydrating — otherwise
     // Free up would destroy the only readable copy when the server blob is missing.
@@ -1386,6 +1382,7 @@ async fn free_up_my_drive_file(
                     "My Drive free-up skip dehydrate — cloud blob missing, keeping local {}",
                     path.display()
                 ));
+                refresh_placeholder_status(path);
                 return Ok(());
             }
             Err(e) => {
@@ -1396,6 +1393,7 @@ async fn free_up_my_drive_file(
                         path.display(),
                         e
                     ));
+                    refresh_placeholder_status(path);
                     return Ok(());
                 }
                 sync_log(format!(
@@ -1434,9 +1432,7 @@ async fn free_up_my_drive_file(
         Err(e) => return Err(e),
     }
 
-    if let Some(parent) = path.parent() {
-        notify_directory_updated(parent);
-    }
+    crate::my_drive::mark_recent_dehydrate(&remote_id);
     Ok(())
 }
 
@@ -1511,7 +1507,6 @@ async fn free_up_my_drive_folder(
         freed,
         failed
     ));
-    notify_directory_updated(dir);
     Ok(())
 }
 
@@ -1588,6 +1583,7 @@ async fn free_up_tree_pass_recursive(
                     "My Drive free-up skip dehydrate — cloud blob missing, keeping local {}",
                     path.display()
                 ));
+                refresh_placeholder_status(&path);
                 continue;
             }
             Err(e) => {
@@ -1598,6 +1594,7 @@ async fn free_up_tree_pass_recursive(
                         path.display(),
                         e
                     ));
+                    refresh_placeholder_status(&path);
                     continue;
                 }
                 sync_log(format!(
@@ -1613,6 +1610,7 @@ async fn free_up_tree_pass_recursive(
         match dehydrate_placeholder_file(&path) {
             Ok(()) => {
                 *freed += 1;
+                crate::my_drive::mark_recent_dehydrate(&remote_id);
                 sync_log(format!("cfapi: dehydrated {}", path.display()));
             }
             Err(e) => {
@@ -1761,30 +1759,25 @@ async fn pull_remote_file_over_local(
         copy()?;
     }
 
-    // Stream: free local space after content is replaced (best-effort).
+    // Drive-like Stream: keep pulled content local until Free up (no auto-dehydrate).
     if crate::sync::engine::sync_mode_is_stream(db)
         && local_path.exists()
         && !crate::my_drive::is_fetch_data_inflight(&file.id)
     {
-        let dehydrate = || -> AppResult<()> {
-            if is_dehydrated_placeholder(local_path) {
-                return Ok(());
-            }
-            match dehydrate_placeholder_file(local_path) {
+        let mark = || -> AppResult<()> {
+            match finalize_stream_placeholder(local_path, &file.id) {
                 Ok(()) => Ok(()),
                 Err(e) if is_not_cloud_file_error(&e) => {
-                    match convert_file_to_placeholder(local_path, &file.id) {
-                        Ok(()) => dehydrate_placeholder_file(local_path).or(Ok(())),
-                        Err(_) => Ok(()),
-                    }
+                    convert_file_to_placeholder(local_path, &file.id)?;
+                    finalize_stream_placeholder(local_path, &file.id).or(Ok(()))
                 }
                 Err(_) => Ok(()),
             }
         };
         if let Some(suppress) = suppress {
-            let _ = suppress.run_suppressed(local_path, dehydrate);
+            let _ = suppress.run_suppressed(local_path, mark);
         } else {
-            let _ = dehydrate();
+            let _ = mark();
         }
     }
 

@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -234,20 +234,7 @@ impl SyncEngine {
         }
 
         if is_my_drive_path(&path) {
-            if !path.is_file() {
-                return;
-            }
-            let file_name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("file");
-            if should_skip_file(file_name) {
-                return;
-            }
-            let engine = Arc::clone(self);
-            tauri::async_runtime::spawn(async move {
-                let _ = engine.sync_my_drive_path(&path).await;
-            });
+            self.enqueue_my_drive_watcher_path(path);
             return;
         }
 
@@ -281,6 +268,116 @@ impl SyncEngine {
         });
     }
 
+    /// Watcher entry for My Drive: Free up (UNPINNED) / Always keep (PINNED) / content sync.
+    pub fn enqueue_my_drive_watcher_path(self: &Arc<Self>, path: PathBuf) {
+        if self.is_paused() || self.watcher_suppress.is_suppressed(&path) {
+            return;
+        }
+        if !is_my_drive_path(&path) {
+            return;
+        }
+        if !path.exists() {
+            return;
+        }
+
+        // Native Explorer Free up / Always keep set pin attrs; NOTIFY_DEHYDRATE often never fires.
+        if crate::cfapi::is_unpinned(&path) {
+            self.enqueue_my_drive_free_up(path);
+            return;
+        }
+        if crate::cfapi::is_pinned(&path) {
+            if crate::my_drive::is_path_under_active_free_up(&path) {
+                return;
+            }
+            let engine = Arc::clone(self);
+            tauri::async_runtime::spawn(async move {
+                if crate::my_drive::is_path_under_active_free_up(&path) {
+                    return;
+                }
+                match engine.hydrate_my_drive_path(&path).await {
+                    Ok(_) => {}
+                    Err(e) => sync_log(format!(
+                        "My Drive Always keep hydrate failed {}: {}",
+                        path.display(),
+                        e
+                    )),
+                }
+            });
+            return;
+        }
+
+        if path.is_file() {
+            let file_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file");
+            if should_skip_file(file_name) {
+                return;
+            }
+            // Cloud-only placeholders: attribute refresh after Free up must not re-upload.
+            if crate::cfapi::is_dehydrated_placeholder(&path) {
+                return;
+            }
+            let engine = Arc::clone(self);
+            tauri::async_runtime::spawn(async move {
+                let _ = engine.sync_my_drive_path(&path).await;
+            });
+            return;
+        }
+
+        if path.is_dir() {
+            self.enqueue_folder_created(path);
+        }
+    }
+
+    /// Deduped Free up for a My Drive file or folder (upload-first dehydrate).
+    pub fn enqueue_my_drive_free_up(self: &Arc<Self>, path: PathBuf) {
+        if self.is_paused() {
+            return;
+        }
+        if sync_mode_is_mirror(&self.db) {
+            sync_log(format!(
+                "My Drive free up skipped (Mirror) — {}",
+                path.display()
+            ));
+            return;
+        }
+        if crate::my_drive::is_path_under_active_free_up(&path) {
+            return;
+        }
+
+        // Prefer parent folder when Free up unpinned the folder or siblings are already queued.
+        let path = coalesce_free_up_target(path);
+
+        let key = normalize_path_key(&path);
+        {
+            let mut pending = pending_free_up_paths().lock();
+            // Already queued, or covered by an ancestor folder free-up.
+            if pending.iter().any(|p| path_key_covers(p, &key)) {
+                return;
+            }
+            // Drop pending children covered by this folder free-up.
+            pending.retain(|p| !path_key_covers(&key, p) || p == &key);
+            pending.insert(key.clone());
+        }
+        sync_log(format!(
+            "My Drive free up queued (UNPINNED) — {}",
+            path.display()
+        ));
+        let engine = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            let result = engine.free_up_my_drive_path(&path).await;
+            pending_free_up_paths().lock().remove(&key);
+            if let Err(e) = result {
+                sync_log(format!(
+                    "My Drive free up failed {}: {}",
+                    path.display(),
+                    e
+                ));
+            }
+        });
+    }
+
     pub fn enqueue_path_removed(self: &Arc<Self>, path: PathBuf) {
         self.enqueue_file_removed(path);
     }
@@ -290,6 +387,11 @@ impl SyncEngine {
             return;
         }
         if is_my_drive_path(&path) {
+            // Attribute Free up on a folder arrives as a dir modify — handle pin first.
+            if crate::cfapi::is_unpinned(&path) || crate::cfapi::is_pinned(&path) {
+                self.enqueue_my_drive_watcher_path(path);
+                return;
+            }
             let engine = Arc::clone(self);
             tauri::async_runtime::spawn(async move {
                 if engine.is_paused() || engine.is_initial_sync_running() {
@@ -3042,6 +3144,54 @@ fn is_my_drive_path(path: &Path) -> bool {
     crate::auth_store::my_drive_path(false)
         .ok()
         .is_some_and(|root| path.starts_with(&root))
+}
+
+fn pending_free_up_paths() -> &'static Mutex<HashSet<String>> {
+    static PENDING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn normalize_path_key(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
+}
+
+/// True when `ancestor` is the same as `child` or a parent directory of `child`.
+fn path_key_covers(ancestor: &str, child: &str) -> bool {
+    if ancestor == child {
+        return true;
+    }
+    child.starts_with(ancestor) && child.as_bytes().get(ancestor.len()) == Some(&b'\\')
+}
+
+/// When Free up hits many files under one folder, free the folder once.
+fn coalesce_free_up_target(path: PathBuf) -> PathBuf {
+    if !path.is_file() {
+        return path;
+    }
+    let Some(parent) = path.parent() else {
+        return path;
+    };
+    if !is_my_drive_path(parent) {
+        return path;
+    }
+    if crate::cfapi::is_unpinned(parent) {
+        return parent.to_path_buf();
+    }
+    let parent_key = normalize_path_key(parent);
+    let file_key = normalize_path_key(&path);
+    let pending = pending_free_up_paths().lock();
+    let sibling_queued = pending.iter().any(|p| {
+        p != &file_key && (path_key_covers(&parent_key, p) || p == &parent_key)
+    });
+    if sibling_queued {
+        parent.to_path_buf()
+    } else {
+        path
+    }
 }
 
 pub(crate) fn should_skip_file(name: &str) -> bool {

@@ -2,7 +2,7 @@ use crate::api::types::{FileRecord, Folder};
 use crate::cfapi::util::{
     cf_operation_param_size, file_fs_metadata, file_identity, folder_fs_metadata, path_to_wide,
 };
-use crate::cfapi::util::notify_directory_updated;
+use crate::cfapi::util::{notify_directory_updated, notify_item_updated};
 use crate::sync::log::sync_log;
 use crate::error::{AppError, AppResult};
 use std::path::{Path, PathBuf};
@@ -10,21 +10,22 @@ use windows::core::{HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, NTSTATUS, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
     CfConvertToPlaceholder, CfCreatePlaceholders, CfDehydratePlaceholder, CfExecute,
-    CfGetPlaceholderStateFromAttributeTag, CfSetInSyncState, CfUpdatePlaceholder,
+    CfGetPlaceholderStateFromAttributeTag, CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder,
     CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE, CF_CONVERT_FLAG_MARK_IN_SYNC,
     CF_CREATE_FLAG_NONE, CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA, CF_IN_SYNC_STATE_IN_SYNC,
     CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
     CF_OPERATION_PARAMETERS_0_7, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
-    CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
+    CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PIN_STATE, CF_PIN_STATE_UNSPECIFIED,
+    CF_PIN_STATE_UNPINNED, CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
     CF_PLACEHOLDER_STATE_PARTIAL, CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK,
-    CF_PLACEHOLDER_STATE_PLACEHOLDER, CF_SET_IN_SYNC_FLAG_NONE,
+    CF_PLACEHOLDER_STATE_PLACEHOLDER, CF_SET_IN_SYNC_FLAG_NONE, CF_SET_PIN_FLAG_NONE,
     CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION, CF_UPDATE_FLAG_ENABLE_ON_DEMAND_POPULATION,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetFileAttributesW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    INVALID_FILE_ATTRIBUTES, OPEN_EXISTING,
+    CreateFileW, GetFileAttributesW, FILE_ATTRIBUTE_PINNED, FILE_ATTRIBUTE_UNPINNED,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING,
 };
 
 pub const MY_DRIVE_FOLDER_NAME: &str = "My Drive";
@@ -345,6 +346,16 @@ pub fn dehydrate_placeholder_file(path: &Path) -> AppResult<()> {
     if !path.is_file() {
         return Ok(());
     }
+    // Free up / Always keep: dehydrate fails with 0x80070188 while PINNED.
+    // Explorer Free up sets UNPINNED on the selection, but children may still be PINNED.
+    if let Err(e) = set_pin_state(path, CF_PIN_STATE_UNPINNED) {
+        sync_log(format!(
+            "cfapi: set UNPINNED before dehydrate warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+
     let wide = path_to_wide(path);
     let handle = unsafe {
         CreateFileW(
@@ -367,7 +378,90 @@ pub fn dehydrate_placeholder_file(path: &Path) -> AppResult<()> {
     unsafe {
         let _ = CloseHandle(handle);
     }
+    result?;
+    // In-Sync only — no shell notify (notify triggers Explorer FETCH_DATA / re-hydrate).
+    if let Err(e) = mark_file_in_sync(path) {
+        sync_log(format!(
+            "cfapi: In-Sync after dehydrate warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+    Ok(())
+}
+
+/// Explorer Free up sets UNPINNED (sync arrows) until the provider dehydrates.
+pub fn is_unpinned(path: &Path) -> bool {
+    file_attrs(path).is_some_and(|attrs| attrs & FILE_ATTRIBUTE_UNPINNED.0 != 0)
+}
+
+/// Explorer Always keep sets PINNED.
+pub fn is_pinned(path: &Path) -> bool {
+    file_attrs(path).is_some_and(|attrs| attrs & FILE_ATTRIBUTE_PINNED.0 != 0)
+}
+
+fn file_attrs(path: &Path) -> Option<u32> {
+    let wide = path_to_wide(path);
+    let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+    if attrs == INVALID_FILE_ATTRIBUTES {
+        None
+    } else {
+        Some(attrs)
+    }
+}
+
+fn set_pin_state(path: &Path, state: CF_PIN_STATE) -> AppResult<()> {
+    let wide = path_to_wide(path);
+    let flags = if path.is_dir() {
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
+    } else {
+        FILE_FLAG_OPEN_REPARSE_POINT
+    };
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            flags,
+            None,
+        )
+        .map_err(|e| AppError::msg(format!("open for CfSetPinState: {}", e)))?
+    };
+    let result = unsafe {
+        CfSetPinState(handle, state, CF_SET_PIN_FLAG_NONE, None)
+            .map_err(|e| AppError::msg(format!("CfSetPinState: {}", e)))
+    };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
     result
+}
+
+/// Clear explicit pin/unpin so Status can leave sync-arrows when we keep local content.
+pub fn clear_explicit_pin_state(path: &Path) -> AppResult<()> {
+    set_pin_state(path, CF_PIN_STATE_UNSPECIFIED)
+}
+
+/// When Free up keeps local content (blob missing): clear UNPINNED arrows without shell notify.
+pub fn refresh_placeholder_status(path: &Path) {
+    if path.is_file() {
+        if let Err(e) = mark_file_in_sync(path) {
+            sync_log(format!(
+                "cfapi: In-Sync after free-up warning {}: {}",
+                path.display(),
+                e
+            ));
+        }
+    }
+    if let Err(e) = clear_explicit_pin_state(path) {
+        sync_log(format!(
+            "cfapi: clear pin after free-up warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
 }
 
 fn mark_file_in_sync(path: &Path) -> AppResult<()> {
@@ -399,8 +493,8 @@ fn mark_file_in_sync(path: &Path) -> AppResult<()> {
     result
 }
 
-/// After a Stream upload: ensure cloud placeholder, dehydrate local bytes, mark In-Sync,
-/// and refresh the parent folder so Explorer Status (cloud icon) updates.
+/// After Stream upload/close: ensure cloud placeholder + In-Sync.
+/// Does **not** dehydrate — local content stays available until Free up (Google Drive Stream).
 pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()> {
     if !path.is_file() {
         return Ok(());
@@ -409,19 +503,13 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
         return Err(AppError::msg("finalize_stream_placeholder: empty remote id"));
     }
 
-    if !is_dehydrated_placeholder(path) {
-        match dehydrate_placeholder_file(path) {
-            Ok(()) => {}
-            Err(e) if is_not_cloud_file_error(&e) => {
-                sync_log(format!(
-                    "cfapi: finalize converting plain file {}",
-                    path.display()
-                ));
-                convert_file_to_placeholder(path, remote_id)?;
-                dehydrate_placeholder_file(path)?;
-            }
-            Err(e) => return Err(e),
-        }
+    // Plain local files must become placeholders; keep hydrated bytes on disk.
+    if !is_cloud_placeholder(path) {
+        sync_log(format!(
+            "cfapi: finalize converting plain file {}",
+            path.display()
+        ));
+        convert_file_to_placeholder(path, remote_id)?;
     }
 
     if let Err(e) = mark_file_in_sync(path) {
@@ -438,6 +526,7 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
             e
         ));
     }
+    notify_item_updated(path);
     if let Some(parent) = path.parent() {
         notify_directory_updated(parent);
     }
@@ -446,6 +535,16 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
         path.display()
     ));
     Ok(())
+}
+
+fn is_cloud_placeholder(path: &Path) -> bool {
+    let wide = path_to_wide(path);
+    let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+    if attrs == INVALID_FILE_ATTRIBUTES {
+        return false;
+    }
+    let state = unsafe { CfGetPlaceholderStateFromAttributeTag(attrs, 0) };
+    (state.0 & CF_PLACEHOLDER_STATE_PLACEHOLDER.0) != 0
 }
 
 /// True when the cloud file has no (or incomplete) local content — reading it would FETCH_DATA.

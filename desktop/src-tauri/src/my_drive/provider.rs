@@ -7,9 +7,10 @@ use crate::db::{
 };
 use crate::error::{AppError, AppResult};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO;
 
 pub const ROOT_FOLDER_CONFIG_KEY: &str = "my_drive_root_folder_id";
@@ -386,6 +387,83 @@ pub fn is_fetch_data_inflight(remote_id: &str) -> bool {
         .lock()
         .ok()
         .is_some_and(|set| set.contains(remote_id))
+}
+
+/// Keep recently FETCH_DATA-hydrated files local so Stream close does not thrash
+/// dehydrate ↔ Windows recall (indexer / AV / Explorer).
+const RECENT_HYDRATE_KEEP: Duration = Duration::from_secs(15 * 60);
+/// After Free up, block thumbnail/indexer FETCH_DATA so dehydrate sticks.
+const RECENT_DEHYDRATE_BLOCK: Duration = Duration::from_secs(2 * 60);
+
+fn recent_hydrate_map() -> &'static Mutex<HashMap<String, Instant>> {
+    static MAP: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn recent_dehydrate_map() -> &'static Mutex<HashMap<String, Instant>> {
+    static MAP: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Call after a successful FETCH_DATA hydrate so Stream close skips dehydrate for a while.
+pub fn mark_recent_hydrate(remote_id: &str) {
+    if remote_id.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = recent_hydrate_map().lock() {
+        map.insert(remote_id.to_string(), Instant::now());
+        // Bound map size: drop entries older than keep window.
+        map.retain(|_, t| t.elapsed() < RECENT_HYDRATE_KEEP);
+    }
+    // Successful hydrate cancels free-up FETCH_DATA block for this file.
+    if let Ok(mut map) = recent_dehydrate_map().lock() {
+        map.remove(remote_id);
+    }
+}
+
+pub fn was_recently_hydrated(remote_id: &str) -> bool {
+    if remote_id.is_empty() {
+        return false;
+    }
+    let Ok(mut map) = recent_hydrate_map().lock() else {
+        return false;
+    };
+    match map.get(remote_id) {
+        Some(t) if t.elapsed() < RECENT_HYDRATE_KEEP => true,
+        Some(_) => {
+            map.remove(remote_id);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Call after Free up dehydrates a file so Explorer thumbnails do not immediately FETCH_DATA.
+pub fn mark_recent_dehydrate(remote_id: &str) {
+    if remote_id.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = recent_dehydrate_map().lock() {
+        map.insert(remote_id.to_string(), Instant::now());
+        map.retain(|_, t| t.elapsed() < RECENT_DEHYDRATE_BLOCK);
+    }
+}
+
+pub fn was_recently_dehydrated(remote_id: &str) -> bool {
+    if remote_id.is_empty() {
+        return false;
+    }
+    let Ok(mut map) = recent_dehydrate_map().lock() else {
+        return false;
+    };
+    match map.get(remote_id) {
+        Some(t) if t.elapsed() < RECENT_DEHYDRATE_BLOCK => true,
+        Some(_) => {
+            map.remove(remote_id);
+            false
+        }
+        None => false,
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

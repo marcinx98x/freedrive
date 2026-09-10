@@ -17,6 +17,15 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Stream encrypt uploads** — version **0.1.36**: uploads stream AES-GCM + SHA-256 off disk (bounded RAM) while keeping Cloudflare-safe **8 MiB** resumable chunks above **32 MiB** ciphertext (same single-IV blob format as web/mobile)
 - **Stream Status icons (0.1.46+)** — Explorer Status shows only Windows CfAPI glyphs: **cloud** = online-only, **check** = on this PC, **arrows** = syncing. FreeDrive no longer registers a CustomStateHandler or custom Status property defs (those stacked a blank paper icon). After upgrade: restart FreeDrive, F5 in My Drive; if a paper icon remains, restart Explorer. If Status is missing in Details: **More…** → **Status** / `StorageProviderUIStatus`.
 - **My Drive folder dedupe (0.1.47+)** — Desktop list-first folder resolve + single-flight ensure so root folders like Serwis are not re-created on every update; pairs with server migration that merges live duplicate folders under the same parent.
+- **Hydrate under load (0.1.48+)** — Short JSON API timeouts + transport retries; caps parallel Explorer FETCH_DATA hydrates so metadata GETs do not hang for 600s during upload storms.
+- **Stuck Status progress (0.1.49+)** — Always completes CfReportProviderProgress (100/100) on FETCH_DATA exit so Explorer does not leave a dead white progress bar; finalize refreshes the item.
+- **Stream hydrate thrash (0.1.50+)** — After FETCH_DATA, skip Stream dehydrate for 15 minutes so indexer/AV cannot loop dehydrate ↔ recall on hot files.
+- **Drive-like Stream (0.1.51+)** — Dehydrate only on Free up; open/upload/close keep files locally available (check). New cloud placeholders stay online-only until opened.
+- **Free up upload-first (0.1.52+)** — Free up always syncs dirty local content before dehydrate; upload/blob failure keeps the local file.
+- **Native Explorer Free up / Always keep (0.1.53+)** — Removes duplicate FreeDrive Download / FreeDrive Free up shell verbs; native CfAPI menu items only. Native Free up is routed through `NOTIFY_DEHYDRATE` → upload-first `free_up_my_drive_path`.
+- **Free up via UNPINNED (0.1.54+)** — Explorer Free up sets `FILE_ATTRIBUTE_UNPINNED` (often without `NOTIFY_DEHYDRATE`); watcher runs upload-first free_up and clears stuck Status sync arrows after dehydrate.
+- **Free up no re-hydrate thrash (0.1.55+)** — No shell notify after each dehydrate; `mark_recent_dehydrate` blocks thumbnail FETCH_DATA for 2 minutes unless Always keep (PINNED).
+- **Free up after Always keep (0.1.56+)** — Set UNPINNED before `CfDehydratePlaceholder` so Free up works on previously pinned files/folders (fixes 0x80070188).
 - **Authenticator 2FA** — version **0.1.8** accepts TOTP / backup codes at sign-in (setup stays in the web Security center) and can fall back to “Send code by email” when available
 - **Start minimized** — version **0.1.9** can hide the main window to the system tray on cold start (Preferences → Launch); tray click / second instance still open the window
 - **Duplicate event safe** — version **0.1.7** serializes uploads per local path, so browser download Create/Write/Rename bursts produce one remote file; only the current remote mapping may clean up older same-name copies
@@ -176,7 +185,7 @@ Desktop releases use tags **`desktop-v*`** (e.g. `desktop-v0.1.0`). Server relea
 - Sign in and keep the desktop app running (system tray).
 - Open File Explorer and go to `%USERPROFILE%\FreeDrive` (or use **Open Drive folder** in the app).
 - Open **My Drive** inside that folder to browse cloud content.
-- **Stream (default):** placeholders only — a file downloads when you open it, uploads on save/close, then frees local disk space again (like Google Drive for desktop streaming). The whole My Drive folder is **not** kept on disk. In Explorer **Details**, enable the **Status** column to see the cloud icon for online-only files.
+- **Stream (default):** cloud placeholders online-only until opened; after open/upload they stay available locally (check) until you use **Free up space** (Google Drive–like). In Explorer **Details**, enable the **Status** column.
 - **Mirror (optional):** Preferences → FreeDrive → Mirror files keeps a full local copy under `~/FreeDrive/My Drive` (uses disk space; good for offline).
 - **Explorer nav pane:** after a successful provider connect, Windows shows a pinned **FreeDrive** entry (branded icon) in the left sidebar via CLSID `Desktop\NameSpace` + SyncRootManager. Connect always refreshes `IconResource` / `DefaultIcon` (so NSIS updates pick up the new exe). **Sign out** disconnects the provider but **keeps** the sidebar pin; **uninstall** (NSIS) removes NameSpace + SyncRootManager keys. Prefer **Unregister Explorer integration** in settings only when recovering a broken registration.
 - Requires **Windows 10 1809+**. CfAPI connects synchronously on startup / login (`connect-first` recovery if Windows already has the sync root registered).

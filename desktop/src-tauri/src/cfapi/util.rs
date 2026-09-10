@@ -122,6 +122,20 @@ pub fn notify_directory_updated(path: &Path) {
     }
 }
 
+/// Ask Explorer to refresh a single item (Status glyph / stuck progress chrome).
+pub fn notify_item_updated(path: &Path) {
+    use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEITEM, SHCNF_PATHW};
+    let wide = path_to_wide(path);
+    unsafe {
+        SHChangeNotify(
+            SHCNE_UPDATEITEM,
+            SHCNF_PATHW,
+            Some(wide.as_ptr() as *const _),
+            None,
+        );
+    }
+}
+
 /// Notify Explorer that sync root shell registration changed (sidebar refresh).
 pub fn notify_shell_updated() {
     use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};

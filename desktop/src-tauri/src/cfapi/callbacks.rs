@@ -3,6 +3,7 @@ use crate::cfapi::placeholders::{
     build_placeholder_infos, complete_fetch_placeholders, count_existing_children,
     create_named_folder_placeholder, ensure_cloud_placeholder, finalize_stream_placeholder,
     filter_new_entries, is_dehydrated_placeholder, is_duplicate_placeholder_error,
+    is_pinned,
     mark_directory_populated, transfer_or_complete_fetch, transfer_placeholders_via_callback,
     PlaceholderEntry, MY_DRIVE_FOLDER_NAME,
 };
@@ -13,9 +14,9 @@ use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_dir
 use crate::my_drive::{
     begin_fetch_data_inflight, clear_hydrate_cache_for_file, end_fetch_data_inflight,
     ensure_hydrated_plaintext_with_progress, fetch_folder_contents, is_fetch_data_inflight,
-    is_path_under_active_free_up, is_under_my_drive, pin_hydrated_cache_to_path,
-    relative_path_from_sync_root, resolve_folder_id_for_fetch, resolve_my_drive_root_id,
-    FolderIdSource,
+    is_path_under_active_free_up, is_under_my_drive, mark_recent_hydrate,
+    pin_hydrated_cache_to_path, relative_path_from_sync_root, resolve_folder_id_for_fetch,
+    resolve_my_drive_root_id, was_recently_dehydrated, FolderIdSource,
 };
 use crate::sync::log::sync_log;
 use serde::Serialize;
@@ -26,11 +27,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use windows::Win32::Foundation::{NTSTATUS, STATUS_CLOUD_FILE_UNSUCCESSFUL, STATUS_SUCCESS};
+use windows::Win32::Foundation::{
+    NTSTATUS, STATUS_CLOUD_FILE_DEHYDRATION_DISALLOWED, STATUS_CLOUD_FILE_UNSUCCESSFUL,
+    STATUS_SUCCESS,
+};
 use windows::Win32::Storage::CloudFilters::{
     CfExecute, CfReportProviderProgress, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS,
-    CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
-    CF_OPERATION_PARAMETERS_0_6, CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+    CF_OPERATION_ACK_DEHYDRATE_FLAG_NONE, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS,
+    CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_1, CF_OPERATION_PARAMETERS_0_6,
+    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_ACK_DEHYDRATE,
     CF_OPERATION_TYPE_TRANSFER_DATA,
 };
 
@@ -38,15 +43,23 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 /// Large My Drive opens (download + decrypt) can take many minutes — do not use the
 /// short placeholder timeout. Google Drive for desktop likewise waits for full hydrate.
 const HYDRATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
+/// Cap concurrent Explorer hydrates so a folder stampede cannot starve JSON/API under load.
+const FETCH_DATA_HYDRATE_CONCURRENCY: usize = 4;
 const CLOSE_DEBOUNCE: Duration = Duration::from_secs(3);
 /// CFAPI TRANSFER_DATA chunks (offset/length must be 4KiB-aligned except at EOF).
 const TRANSFER_CHUNK: usize = 1024 * 1024;
 const TRANSFER_ALIGN: usize = 4096;
 
 static CLOSE_DEBOUNCE_MAP: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+static FETCH_DATA_HYDRATE_SEM: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 fn close_debounce_map() -> &'static Mutex<HashMap<String, Instant>> {
     CLOSE_DEBOUNCE_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn fetch_data_hydrate_sem() -> &'static tokio::sync::Semaphore {
+    FETCH_DATA_HYDRATE_SEM
+        .get_or_init(|| tokio::sync::Semaphore::new(FETCH_DATA_HYDRATE_CONCURRENCY))
 }
 
 /// Returns true if this close should be handled; false if it is a duplicate within debounce window.
@@ -315,6 +328,7 @@ pub unsafe extern "system" fn fetch_data(
     match result {
         Ok(Ok(())) => {}
         Ok(Err(e)) if is_cloud_op_canceled(&e) => {
+            complete_provider_progress(info.ConnectionKey, info.TransferKey);
             cfapi_callback_log(&format!(
                 "FETCH_DATA soft-cancel file={file_id}: {e}"
             ));
@@ -404,6 +418,8 @@ fn fail_fetch_data(
     info: &CF_CALLBACK_INFO,
     params: &CF_CALLBACK_PARAMETERS,
 ) -> Result<(), String> {
+    // Clear any Explorer Status progress bar left at 1..99 from a failed hydrate.
+    complete_provider_progress(info.ConnectionKey, info.TransferKey);
     let fetch = unsafe { params.Anonymous.FetchData };
     let offset = fetch.RequiredFileOffset;
     let length = fetch.RequiredLength;
@@ -412,6 +428,14 @@ fn fail_fetch_data(
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Finish native CfAPI Status progress UI (white bar). Incomplete 1..99 ticks stick forever.
+fn complete_provider_progress(
+    connection_key: windows::Win32::Storage::CloudFilters::CF_CONNECTION_KEY,
+    transfer_key: i64,
+) {
+    let _ = unsafe { CfReportProviderProgress(connection_key, transfer_key, 100, 100) };
 }
 
 fn handle_fetch_placeholders(info: &CF_CALLBACK_INFO) -> Result<u32, String> {
@@ -605,6 +629,16 @@ fn handle_fetch_data(
         return Ok(());
     }
 
+    // After Free up, Explorer thumbnails re-request content — refuse unless Always keep (PINNED).
+    let pinned = placeholder_path.as_ref().is_some_and(|p| is_pinned(p));
+    if was_recently_dehydrated(&remote_id) && !pinned {
+        cfapi_callback_log(format!(
+            "FETCH_DATA skipped (recent free-up) file={remote_id}"
+        ));
+        fail_fetch_data(info, params)?;
+        return Ok(());
+    }
+
     begin_fetch_data_inflight(&remote_id);
 
     let ctx = with_context(|c| (c.db.clone(), c.api.clone()))
@@ -652,6 +686,10 @@ fn handle_fetch_data(
     let hydrate_result = crate::blocking::run_async_future_with_timeout(
         HYDRATE_TIMEOUT,
         async move {
+            let _permit = fetch_data_hydrate_sem()
+                .acquire()
+                .await
+                .map_err(|_| "hydrate semaphore closed".to_string())?;
             ensure_hydrated_plaintext_with_progress(
                 &ctx.1,
                 &ctx.0,
@@ -669,6 +707,8 @@ fn handle_fetch_data(
     let cache_path = match hydrate_result {
         Ok(path) => path,
         Err(e) => {
+            // Clear stuck Status progress on hydrate failure only — success continues to TRANSFER.
+            complete_provider_progress(connection_key, transfer_key);
             cfapi_callback_log(format!(
                 "FETCH_DATA hydrate failed file={remote_id} after {:?}: {e}",
                 hydrate_started.elapsed()
@@ -682,6 +722,7 @@ fn handle_fetch_data(
         hydrate_started.elapsed(),
         is_fetch_data_request_cancelled(request_key)
     ));
+    mark_recent_hydrate(&remote_id);
 
     let pin_after_cancel = |reason: &str| {
         let Some(dest) = placeholder_path.as_ref() else {
@@ -704,6 +745,7 @@ fn handle_fetch_data(
     // Windows often cancels large-file FETCH before TRANSFER_DATA; cache is ready — pin to disk.
     if is_fetch_data_request_cancelled(request_key) {
         pin_after_cancel("cancelled after hydrate");
+        complete_provider_progress(connection_key, transfer_key);
         return Ok(());
     }
 
@@ -712,6 +754,7 @@ fn handle_fetch_data(
     let file_len = file.metadata().map_err(|e| e.to_string())?.len();
     let offset_u = req_offset as u64;
     if offset_u > file_len {
+        complete_provider_progress(connection_key, transfer_key);
         return Err("fetch offset beyond file".into());
     }
     let end = (offset_u.saturating_add(req_length)).min(file_len);
@@ -722,6 +765,7 @@ fn handle_fetch_data(
     while pos < end {
         if is_fetch_data_request_cancelled(request_key) {
             pin_after_cancel("cancelled during transfer");
+            complete_provider_progress(connection_key, transfer_key);
             return Ok(());
         }
 
@@ -755,6 +799,7 @@ fn handle_fetch_data(
 
         if is_fetch_data_request_cancelled(request_key) {
             pin_after_cancel("cancelled before chunk transfer");
+            complete_provider_progress(connection_key, transfer_key);
             return Ok(());
         }
 
@@ -770,9 +815,13 @@ fn handle_fetch_data(
             Ok(()) => {}
             Err(e) if is_cloud_op_canceled(&e.to_string()) => {
                 pin_after_cancel("TRANSFER_DATA canceled");
+                complete_provider_progress(connection_key, transfer_key);
                 return Ok(());
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                complete_provider_progress(connection_key, transfer_key);
+                return Err(e.to_string());
+            }
         }
 
         transferred += chunk.len() as u64;
@@ -784,7 +833,7 @@ fn handle_fetch_data(
         };
     }
 
-    let _ = unsafe { CfReportProviderProgress(connection_key, transfer_key, 100, 100) };
+    complete_provider_progress(connection_key, transfer_key);
     cfapi_callback_log(format!(
         "FETCH_DATA transfer ok file={remote_id} bytes={transferred} in {:?}",
         transfer_started.elapsed()
@@ -939,47 +988,128 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         let Some(id) = id else {
             return;
         };
-        if is_fetch_data_inflight(&id) {
-            cfapi_callback_log(&format!(
-                "NOTIFY_FILE_CLOSE dehydrate deferred (fetch in flight) {}",
-                full.display()
-            ));
+        if is_path_under_active_free_up(&full) {
             return;
         }
+        // Drive-like Stream: never dehydrate on close — Free up does that.
         if uploaded {
             clear_hydrate_cache_for_file(&id);
         }
-        // Brief delay so editors release the handle before dehydrate/convert.
         tokio::time::sleep(Duration::from_millis(400)).await;
-        if is_fetch_data_inflight(&id)
-            || is_path_under_active_free_up(&full)
-            || is_dehydrated_placeholder(&full)
-        {
-            // Already online-only: still refresh In-Sync / Status if needed.
-            if is_dehydrated_placeholder(&full) && !is_path_under_active_free_up(&full) {
-                if let Err(e) = finalize_stream_placeholder(&full, &id) {
-                    cfapi_callback_log(&format!(
-                        "NOTIFY_FILE_CLOSE finalize (already dehydrated) {}: {}",
-                        full.display(),
-                        e
-                    ));
-                }
-            }
+        if is_fetch_data_inflight(&id) || is_path_under_active_free_up(&full) {
             return;
         }
         match finalize_stream_placeholder(&full, &id) {
             Ok(()) => cfapi_callback_log(&format!(
-                "NOTIFY_FILE_CLOSE dehydrated {}",
+                "NOTIFY_FILE_CLOSE marked In-Sync {}",
                 full.display()
             )),
             Err(e) => cfapi_callback_log(&format!(
-                "NOTIFY_FILE_CLOSE dehydrate skipped {}: {}",
+                "NOTIFY_FILE_CLOSE In-Sync skipped {}: {}",
                 full.display(),
                 e
             )),
         }
     });
     Ok(())
+}
+
+pub unsafe extern "system" fn notify_dehydrate(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let _ = std::panic::catch_unwind(|| handle_notify_dehydrate(info));
+}
+
+/// Native Explorer "Free up space" — take over with upload-first free_up (0.1.52+).
+/// `CfDehydratePlaceholder` from our own free-up does **not** fire this callback.
+fn handle_notify_dehydrate(info: &CF_CALLBACK_INFO) -> Result<(), String> {
+    let full = callback_full_path(info).map_err(|e| e.to_string())?;
+    let db = with_context(|ctx| ctx.db.clone()).ok_or_else(|| "cfapi context missing".to_string())?;
+    let sync_root = with_context(|ctx| ctx.sync_root.clone())
+        .ok_or_else(|| "cfapi context missing".to_string())?;
+
+    if !path_is_under_my_drive(&sync_root, &full) {
+        ack_dehydrate(info, STATUS_SUCCESS);
+        return Ok(());
+    }
+
+    // While our free-up walk runs, block concurrent OS dehydrates (upload-first race).
+    if is_path_under_active_free_up(&full) {
+        cfapi_callback_log(&format!(
+            "NOTIFY_DEHYDRATE denied (active free-up) {}",
+            full.display()
+        ));
+        ack_dehydrate(info, STATUS_CLOUD_FILE_DEHYDRATION_DISALLOWED);
+        return Ok(());
+    }
+
+    if !crate::sync::engine::sync_mode_is_stream(&db) {
+        cfapi_callback_log(&format!(
+            "NOTIFY_DEHYDRATE denied (Mirror) {}",
+            full.display()
+        ));
+        ack_dehydrate(info, STATUS_CLOUD_FILE_DEHYDRATION_DISALLOWED);
+        return Ok(());
+    }
+
+    // Deny OS dehydrate; run safe free_up (upload + blob probe) asynchronously.
+    ack_dehydrate(info, STATUS_CLOUD_FILE_DEHYDRATION_DISALLOWED);
+    cfapi_callback_log(&format!(
+        "NOTIFY_DEHYDRATE → safe free_up {}",
+        full.display()
+    ));
+    tauri::async_runtime::spawn(async move {
+        let Some(engine) = sync_engine_from_app() else {
+            cfapi_callback_log(&format!(
+                "NOTIFY_DEHYDRATE free_up skipped (no sync engine) {}",
+                full.display()
+            ));
+            return;
+        };
+        match engine.free_up_my_drive_path(&full).await {
+            Ok(_) => cfapi_callback_log(&format!(
+                "NOTIFY_DEHYDRATE free_up done {}",
+                full.display()
+            )),
+            Err(e) => cfapi_callback_log(&format!(
+                "NOTIFY_DEHYDRATE free_up failed {}: {}",
+                full.display(),
+                e
+            )),
+        }
+    });
+    Ok(())
+}
+
+fn ack_dehydrate(info: &CF_CALLBACK_INFO, status: NTSTATUS) {
+    let op_info = CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
+        Type: CF_OPERATION_TYPE_ACK_DEHYDRATE,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: info.CorrelationVector,
+        RequestKey: info.RequestKey,
+        SyncStatus: std::ptr::null(),
+    };
+    let mut op_params = CF_OPERATION_PARAMETERS {
+        ParamSize: cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_1>(),
+        Anonymous: CF_OPERATION_PARAMETERS_0 {
+            AckDehydrate: CF_OPERATION_PARAMETERS_0_1 {
+                Flags: CF_OPERATION_ACK_DEHYDRATE_FLAG_NONE,
+                CompletionStatus: status,
+                FileIdentity: std::ptr::null(),
+                FileIdentityLength: 0,
+            },
+        },
+    };
+    if let Err(e) = unsafe { CfExecute(&op_info, &mut op_params) } {
+        cfapi_callback_log(format!("CfExecute ACK_DEHYDRATE failed: {e}"));
+    }
 }
 
 pub unsafe extern "system" fn notify_delete(

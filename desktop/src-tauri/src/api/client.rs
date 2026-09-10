@@ -140,7 +140,11 @@ struct ClientInner {
 
     refresh_token: String,
 
+    /// Short-timeout client for JSON API calls (`request_json`, health, refresh).
     http: reqwest::Client,
+
+    /// Long-timeout client for `/files/{id}/download` body transfer.
+    download_http: reqwest::Client,
 
     upload_http: reqwest::Client,
 
@@ -170,6 +174,14 @@ const SMALL_UPLOAD_BYTES: u64 = 1_048_576;
 const RESUMABLE_THRESHOLD: u64 = 32 * 1024 * 1024;
 const RESUMABLE_CHUNK: usize = 8 * 1024 * 1024;
 
+/// JSON API (metadata, auth, listing): fail fast under load — never wait 10 minutes.
+const JSON_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const JSON_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// Encrypted blob download / probe: large files may need many minutes.
+const DOWNLOAD_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const JSON_NET_RETRIES: u32 = 3;
+const JSON_NET_BACKOFF_MS: [u64; 3] = [200, 500, 1000];
+
 /// `(bytes_sent, bytes_total)` for UI progress rings.
 pub type UploadProgressCb = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
@@ -188,19 +200,21 @@ impl ApiClient {
         let server_url = auth.server_url.trim_end_matches('/').to_string();
 
         let http = reqwest::Client::builder()
-
-            .timeout(Duration::from_secs(600))
-
+            .connect_timeout(JSON_CONNECT_TIMEOUT)
+            .timeout(JSON_REQUEST_TIMEOUT)
             .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
 
+        let download_http = reqwest::Client::builder()
+            .connect_timeout(JSON_CONNECT_TIMEOUT)
+            .timeout(DOWNLOAD_REQUEST_TIMEOUT)
+            .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
         let upload_http = reqwest::Client::builder()
-
+            .connect_timeout(JSON_CONNECT_TIMEOUT)
             .timeout(Duration::from_secs(120))
-
             .build()
-
             .unwrap_or_else(|_| reqwest::Client::new());
 
         Self {
@@ -214,6 +228,8 @@ impl ApiClient {
                 refresh_token: auth.refresh_token.clone(),
 
                 http,
+
+                download_http,
 
                 upload_http,
 
@@ -293,85 +309,108 @@ impl ApiClient {
         rl_retries: u32,
 
     ) -> AppResult<T> {
+        self.request_json_inner(method, path, body, retry, rl_retries, JSON_NET_RETRIES)
+            .await
+    }
 
+    async fn request_json_inner<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+        retry: bool,
+        rl_retries: u32,
+        net_retries: u32,
+    ) -> AppResult<T> {
         let url = self.api_url(path);
-
         let (access_token, http) = {
-
             let inner = self.inner.read();
-
             (inner.access_token.clone(), inner.http.clone())
-
         };
 
-
-
         let mut req = http.request(method.clone(), &url);
-
         req = req.header("Authorization", format!("Bearer {}", access_token));
-
         if let Some(ref b) = body {
-
             req = req.json(b);
-
         }
 
-
-
-        let res = req.send().await?;
+        let res = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                if net_retries > 0 && is_transient_http_error(&msg) {
+                    let attempt = (JSON_NET_RETRIES - net_retries) as usize;
+                    let delay = JSON_NET_BACKOFF_MS[attempt.min(JSON_NET_BACKOFF_MS.len() - 1)];
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    return Box::pin(self.request_json_inner(
+                        method,
+                        path,
+                        body,
+                        retry,
+                        rl_retries,
+                        net_retries - 1,
+                    ))
+                    .await;
+                }
+                return Err(e.into());
+            }
+        };
 
         if res.status() == reqwest::StatusCode::UNAUTHORIZED
-
             && !retry
-
             && path != "/auth/login"
-
             && path != "/auth/refresh"
-
         {
-
             if self.try_refresh().await? {
-
-                return Box::pin(self.request_json(method, path, body, true, rl_retries)).await;
-
+                return Box::pin(self.request_json_inner(
+                    method,
+                    path,
+                    body,
+                    true,
+                    rl_retries,
+                    net_retries,
+                ))
+                .await;
             }
-
             return Err(AppError::msg("session expired"));
-
         }
 
-
-
         if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && rl_retries > 0 {
-
             tokio::time::sleep(Duration::from_millis(400)).await;
-
-            return Box::pin(self.request_json(method, path, body, retry, rl_retries - 1)).await;
-
+            return Box::pin(self.request_json_inner(
+                method,
+                path,
+                body,
+                retry,
+                rl_retries - 1,
+                net_retries,
+            ))
+            .await;
         }
 
         if is_transient_gateway_status(res.status()) && rl_retries > 0 {
             tokio::time::sleep(Duration::from_millis(400)).await;
-            return Box::pin(self.request_json(method, path, body, retry, rl_retries - 1)).await;
+            return Box::pin(self.request_json_inner(
+                method,
+                path,
+                body,
+                retry,
+                rl_retries - 1,
+                net_retries,
+            ))
+            .await;
         }
 
-
-
         let status = res.status();
-
         let text = res.text().await?;
-
         if !status.is_success() {
             return Err(http_api_error(status, &text));
         }
-
-
 
         serde_json::from_str(&text).map_err(|e| {
             let preview: String = text.chars().take(200).collect();
             AppError::msg(format!("API JSON decode failed: {e}; body={preview}"))
         })
-
     }
 
 
@@ -1012,6 +1051,28 @@ impl ApiClient {
         retry: bool,
         rl_retries: u32,
     ) -> AppResult<T> {
+        self.request_json_mutation_inner(
+            method,
+            path,
+            body,
+            client_mutation_id,
+            retry,
+            rl_retries,
+            JSON_NET_RETRIES,
+        )
+        .await
+    }
+
+    async fn request_json_mutation_inner<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+        client_mutation_id: Option<&str>,
+        retry: bool,
+        rl_retries: u32,
+        net_retries: u32,
+    ) -> AppResult<T> {
         let url = self.api_url(path);
         let (access_token, http) = {
             let inner = self.inner.read();
@@ -1027,20 +1088,42 @@ impl ApiClient {
             req = req.json(b);
         }
 
-        let res = req.send().await?;
+        let res = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                if net_retries > 0 && is_transient_http_error(&msg) {
+                    let attempt = (JSON_NET_RETRIES - net_retries) as usize;
+                    let delay = JSON_NET_BACKOFF_MS[attempt.min(JSON_NET_BACKOFF_MS.len() - 1)];
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    return Box::pin(self.request_json_mutation_inner(
+                        method,
+                        path,
+                        body,
+                        client_mutation_id,
+                        retry,
+                        rl_retries,
+                        net_retries - 1,
+                    ))
+                    .await;
+                }
+                return Err(e.into());
+            }
+        };
         if res.status() == reqwest::StatusCode::UNAUTHORIZED
             && !retry
             && path != "/auth/login"
             && path != "/auth/refresh"
         {
             if self.try_refresh().await? {
-                return Box::pin(self.request_json_mutation(
+                return Box::pin(self.request_json_mutation_inner(
                     method,
                     path,
                     body,
                     client_mutation_id,
                     true,
                     rl_retries,
+                    net_retries,
                 ))
                 .await;
             }
@@ -1049,26 +1132,28 @@ impl ApiClient {
 
         if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && rl_retries > 0 {
             tokio::time::sleep(Duration::from_millis(400)).await;
-            return Box::pin(self.request_json_mutation(
+            return Box::pin(self.request_json_mutation_inner(
                 method,
                 path,
                 body,
                 client_mutation_id,
                 retry,
                 rl_retries - 1,
+                net_retries,
             ))
             .await;
         }
 
         if is_transient_gateway_status(res.status()) && rl_retries > 0 {
             tokio::time::sleep(Duration::from_millis(400)).await;
-            return Box::pin(self.request_json_mutation(
+            return Box::pin(self.request_json_mutation_inner(
                 method,
                 path,
                 body,
                 client_mutation_id,
                 retry,
                 rl_retries - 1,
+                net_retries,
             ))
             .await;
         }
@@ -1510,7 +1595,7 @@ impl ApiClient {
         let url = self.api_url(&format!("/files/{}/download", file_id));
         let (access_token, http) = {
             let inner = self.inner.read();
-            (inner.access_token.clone(), inner.http.clone())
+            (inner.access_token.clone(), inner.download_http.clone())
         };
         let res = http
             .get(&url)
@@ -1524,7 +1609,7 @@ impl ApiClient {
                 // One retry after refresh.
                 let (access_token, http) = {
                     let inner = self.inner.read();
-                    (inner.access_token.clone(), inner.http.clone())
+                    (inner.access_token.clone(), inner.download_http.clone())
                 };
                 let res = http
                     .get(&url)
@@ -1612,7 +1697,7 @@ impl ApiClient {
         let url = self.api_url(&format!("/files/{}/download", file_id));
         let (access_token, http) = {
             let inner = self.inner.read();
-            (inner.access_token.clone(), inner.http.clone())
+            (inner.access_token.clone(), inner.download_http.clone())
         };
         let res = http
             .get(&url)
