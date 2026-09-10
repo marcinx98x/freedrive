@@ -1,15 +1,25 @@
 use crate::api::client::ApiClient;
 use crate::api::types::SyncChange;
 use crate::db::{
-    delete_folder_mapping, delete_sync_state_row, list_folder_mappings, list_sync_folders,
-    set_folder_mapping, upsert_sync_state_with_version, DbHandle,
+    delete_folder_mapping, delete_sync_folder, delete_sync_state_row, list_folder_mappings,
+    list_sync_folders, set_folder_mapping, upsert_sync_state_with_version, DbHandle,
 };
 use crate::error::{AppError, AppResult};
 use crate::sync::engine::SyncEngine;
 use crate::sync::log::sync_log;
 use crate::sync::suppress::WatcherSuppress;
+use serde::Serialize;
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::Emitter;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+#[derive(Clone, Serialize)]
+struct SyncRootRemoteTrashedPayload {
+    label: String,
+    local_path: String,
+}
 
 fn current_user_id() -> AppResult<String> {
     crate::auth_store::load_auth()
@@ -51,9 +61,70 @@ pub async fn apply_remote_change(
                 apply_remote_folder_rename(db, suppress, computer_root_id, change)
             }
         }
-        "trash" | "permanent_delete" => apply_remote_delete(db, suppress, change),
+        "trash" | "permanent_delete" => apply_remote_delete(engine, db, suppress, change),
         _ => Ok(()),
     }
+}
+
+/// Keep the directory itself (e.g. Windows Downloads) but remove children.
+fn clear_directory_contents(dir: &Path) {
+    if !dir.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let result = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        if let Err(e) = result {
+            sync_log(format!(
+                "failed to remove {} while clearing former sync root: {}",
+                path.display(),
+                e
+            ));
+        }
+    }
+}
+
+fn prompt_sync_root_local_wipe(engine: &SyncEngine, label: String, local_path: String) {
+    let app = engine.app_handle().clone();
+    let path_for_log = local_path.clone();
+    let message = format!(
+        "\"{label}\" was removed from FreeDrive in the cloud.\n\n\
+Also delete the local files in:\n{local_path}?\n\n\
+Choose Keep local files unless you are sure."
+    );
+    app.dialog()
+        .message(message)
+        .title("Synced folder removed")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Delete local files".into(),
+            "Keep local files".into(),
+        ))
+        .show(move |delete_local| {
+            if delete_local {
+                sync_log(format!(
+                    "user confirmed wipe of former sync root: {}",
+                    path_for_log
+                ));
+                clear_directory_contents(Path::new(&path_for_log));
+                sync_log(format!(
+                    "cleared local contents of former sync root: {}",
+                    path_for_log
+                ));
+            } else {
+                sync_log(format!(
+                    "user kept local files for former sync root: {}",
+                    path_for_log
+                ));
+            }
+        });
 }
 
 fn resolve_sync_context(
@@ -449,42 +520,96 @@ fn find_relative_for_remote_folder(
 }
 
 fn apply_remote_delete(
+    engine: &SyncEngine,
     db: &DbHandle,
     suppress: &WatcherSuppress,
     change: &SyncChange,
 ) -> AppResult<()> {
-    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-    if change.entity_type == "file" {
-        if let Some((sync_folder_id, relative)) =
-            crate::db::get_sync_state_by_remote_file_id(&conn, &change.entity_id)?
-        {
-            let sf = list_sync_folders(&conn)?
-                .into_iter()
-                .find(|f| f.id == sync_folder_id);
-            if let Some(sf) = sf {
-                let local_path = PathBuf::from(&sf.local_path).join(relative.replace('/', "\\"));
-                suppress.run_suppressed(&local_path, || {
-                    let _ = std::fs::remove_file(&local_path);
-                });
-                delete_sync_state_row(&conn, sync_folder_id, &relative)?;
+    let mut sync_roots_to_confirm: Vec<(String, String)> = Vec::new();
+
+    {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        if change.entity_type == "file" {
+            if let Some((sync_folder_id, relative)) =
+                crate::db::get_sync_state_by_remote_file_id(&conn, &change.entity_id)?
+            {
+                let sf = list_sync_folders(&conn)?
+                    .into_iter()
+                    .find(|f| f.id == sync_folder_id);
+                if let Some(sf) = sf {
+                    let local_path =
+                        PathBuf::from(&sf.local_path).join(relative.replace('/', "\\"));
+                    sync_log(format!(
+                        "remote→local delete file sync_folder_id={} path={}",
+                        sync_folder_id,
+                        local_path.display()
+                    ));
+                    suppress.run_suppressed(&local_path, || {
+                        let _ = fs::remove_file(&local_path);
+                    });
+                    delete_sync_state_row(&conn, sync_folder_id, &relative)?;
+                }
             }
-        }
-    } else if change.entity_type == "folder" {
-        let folders = list_sync_folders(&conn)?;
-        for sf in folders {
-            if let Some(rel) = find_relative_for_remote_folder(&conn, sf.id, &change.entity_id)? {
-                let local_path = PathBuf::from(&sf.local_path).join(rel.replace('/', "\\"));
-                suppress.run_suppressed(&local_path, || {
-                    let _ = std::fs::remove_dir_all(&local_path);
-                });
-                delete_folder_mapping(&conn, sf.id, &rel)?;
-                conn.execute(
-                    "DELETE FROM sync_state WHERE sync_folder_id = ?1 AND (relative_path = ?2 OR relative_path LIKE ?3)",
-                    rusqlite::params![sf.id, rel, format!("{}/%", rel)],
-                )?;
+        } else if change.entity_type == "folder" {
+            let folders = list_sync_folders(&conn)?;
+            for sf in folders {
+                if let Some(rel) =
+                    find_relative_for_remote_folder(&conn, sf.id, &change.entity_id)?
+                {
+                    // Sync root (Downloads/Desktop/…): never silent wipe — Google-like confirm.
+                    if rel.is_empty() {
+                        sync_log(format!(
+                            "refusing to wipe sync root on remote trash: {} (sync_folder_id={}) — stopping sync, asking user",
+                            sf.local_path, sf.id
+                        ));
+                        let label = if sf.label.is_empty() {
+                            Path::new(&sf.local_path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| sf.local_path.clone())
+                        } else {
+                            sf.label.clone()
+                        };
+                        let local_path = sf.local_path.clone();
+                        delete_sync_folder(&conn, sf.id)?;
+                        sync_roots_to_confirm.push((label, local_path));
+                        continue;
+                    }
+
+                    let local_path =
+                        PathBuf::from(&sf.local_path).join(rel.replace('/', "\\"));
+                    sync_log(format!(
+                        "remote→local delete folder sync_folder_id={} path={}",
+                        sf.id,
+                        local_path.display()
+                    ));
+                    suppress.run_suppressed(&local_path, || {
+                        let _ = fs::remove_dir_all(&local_path);
+                    });
+                    delete_folder_mapping(&conn, sf.id, &rel)?;
+                    conn.execute(
+                        "DELETE FROM sync_state WHERE sync_folder_id = ?1 AND (relative_path = ?2 OR relative_path LIKE ?3)",
+                        rusqlite::params![sf.id, rel, format!("{}/%", rel)],
+                    )?;
+                }
             }
         }
     }
+
+    if !sync_roots_to_confirm.is_empty() {
+        engine.refresh_folder_watchers();
+        for (label, local_path) in sync_roots_to_confirm {
+            let _ = engine.app_handle().emit(
+                "sync-root-remote-trashed",
+                SyncRootRemoteTrashedPayload {
+                    label: label.clone(),
+                    local_path: local_path.clone(),
+                },
+            );
+            prompt_sync_root_local_wipe(engine, label, local_path);
+        }
+    }
+
     Ok(())
 }
 

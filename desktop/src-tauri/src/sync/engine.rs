@@ -2678,6 +2678,49 @@ impl SyncEngine {
         &self.watcher_suppress
     }
 
+    pub fn app_handle(&self) -> &AppHandle {
+        &self.app
+    }
+
+    /// Rebuild the local folder watcher from current `sync_folders` (+ My Drive).
+    pub fn refresh_folder_watchers(&self) {
+        use tauri::Manager;
+
+        let Some(state) = self.app.try_state::<crate::state::AppState>() else {
+            sync_log("refresh folder watchers skipped — AppState missing");
+            return;
+        };
+        let Ok(engine) = state.sync_engine() else {
+            sync_log("refresh folder watchers skipped — sync engine missing");
+            return;
+        };
+
+        let folders = match self.db.lock() {
+            Ok(conn) => list_sync_folders(&conn).unwrap_or_default(),
+            Err(e) => {
+                sync_log(format!("refresh folder watchers: db lock failed: {}", e));
+                return;
+            }
+        };
+        let mut paths: Vec<PathBuf> = folders
+            .iter()
+            .map(|f| PathBuf::from(&f.local_path))
+            .collect();
+        if let Ok(my_drive) = crate::auth_store::my_drive_path(false) {
+            if my_drive.exists() {
+                paths.push(my_drive);
+            }
+        }
+
+        match crate::sync::watcher::WatcherHandle::start(paths, engine) {
+            Ok(watcher) => {
+                state.set_watcher(watcher);
+                sync_log("folder watchers refreshed after sync folder change");
+            }
+            Err(e) => sync_log(format!("refresh folder watchers failed: {}", e)),
+        }
+    }
+
     pub async fn ensure_folder_remote_path(
         &self,
         sync_folder_id: i64,

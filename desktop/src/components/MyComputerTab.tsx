@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api/tauri";
+import { api, onSyncRootRemoteTrashed } from "../api/tauri";
 import type { SyncFolder } from "../types";
 
 interface MyComputerTabProps {
@@ -26,6 +26,18 @@ export function MyComputerTab({ onFoldersChanged }: MyComputerTabProps) {
 
   useEffect(() => {
     loadFolders();
+  }, [loadFolders]);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    onSyncRootRemoteTrashed(() => {
+      void loadFolders();
+    }).then((u) => {
+      unsub = u;
+    });
+    return () => {
+      unsub?.();
+    };
   }, [loadFolders]);
 
   const handleAddFolder = async () => {

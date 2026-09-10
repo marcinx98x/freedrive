@@ -21,6 +21,7 @@ import type {
   RotateCryptoKeyResult,
   HydrateFailedEvent,
   UploadProgressEvent,
+  SyncRootRemoteTrashedEvent,
 } from "../types";
 
 export const api = {
@@ -152,6 +153,12 @@ export function onCryptoUnlockFailed(cb: (message: string) => void) {
 
 export function onSessionExpired(cb: () => void) {
   return listen<void>("session-expired", () => cb());
+}
+
+export function onSyncRootRemoteTrashed(cb: (event: SyncRootRemoteTrashedEvent) => void) {
+  return listen<SyncRootRemoteTrashedEvent>("sync-root-remote-trashed", (e) =>
+    cb(e.payload),
+  );
 }
 
 export function formatRelativeTime(iso: string | null): string {

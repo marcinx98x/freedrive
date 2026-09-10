@@ -7,6 +7,11 @@ export interface HydrateFailedEvent {
   file_id: string;
 }
 
+export interface SyncRootRemoteTrashedEvent {
+  label: string;
+  local_path: string;
+}
+
 export interface ExportEncryptionKeysResult {
   exported: number;
   path: string;
