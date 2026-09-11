@@ -1059,26 +1059,45 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
     if !is_under_my_drive(&relative) {
         return Ok(());
     }
+    // Never soft-delete the My Drive root itself.
+    if relative.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) {
+        return Ok(());
+    }
 
-    let remote_id = {
+    let placeholder = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_get_placeholder(&conn, &relative)?
-            .filter(|(_, item_type, _)| item_type == "file")
-            .map(|(id, _, _)| id)
+    };
+    let Some((remote_id, item_type, _)) = placeholder else {
+        return Ok(());
     };
 
-    if let Some(remote_id) = remote_id {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(if item_type == "folder" {
+            "folder"
+        } else {
+            "file"
+        });
+
+    if item_type == "folder" {
+        if !remote_id.is_empty() {
+            api.delete_folder_with_mutation(&remote_id, None).await?;
+        }
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        my_drive_delete_placeholders_under_prefix(&conn, &relative)?;
+        sync_log(format!("My Drive deleted folder — {name}"));
+        return Ok(());
+    }
+
+    if item_type == "file" {
         if !remote_id.is_empty() {
             api.delete_file(&remote_id).await?;
         }
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_delete_placeholder(&conn, &relative)?;
-        sync_log(format!(
-            "My Drive deleted — {}",
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("file")
-        ));
+        sync_log(format!("My Drive deleted — {name}"));
     }
     Ok(())
 }

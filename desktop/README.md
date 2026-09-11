@@ -26,6 +26,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Free up via UNPINNED (0.1.54+)** — Explorer Free up sets `FILE_ATTRIBUTE_UNPINNED` (often without `NOTIFY_DEHYDRATE`); watcher runs upload-first free_up and clears stuck Status sync arrows after dehydrate.
 - **Free up no re-hydrate thrash (0.1.55+)** — No shell notify after each dehydrate; `mark_recent_dehydrate` blocks thumbnail FETCH_DATA for 2 minutes unless Always keep (PINNED).
 - **Free up after Always keep (0.1.56+)** — Set UNPINNED before `CfDehydratePlaceholder` so Free up works on previously pinned files/folders (fixes 0x80070188).
+- **My Drive Delete (0.1.57+)** — Explorer Delete ACKs `ACK_DELETE` immediately, then soft-trashes files and folders on the server (Drive-like); folders clear the local placeholder subtree so poll does not restore them.
 - **Authenticator 2FA** — version **0.1.8** accepts TOTP / backup codes at sign-in (setup stays in the web Security center) and can fall back to “Send code by email” when available
 - **Start minimized** — version **0.1.9** can hide the main window to the system tray on cold start (Preferences → Launch); tray click / second instance still open the window
 - **Duplicate event safe** — version **0.1.7** serializes uploads per local path, so browser download Create/Write/Rename bursts produce one remote file; only the current remote mapping may clean up older same-name copies

@@ -33,10 +33,10 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Storage::CloudFilters::{
     CfExecute, CfReportProviderProgress, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS,
-    CF_OPERATION_ACK_DEHYDRATE_FLAG_NONE, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS,
-    CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_1, CF_OPERATION_PARAMETERS_0_6,
-    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_ACK_DEHYDRATE,
-    CF_OPERATION_TYPE_TRANSFER_DATA,
+    CF_OPERATION_ACK_DELETE_FLAG_NONE, CF_OPERATION_ACK_DEHYDRATE_FLAG_NONE, CF_OPERATION_INFO,
+    CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_1,
+    CF_OPERATION_PARAMETERS_0_2, CF_OPERATION_PARAMETERS_0_6, CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+    CF_OPERATION_TYPE_ACK_DELETE, CF_OPERATION_TYPE_ACK_DEHYDRATE, CF_OPERATION_TYPE_TRANSFER_DATA,
 };
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1112,6 +1112,30 @@ fn ack_dehydrate(info: &CF_CALLBACK_INFO, status: NTSTATUS) {
     }
 }
 
+fn ack_delete(info: &CF_CALLBACK_INFO, status: NTSTATUS) {
+    let op_info = CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
+        Type: CF_OPERATION_TYPE_ACK_DELETE,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: info.CorrelationVector,
+        RequestKey: info.RequestKey,
+        SyncStatus: std::ptr::null(),
+    };
+    let mut op_params = CF_OPERATION_PARAMETERS {
+        ParamSize: cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_2>(),
+        Anonymous: CF_OPERATION_PARAMETERS_0 {
+            AckDelete: CF_OPERATION_PARAMETERS_0_2 {
+                Flags: CF_OPERATION_ACK_DELETE_FLAG_NONE,
+                CompletionStatus: status,
+            },
+        },
+    };
+    if let Err(e) = unsafe { CfExecute(&op_info, &mut op_params) } {
+        cfapi_callback_log(format!("CfExecute ACK_DELETE failed: {e}"));
+    }
+}
+
 pub unsafe extern "system" fn notify_delete(
     info: *const CF_CALLBACK_INFO,
     _params: *const CF_CALLBACK_PARAMETERS,
@@ -1124,18 +1148,36 @@ pub unsafe extern "system" fn notify_delete(
 }
 
 fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
-    let full = callback_full_path(info).map_err(|e| e.to_string())?;
-    let (api, db, sync_root) = with_context(|ctx| {
+    // Always ACK so Explorer can complete the local delete (Drive-like soft trash in background).
+    let full = match callback_full_path(info) {
+        Ok(p) => p,
+        Err(e) => {
+            cfapi_callback_log(format!("NOTIFY_DELETE path resolve failed: {e}"));
+            ack_delete(info, STATUS_SUCCESS);
+            return Ok(());
+        }
+    };
+    let Some((api, db, sync_root)) = with_context(|ctx| {
         (ctx.api.clone(), ctx.db.clone(), ctx.sync_root.clone())
-    })
-    .ok_or_else(|| "cfapi context missing".to_string())?;
+    }) else {
+        cfapi_callback_log(&format!(
+            "NOTIFY_DELETE ack (no context) {}",
+            full.display()
+        ));
+        ack_delete(info, STATUS_SUCCESS);
+        return Ok(());
+    };
     if !path_is_under_my_drive(&sync_root, &full) {
+        ack_delete(info, STATUS_SUCCESS);
         return Ok(());
     }
-    // Reconcile clears DB before disk remove — ignore echo deletes with no placeholder.
+    // Reconcile clears DB before disk remove — ACK orphan deletes; no server call.
     let relative = match relative_path_from_sync_root(&sync_root, &full) {
         Some(r) => r,
-        None => return Ok(()),
+        None => {
+            ack_delete(info, STATUS_SUCCESS);
+            return Ok(());
+        }
     };
     let tracked = {
         let conn = db.lock().map_err(|e| e.to_string())?;
@@ -1148,9 +1190,12 @@ fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
             "NOTIFY_DELETE ignored (no placeholder) {}",
             full.display()
         ));
+        ack_delete(info, STATUS_SUCCESS);
         return Ok(());
     }
     cfapi_callback_log(&format!("NOTIFY_DELETE {}", full.display()));
+    // ACK first so Explorer removes locally; soft-trash on server runs async.
+    ack_delete(info, STATUS_SUCCESS);
     tauri::async_runtime::spawn(async move {
         if let Err(e) = crate::my_drive::delete_my_drive_path(&api, &db, &full).await {
             cfapi_callback_log(&format!("NOTIFY_DELETE failed: {}", e));

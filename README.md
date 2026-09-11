@@ -733,8 +733,9 @@ The [`desktop/`](desktop/) directory contains the **FreeDrive Desktop** sync app
 - **Explorer status** — desktop app exposes integration state (connected / registered / finalized) for diagnostics
 - **My Drive in Explorer** — `My Drive` subfolder with server folders/files; **Stream (default)** keeps cloud placeholders (download on open/thumbnail; after open/upload files stay local until **Free up space**, like Google Drive); after sync, Explorer **Status** shows online-only / cloud / check (Details view — turn on the **Status** column if glyphs are missing); large photos that Windows cancels mid-fetch are pinned from the hydrate cache so they remain openable (**0.1.31+**); **Mirror** keeps a full local copy; local edits upload on save, deletes sync to the server; remote changes polled every 20s (mirror downloads new/changed files); poll **removes** local placeholders after remote Move to bin so Explorer matches My Drive
 - **Uninstall (NSIS)** — setup uninstaller stops the app, unregisters the CfAPI sync root, removes Explorer NameSpace/SyncRootManager pins, removes `%USERPROFILE%\FreeDrive\My Drive`, and deletes app data under `%APPDATA%\FreeDrive` (sync.db, auth — not the Tauri BUNDLEID folder); prefer NSIS over MSI for this cleanup
-- Independent release tags: `desktop-v0.1.56` (server tags remain `v1.x.x`)
+- Independent release tags: `desktop-v0.1.57` (server tags remain `v1.x.x`)
 - See [`desktop/README.md`](desktop/README.md) for dev setup, Explorer troubleshooting, and [`docs/desktop-api.md`](docs/desktop-api.md) for API endpoints used by the client
+- **0.1.57+** — My Drive Explorer Delete: ACK_DELETE so Delete completes locally; soft-trash files and folders on the server (Drive-like)
 - **0.1.56+** — Free up after Always keep: set UNPINNED before dehydrate (fixes `0x80070188` on pinned files/folders)
 - **0.1.55+** — Free up no longer shell-notifies per file (stops thumbnail re-hydrate); blocks FETCH_DATA for ~2 minutes after free-up unless Always keep (PINNED)
 - **0.1.54+** — Native Explorer Free up/Always keep via `UNPINNED`/`PINNED` watcher (NOTIFY_DEHYDRATE alone is unreliable)
