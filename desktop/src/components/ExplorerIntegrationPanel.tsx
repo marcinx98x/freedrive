@@ -50,6 +50,11 @@ export function ExplorerIntegrationPanel({
               <span className="settings-info-value">{status.my_drive_path}</span>
             </li>
           </ul>
+          <p className="settings-hint">
+            In File Explorer open My Drive in Details view and enable the{" "}
+            <strong>Status</strong> column (More… → Status / StorageProviderUIStatus).
+            Icons are Windows cloud / check / sync glyphs — FreeDrive does not add custom Status icons.
+          </p>
           <button
             type="button"
             className="btn-secondary"

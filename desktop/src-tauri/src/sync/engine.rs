@@ -2513,15 +2513,17 @@ impl SyncEngine {
                             Some(&rec.updated_at),
                             "synced",
                         )?;
-                        // Always record successful uploads so background verify
-                        // still appears on the activity list.
-                        self.emit_activity_with_conn(
-                            &conn,
-                            file_name,
-                            "Successfully uploaded",
-                            rec.size,
-                            "synced",
-                        );
+                        // Interactive scans only — background verify stays off
+                        // the activity list (Drive-like; Home progress still updates).
+                        if show_ui {
+                            self.emit_activity_with_conn(
+                                &conn,
+                                file_name,
+                                "Successfully uploaded",
+                                rec.size,
+                                "synced",
+                            );
+                        }
                         return Ok(SyncAttemptResult::Done(FileSyncOutcome::Synced));
                     }
                     Err(e) => {
@@ -2640,15 +2642,17 @@ impl SyncEngine {
                         Some(&rec.updated_at),
                         "synced",
                     )?;
-                    // Always record successful uploads so background verify
-                    // still appears on the activity list.
-                    self.emit_activity_with_conn(
-                        &conn,
-                        file_name,
-                        "Successfully uploaded",
-                        rec.size,
-                        "synced",
-                    );
+                    // Interactive scans only — background verify stays off
+                    // the activity list (Drive-like; Home progress still updates).
+                    if show_ui {
+                        self.emit_activity_with_conn(
+                            &conn,
+                            file_name,
+                            "Successfully uploaded",
+                            rec.size,
+                            "synced",
+                        );
+                    }
                     if crate::db::has_pending_key_upload(&conn, &rec.id).unwrap_or(false) {
                         let _ = self.app.emit(
                             "crypto-key-queued",

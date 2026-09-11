@@ -56,12 +56,6 @@ pub fn run() {
         return;
     }
 
-    // Explorer CustomStateHandler LocalServer32 activation (no UI).
-    #[cfg(windows)]
-    if std::env::args().any(|a| a == "--com-custom-state") {
-        cfapi::custom_state::run_com_custom_state_process();
-    }
-
     // Prove Explorer launched us (before single-instance may exit).
     my_drive_shell::append_shell_invoke_log();
 
