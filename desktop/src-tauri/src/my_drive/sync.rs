@@ -1,11 +1,12 @@
 use crate::api::ApiClient;
 use crate::auth_store::sync_root_dir;
 use crate::cfapi::{
-    convert_file_to_placeholder, create_file_placeholder, create_named_folder_placeholder,
-    dehydrate_placeholder_file, ensure_cloud_placeholder, finalize_stream_placeholder,
-    is_dehydrated_placeholder, refresh_placeholder_status,
-    is_duplicate_placeholder_error, is_not_cloud_file_error, mark_directory_partially_populated,
-    notify_directory_updated, MY_DRIVE_FOLDER_NAME,
+    clear_explicit_pin_state, convert_file_to_placeholder, create_file_placeholder,
+    create_named_folder_placeholder, dehydrate_placeholder_file, ensure_cloud_placeholder,
+    finalize_stream_placeholder, is_dehydrated_placeholder, is_duplicate_placeholder_error,
+    is_not_cloud_file_error, is_unpinned, mark_directory_partially_populated,
+    notify_directory_updated, on_disk_allocated_bytes, refresh_placeholder_status,
+    MY_DRIVE_FOLDER_NAME,
 };
 use crate::crypto::key_to_b64url;
 use crate::db::{
@@ -15,19 +16,27 @@ use crate::db::{
 };
 use crate::error::{AppError, AppResult};
 use crate::my_drive::{
-    api_folder_parent_id, clear_hydrate_cache_for_file, ensure_hydrated_plaintext,
-    fetch_folder_contents, is_under_my_drive, relative_path_from_sync_root, resolve_my_drive_root_id,
+    api_folder_parent_id, clear_all_hydrate_cache, clear_hydrate_cache_for_file,
+    ensure_hydrated_plaintext, fetch_folder_contents, is_under_my_drive,
+    relative_path_from_sync_root, resolve_my_drive_root_id,
 };
 use crate::sync::log::sync_log;
 use crate::sync::suppress::WatcherSuppress;
 use crate::sync::{DOWNLOAD_CONCURRENCY, UPLOAD_CONCURRENCY};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+
+/// Per-file ceiling so one stuck CfDehydratePlaceholder cannot kill the whole Free up walk.
+const FREE_UP_FILE_TIMEOUT: Duration = Duration::from_secs(45);
+/// Cap silent auto-resumes after incomplete/cancelled Free up jobs.
+const FREE_UP_MAX_AUTO_RESUME: u32 = 3;
+/// Do not upload-first during Free up above this size (blocks the walk for minutes/hours).
+const FREE_UP_MAX_UPLOAD_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Serialize ensure_my_drive_folder_relative per path (watcher + poll race).
 fn folder_ensure_lock(relative: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -76,6 +85,24 @@ pub fn try_claim_my_drive_upload(path: &Path) -> Option<MyDriveUploadInFlightGua
 static FREE_UP_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 /// Root path of the in-progress free-up (NOTIFY_FILE_CLOSE must ignore under this tree).
 static FREE_UP_ACTIVE_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+/// Cleared on begin; set true only when `free_up_my_drive_path` returns normally.
+static FREE_UP_COMPLETED: OnceLock<AtomicBool> = OnceLock::new();
+/// Live progress for incomplete-drop diagnostics.
+static FREE_UP_RUN: OnceLock<Mutex<Option<FreeUpRunState>>> = OnceLock::new();
+/// Resume counts keyed by lowercase root path.
+static FREE_UP_RESUME_COUNT: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+/// Optional fallback queue when no auto-resume hook is registered yet.
+static FREE_UP_PENDING_RESUME: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+/// Engine installs this to re-queue after a silent incomplete end.
+static FREE_UP_AUTO_RESUME: OnceLock<Box<dyn Fn(PathBuf) + Send + Sync>> = OnceLock::new();
+
+struct FreeUpRunState {
+    last_file: Option<String>,
+    processed: u64,
+    total: u64,
+    freed: u32,
+    failed: u32,
+}
 
 fn free_up_semaphore() -> &'static Semaphore {
     FREE_UP_SEMAPHORE.get_or_init(|| Semaphore::new(1))
@@ -85,21 +112,166 @@ fn free_up_active_root() -> &'static Mutex<Option<PathBuf>> {
     FREE_UP_ACTIVE_ROOT.get_or_init(|| Mutex::new(None))
 }
 
+fn free_up_run() -> &'static Mutex<Option<FreeUpRunState>> {
+    FREE_UP_RUN.get_or_init(|| Mutex::new(None))
+}
+
+fn free_up_completed_flag() -> &'static AtomicBool {
+    FREE_UP_COMPLETED.get_or_init(|| AtomicBool::new(false))
+}
+
+/// Called by SyncEngine so incomplete Free up can re-queue after a short delay.
+pub fn register_free_up_auto_resume(f: impl Fn(PathBuf) + Send + Sync + 'static) {
+    let _ = FREE_UP_AUTO_RESUME.set(Box::new(f));
+}
+
+/// Poll fallback if the auto-resume hook was not installed.
+pub fn take_pending_free_up_resume() -> Option<PathBuf> {
+    FREE_UP_PENDING_RESUME
+        .get()
+        .and_then(|slot| slot.lock().ok().and_then(|mut g| g.take()))
+}
+
 struct FreeUpActiveGuard;
 
 impl Drop for FreeUpActiveGuard {
     fn drop(&mut self) {
-        if let Ok(mut guard) = free_up_active_root().lock() {
-            *guard = None;
+        let root = free_up_active_root()
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take());
+        let completed = free_up_completed_flag().load(Ordering::SeqCst);
+        let run = free_up_run().lock().ok().and_then(|mut g| g.take());
+        if completed {
+            return;
+        }
+        let (last, processed, total, freed, failed) = match &run {
+            Some(r) => (
+                r.last_file
+                    .clone()
+                    .unwrap_or_else(|| "(unknown)".to_string()),
+                r.processed,
+                r.total,
+                r.freed,
+                r.failed,
+            ),
+            None => ("(unknown)".to_string(), 0, 0, 0, 0),
+        };
+        let root_disp = root
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(none)".to_string());
+        sync_log(format!(
+            "My Drive free-up ended incomplete — root={} last={} processed={}/{} freed={} failed={}",
+            root_disp, last, processed, total, freed, failed
+        ));
+        if let Some(root) = root {
+            maybe_schedule_free_up_resume(root);
+        }
+    }
+}
+
+fn maybe_schedule_free_up_resume(root: PathBuf) {
+    let key = root.to_string_lossy().to_ascii_lowercase();
+    let count = {
+        let map = FREE_UP_RESUME_COUNT.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = guard.entry(key).or_insert(0);
+        *entry += 1;
+        *entry
+    };
+    if count > FREE_UP_MAX_AUTO_RESUME {
+        sync_log(format!(
+            "My Drive free-up auto-resume exhausted ({count}) — {}",
+            root.display()
+        ));
+        return;
+    }
+    sync_log(format!(
+        "My Drive free-up auto-resume scheduled ({count}/{FREE_UP_MAX_AUTO_RESUME}) — {}",
+        root.display()
+    ));
+    if let Some(hook) = FREE_UP_AUTO_RESUME.get() {
+        hook(root);
+        return;
+    }
+    let slot = FREE_UP_PENDING_RESUME.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(root);
+    }
+}
+
+fn mark_free_up_completed() {
+    free_up_completed_flag().store(true, Ordering::SeqCst);
+    if let Ok(guard) = free_up_active_root().lock() {
+        if let Some(root) = guard.as_ref() {
+            let key = root.to_string_lossy().to_ascii_lowercase();
+            if let Some(map) = FREE_UP_RESUME_COUNT.get() {
+                if let Ok(mut g) = map.lock() {
+                    g.remove(&key);
+                }
+            }
         }
     }
 }
 
 fn begin_free_up_active(path: &Path) -> FreeUpActiveGuard {
+    free_up_completed_flag().store(false, Ordering::SeqCst);
     if let Ok(mut guard) = free_up_active_root().lock() {
         *guard = Some(path.to_path_buf());
     }
+    if let Ok(mut run) = free_up_run().lock() {
+        *run = Some(FreeUpRunState {
+            last_file: None,
+            processed: 0,
+            total: 0,
+            freed: 0,
+            failed: 0,
+        });
+    }
     FreeUpActiveGuard
+}
+
+fn update_free_up_progress(
+    last: &Path,
+    processed: u64,
+    total: u64,
+    freed: u32,
+    failed: u32,
+) {
+    if let Ok(mut run) = free_up_run().lock() {
+        if let Some(state) = run.as_mut() {
+            state.last_file = Some(last.display().to_string());
+            state.processed = processed;
+            state.total = total;
+            state.freed = freed;
+            state.failed = failed;
+        }
+    }
+}
+
+fn set_free_up_total(total: u64) {
+    if let Ok(mut run) = free_up_run().lock() {
+        if let Some(state) = run.as_mut() {
+            state.total = total;
+        }
+    }
+}
+
+/// Run CfAPI dehydrate off the async worker so a stuck call cannot stall the runtime.
+async fn dehydrate_placeholder_file_async(path: &Path) -> AppResult<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || dehydrate_placeholder_file(&path))
+        .await
+        .map_err(|e| AppError::msg(format!("dehydrate task join: {e}")))?
+}
+
+async fn convert_file_to_placeholder_async(path: &Path, remote_id: &str) -> AppResult<()> {
+    let path = path.to_path_buf();
+    let remote_id = remote_id.to_string();
+    tokio::task::spawn_blocking(move || convert_file_to_placeholder(&path, &remote_id))
+        .await
+        .map_err(|e| AppError::msg(format!("convert task join: {e}")))?
 }
 
 /// True while Free up space is walking `path` or an ancestor of it.
@@ -247,6 +419,7 @@ async fn poll_my_drive_folder(
             stats,
         )
         .await;
+        heal_hydrated_unpinned_status(db, parent_relative, &local_dir);
         notify_directory_updated(&local_dir);
     }
 
@@ -299,6 +472,63 @@ async fn poll_my_drive_folder(
     }
 
     Ok(())
+}
+
+/// Clear leftover Explorer UNPINNED on hydrated synced files (stuck sync arrows after Free up).
+fn heal_hydrated_unpinned_status(db: &DbHandle, parent_relative: &str, local_dir: &Path) {
+    if is_free_up_in_progress() {
+        return;
+    }
+    if is_unpinned(local_dir) && !is_path_under_active_free_up(local_dir) {
+        refresh_placeholder_status(local_dir);
+        sync_log(format!(
+            "My Drive heal UNPINNED folder — {}",
+            local_dir.display()
+        ));
+    }
+    let Ok(entries) = std::fs::read_dir(local_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.eq_ignore_ascii_case("desktop.ini") || name.starts_with('.') {
+            continue;
+        }
+        if crate::sync::should_skip_file(&name) {
+            continue;
+        }
+        if !is_unpinned(&path) {
+            continue;
+        }
+        if is_dehydrated_placeholder(&path) {
+            continue;
+        }
+        if is_path_under_active_free_up(&path) {
+            continue;
+        }
+        let child_relative = join_my_drive_relative(parent_relative, &name);
+        let has_remote = {
+            let Ok(conn) = db.lock() else {
+                continue;
+            };
+            my_drive_get_placeholder(&conn, &child_relative)
+                .ok()
+                .flatten()
+                .is_some()
+        };
+        if !has_remote {
+            continue;
+        }
+        refresh_placeholder_status(&path);
+        sync_log(format!(
+            "My Drive heal UNPINNED status — {}",
+            path.display()
+        ));
+    }
 }
 
 /// Upload local-only files and register local-only folders under one My Drive directory.
@@ -1322,6 +1552,18 @@ pub async fn free_up_my_drive_path(
         .map_err(|e| AppError::msg(e.to_string()))?;
     let _active = begin_free_up_active(path);
 
+    let result = free_up_my_drive_path_inner(api, db, path, on_progress).await;
+    // Reached only if not cancelled/aborted — Drop must not treat this as incomplete.
+    mark_free_up_completed();
+    result
+}
+
+async fn free_up_my_drive_path_inner(
+    api: &ApiClient,
+    db: &DbHandle,
+    path: &Path,
+    on_progress: Option<MyDriveBusyCb>,
+) -> AppResult<()> {
     let sync_root = sync_root_dir(false)?;
     let relative = relative_path_from_sync_root(&sync_root, path)
         .ok_or_else(|| AppError::msg("path outside sync root"))?;
@@ -1340,7 +1582,35 @@ pub async fn free_up_my_drive_path(
             "My Drive free-up final tree_pass={} — {}",
             tree_freed, relative
         ));
+        if let Some(cb) = on_progress.as_ref() {
+            cb(&format!("Freeing up space — sweeping {}…", relative));
+        }
+        let swept = free_up_sweep_stuck_unpinned(api, db, path).await?;
+        sync_log(format!(
+            "My Drive free-up sweep hydrated_left={} — {}",
+            swept, relative
+        ));
         sync_log(format!("My Drive freed folder — {}", relative));
+        // Drop AppData plaintext copies — Stream re-downloads on open.
+        clear_all_hydrate_cache();
+        sync_log("My Drive free-up cleared hydrate_cache");
+        // Explorer leaves UNPINNED on the folder — clear so Status is not stuck on arrows.
+        refresh_placeholder_status(path);
+        if is_unpinned(path) {
+            sync_log(format!(
+                "My Drive free-up pin clear retry — {}",
+                path.display()
+            ));
+            if let Err(e) = clear_explicit_pin_state(path) {
+                sync_log(format!(
+                    "My Drive free-up pin clear retry failed {}: {}",
+                    path.display(),
+                    e
+                ));
+            } else {
+                refresh_placeholder_status(path);
+            }
+        }
         // One shell refresh for the folder — not per-file (avoids FETCH_DATA thrash).
         notify_directory_updated(path);
         return Ok(());
@@ -1349,8 +1619,28 @@ pub async fn free_up_my_drive_path(
         if let Some(cb) = on_progress.as_ref() {
             cb(&format!("Freeing up space — {}…", relative));
         }
-        free_up_my_drive_file(api, db, path, &relative).await?;
-        sync_log(format!("My Drive freed file — {}", relative));
+        let before = on_disk_allocated_bytes(path).unwrap_or(0);
+        match tokio::time::timeout(
+            FREE_UP_FILE_TIMEOUT,
+            free_up_my_drive_file(api, db, path, &relative),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(AppError::msg(format!(
+                    "free-up timed out after {}s: {}",
+                    FREE_UP_FILE_TIMEOUT.as_secs(),
+                    path.display()
+                )));
+            }
+        }
+        let after = on_disk_allocated_bytes(path).unwrap_or(0);
+        sync_log(format!(
+            "My Drive freed file — {} (on-disk {before} → {after})",
+            relative
+        ));
         return Ok(());
     }
     Err(AppError::msg("path is not a file or folder"))
@@ -1373,7 +1663,38 @@ async fn free_up_my_drive_file(
     // Google Drive–like: never free local bytes until cloud has the current content.
     // upload_my_drive_path no-ops on unchanged hash; Err aborts Free up (keep local).
     if !is_dehydrated_placeholder(path) {
-        if let Err(e) = upload_my_drive_path(api, db, path).await {
+        let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if file_len >= FREE_UP_MAX_UPLOAD_BYTES {
+            // Huge files: full hash/upload would stall the whole My Drive free-up for hours.
+            // Only dehydrate when we already have a known synced content hash (no re-upload).
+            let remote_id = {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_get_placeholder(&conn, relative)?
+                    .filter(|(_, ty, _)| ty == "file")
+                    .map(|(id, _, _)| id)
+            };
+            let known_hash = if let Some(ref id) = remote_id {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                crate::db::my_drive_known_content_hash(&conn, id).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            if remote_id.is_none() || known_hash.is_empty() {
+                sync_log(format!(
+                    "My Drive free-up skip upload (too large {} MiB, keep local) — {}",
+                    file_len / (1024 * 1024),
+                    path.display()
+                ));
+                refresh_placeholder_status(path);
+                return Ok(());
+            }
+            // Known sync — skip upload/hash; probe + dehydrate below.
+            sync_log(format!(
+                "My Drive free-up skip upload (too large {} MiB, known hash) — {}",
+                file_len / (1024 * 1024),
+                path.display()
+            ));
+        } else if let Err(e) = upload_my_drive_path(api, db, path).await {
             sync_log(format!(
                 "My Drive free-up upload failed {}: {}",
                 path.display(),
@@ -1426,15 +1747,28 @@ async fn free_up_my_drive_file(
 
     clear_hydrate_cache_for_file(&remote_id);
 
-    match dehydrate_placeholder_file(path) {
+    // Mark before dehydrate — Explorer FETCH_DATA can fire during CfDehydratePlaceholder.
+    crate::my_drive::mark_recent_dehydrate(&remote_id);
+
+    match dehydrate_placeholder_file_async(path).await {
         Ok(()) => {}
         Err(e) if is_not_cloud_file_error(&e) => {
             sync_log(format!(
                 "My Drive free-up converting plain file {}",
                 path.display()
             ));
-            match convert_file_to_placeholder(path, &remote_id) {
-                Ok(()) => dehydrate_placeholder_file(path)?,
+            let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            if file_len >= FREE_UP_MAX_UPLOAD_BYTES {
+                sync_log(format!(
+                    "My Drive free-up skip convert/upload (too large {} MiB, keep local) — {}",
+                    file_len / (1024 * 1024),
+                    path.display()
+                ));
+                refresh_placeholder_status(path);
+                return Ok(());
+            }
+            match convert_file_to_placeholder_async(path, &remote_id).await {
+                Ok(()) => dehydrate_placeholder_file_async(path).await?,
                 Err(conv_err) => {
                     // Local content may be ahead of cloud — push then convert.
                     sync_log(format!(
@@ -1443,15 +1777,15 @@ async fn free_up_my_drive_file(
                         conv_err
                     ));
                     upload_my_drive_path(api, db, path).await?;
-                    convert_file_to_placeholder(path, &remote_id)?;
-                    dehydrate_placeholder_file(path)?;
+                    convert_file_to_placeholder_async(path, &remote_id).await?;
+                    crate::my_drive::mark_recent_dehydrate(&remote_id);
+                    dehydrate_placeholder_file_async(path).await?;
                 }
             }
         }
         Err(e) => return Err(e),
     }
 
-    crate::my_drive::mark_recent_dehydrate(&remote_id);
     Ok(())
 }
 
@@ -1462,71 +1796,242 @@ async fn free_up_my_drive_folder(
     on_progress: Option<&MyDriveBusyCb>,
 ) -> AppResult<()> {
     let sync_root = sync_root_dir(false)?;
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => return Err(e.into()),
-    };
+    let files = collect_free_up_files_under(dir);
+    let total = files.len() as u64;
+    set_free_up_total(total);
+    sync_log(format!(
+        "My Drive free-up folder walk — {} file(s) under {}",
+        total,
+        dir.display()
+    ));
+    if let Some(cb) = on_progress {
+        cb(&format!(
+            "Freeing up space — 0/{} under {}…",
+            total,
+            dir.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("folder")
+        ));
+    }
+
     let mut freed = 0u32;
     let mut failed = 0u32;
-    for entry in entries.flatten() {
-        let child = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.eq_ignore_ascii_case("desktop.ini") || name.starts_with('.') {
-            continue;
-        }
-        if child.is_dir() {
-            Box::pin(free_up_my_drive_folder(api, db, &child, on_progress)).await?;
-            continue;
-        }
-        if !child.is_file() {
-            continue;
-        }
+    let mut already_cloud = 0u32;
+    let mut processed = 0u64;
+
+    for child in &files {
+        processed += 1;
+        update_free_up_progress(child, processed, total, freed, failed);
+        let name = child
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
         if crate::sync::should_skip_file(&name) {
             continue;
         }
-        let Some(relative) = relative_path_from_sync_root(&sync_root, &child) else {
+        if is_dehydrated_placeholder(child) {
+            already_cloud += 1;
+            if is_unpinned(child) {
+                refresh_placeholder_status(child);
+            }
+            continue;
+        }
+        let Some(relative) = relative_path_from_sync_root(&sync_root, child) else {
             continue;
         };
-        match free_up_my_drive_file(api, db, &child, &relative).await {
-            Ok(()) => {
+        match tokio::time::timeout(
+            FREE_UP_FILE_TIMEOUT,
+            free_up_my_drive_file(api, db, child, &relative),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
                 freed += 1;
-                if freed % 25 == 0 {
+                update_free_up_progress(child, processed, total, freed, failed);
+                if freed % 10 == 0 || processed == total {
                     sync_log(format!(
-                        "My Drive free-up progress — {} files under {}",
+                        "My Drive free-up progress — {}/{} freed={} failed={} cloud={} under {}",
+                        processed,
+                        total,
                         freed,
+                        failed,
+                        already_cloud,
                         dir.display()
                     ));
                     if let Some(cb) = on_progress {
-                        // Short relative path for tray / Home (avoid huge absolute paths).
                         let short = if relative.len() > 72 {
                             format!("…{}", &relative[relative.len() - 69..])
                         } else {
                             relative.clone()
                         };
-                        cb(&format!("Freeing up space — {}…", short));
+                        cb(&format!(
+                            "Freeing up space — {}/{} — {}…",
+                            processed, total, short
+                        ));
                     }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 failed += 1;
+                update_free_up_progress(child, processed, total, freed, failed);
                 sync_log(format!(
                     "My Drive free-up file failed {}: {}",
                     child.display(),
                     e
                 ));
+                // Honest Status: local check, not stuck sync arrows.
+                refresh_placeholder_status(child);
+                sync_log(format!(
+                    "My Drive free-up status kept local — {}",
+                    child.display()
+                ));
+            }
+            Err(_) => {
+                failed += 1;
+                update_free_up_progress(child, processed, total, freed, failed);
+                sync_log(format!(
+                    "My Drive free-up file timed out ({}s) {}",
+                    FREE_UP_FILE_TIMEOUT.as_secs(),
+                    child.display()
+                ));
+                refresh_placeholder_status(child);
+                sync_log(format!(
+                    "My Drive free-up status kept local — {}",
+                    child.display()
+                ));
             }
         }
-        // Yield so Explorer FETCH_DATA downloads can proceed.
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
+
+    // Clear leftover UNPINNED on nested folders themselves.
+    clear_unpinned_dirs_under(dir);
+
     sync_log(format!(
-        "My Drive free-up folder done — path={} freed={} failed={}",
+        "My Drive free-up folder done — path={} total={} freed={} failed={} already_cloud={}",
         dir.display(),
+        total,
         freed,
-        failed
+        failed,
+        already_cloud
     ));
     Ok(())
+}
+
+/// Depth-first list of regular files under `dir` (skips desktop.ini / dot names at each level).
+fn collect_free_up_files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_free_up_files_recursive(dir, &mut out);
+    out
+}
+
+fn collect_free_up_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            sync_log(format!(
+                "My Drive free-up collect walk failed {}: {}",
+                dir.display(),
+                e
+            ));
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.eq_ignore_ascii_case("desktop.ini") || name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            collect_free_up_files_recursive(&path, out);
+            continue;
+        }
+        if path.is_file() {
+            out.push(path);
+        }
+    }
+}
+
+fn clear_unpinned_dirs_under(dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.eq_ignore_ascii_case("desktop.ini") || name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            clear_unpinned_dirs_under(&path);
+            if is_unpinned(&path) {
+                refresh_placeholder_status(&path);
+            }
+        }
+    }
+}
+
+/// Second pass: any still-hydrated file under the tree (not only UNPINNED).
+async fn free_up_sweep_stuck_unpinned(
+    api: &ApiClient,
+    db: &DbHandle,
+    root: &Path,
+) -> AppResult<u32> {
+    let sync_root = sync_root_dir(false)?;
+    let files = collect_free_up_files_under(root);
+    let mut retried = 0u32;
+    for path in files {
+        if is_dehydrated_placeholder(&path) {
+            if is_unpinned(&path) {
+                refresh_placeholder_status(&path);
+            }
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        if crate::sync::should_skip_file(name) {
+            continue;
+        }
+        let Some(relative) = relative_path_from_sync_root(&sync_root, &path) else {
+            continue;
+        };
+        retried += 1;
+        match tokio::time::timeout(
+            FREE_UP_FILE_TIMEOUT,
+            free_up_my_drive_file(api, db, &path, &relative),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                sync_log(format!("My Drive free-up sweep ok — {}", path.display()));
+            }
+            Ok(Err(e)) => {
+                sync_log(format!(
+                    "My Drive free-up sweep keep local {}: {}",
+                    path.display(),
+                    e
+                ));
+                refresh_placeholder_status(&path);
+            }
+            Err(_) => {
+                sync_log(format!(
+                    "My Drive free-up sweep timed out ({}s) — status kept local {}",
+                    FREE_UP_FILE_TIMEOUT.as_secs(),
+                    path.display()
+                ));
+                refresh_placeholder_status(&path);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    clear_unpinned_dirs_under(root);
+    Ok(retried)
 }
 
 /// Final free-up walk: dehydrate leftovers only when the cloud blob is readable.
@@ -1626,10 +2131,11 @@ async fn free_up_tree_pass_recursive(
         }
 
         clear_hydrate_cache_for_file(&remote_id);
-        match dehydrate_placeholder_file(&path) {
+        // Mark before dehydrate — Explorer FETCH_DATA can fire during CfDehydratePlaceholder.
+        crate::my_drive::mark_recent_dehydrate(&remote_id);
+        match dehydrate_placeholder_file_async(&path).await {
             Ok(()) => {
                 *freed += 1;
-                crate::my_drive::mark_recent_dehydrate(&remote_id);
                 sync_log(format!("cfapi: dehydrated {}", path.display()));
             }
             Err(e) => {

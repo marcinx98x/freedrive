@@ -14,7 +14,7 @@ use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_dir
 use crate::my_drive::{
     begin_fetch_data_inflight, clear_hydrate_cache_for_file, end_fetch_data_inflight,
     ensure_hydrated_plaintext_with_progress, fetch_folder_contents, is_fetch_data_inflight,
-    is_path_under_active_free_up, is_under_my_drive, mark_recent_hydrate,
+    is_free_up_in_progress, is_path_under_active_free_up, is_under_my_drive, mark_recent_hydrate,
     pin_hydrated_cache_to_path, relative_path_from_sync_root, resolve_folder_id_for_fetch,
     resolve_my_drive_root_id, was_recently_dehydrated, FolderIdSource,
 };
@@ -422,12 +422,43 @@ fn fail_fetch_data(
     complete_provider_progress(info.ConnectionKey, info.TransferKey);
     let fetch = unsafe { params.Anonymous.FetchData };
     let offset = fetch.RequiredFileOffset;
-    let length = fetch.RequiredLength;
+    // CfExecute requires 4KiB-aligned Length (except trailing EOF). Passing raw RequiredLength
+    // for multi-GB Free-up skips → 0x80070057 and a false hydrate_failed toast.
+    let length = fail_fetch_ack_length(fetch.RequiredLength);
     unsafe {
         transfer_data(info, offset, length, &[], STATUS_CLOUD_FILE_UNSUCCESSFUL)
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Safe Length for a failed TRANSFER_DATA ACK (empty buffer).
+fn fail_fetch_ack_length(required_length: i64) -> i64 {
+    const MAX_FAIL_ACK: u64 = 1024 * 1024; // 1 MiB
+    let align = TRANSFER_ALIGN as u64;
+    let req = required_length.max(0) as u64;
+    if req == 0 || req > MAX_FAIL_ACK {
+        return align as i64;
+    }
+    let aligned = (req + align - 1) / align * align;
+    aligned as i64
+}
+
+/// Refuse FETCH during Free up without surfacing hydrate_failed in the UI.
+fn ack_fetch_data_skipped_for_free_up(
+    info: &CF_CALLBACK_INFO,
+    params: &CF_CALLBACK_PARAMETERS,
+    reason: &str,
+    remote_id: &str,
+) {
+    cfapi_callback_log(format!("FETCH_DATA skipped ({reason}) file={remote_id}"));
+    if let Err(e) = fail_fetch_data(info, params) {
+        if !is_cloud_op_canceled(&e) {
+            cfapi_callback_log(format!(
+                "FETCH_DATA skip ack failed (ignored) file={remote_id}: {e}"
+            ));
+        }
+    }
 }
 
 /// Finish native CfAPI Status progress UI (white bar). Incomplete 1..99 ticks stick forever.
@@ -630,13 +661,21 @@ fn handle_fetch_data(
     }
 
     // After Free up, Explorer thumbnails re-request content — refuse unless Always keep (PINNED).
+    // Path may be empty on some FETCH_DATA callbacks — still block while any free-up is active.
     let pinned = placeholder_path.as_ref().is_some_and(|p| is_pinned(p));
-    if was_recently_dehydrated(&remote_id) && !pinned {
-        cfapi_callback_log(format!(
-            "FETCH_DATA skipped (recent free-up) file={remote_id}"
-        ));
-        fail_fetch_data(info, params)?;
-        return Ok(());
+    if !pinned {
+        if is_free_up_in_progress()
+            || placeholder_path
+                .as_ref()
+                .is_some_and(|p| is_path_under_active_free_up(p))
+        {
+            ack_fetch_data_skipped_for_free_up(info, params, "free-up in progress", &remote_id);
+            return Ok(());
+        }
+        if was_recently_dehydrated(&remote_id) {
+            ack_fetch_data_skipped_for_free_up(info, params, "recent free-up", &remote_id);
+            return Ok(());
+        }
     }
 
     begin_fetch_data_inflight(&remote_id);

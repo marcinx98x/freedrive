@@ -7,12 +7,13 @@ use crate::sync::log::sync_log;
 use crate::error::{AppError, AppResult};
 use std::path::{Path, PathBuf};
 use windows::core::{HRESULT, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, NTSTATUS, STATUS_SUCCESS};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, NTSTATUS, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
-    CfConvertToPlaceholder, CfCreatePlaceholders, CfDehydratePlaceholder, CfExecute,
-    CfGetPlaceholderStateFromAttributeTag, CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder,
-    CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE, CF_CONVERT_FLAG_MARK_IN_SYNC,
-    CF_CREATE_FLAG_NONE, CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA, CF_IN_SYNC_STATE_IN_SYNC,
+    CfCloseHandle, CfConvertToPlaceholder, CfCreatePlaceholders, CfDehydratePlaceholder, CfExecute,
+    CfGetPlaceholderStateFromAttributeTag, CfOpenFileWithOplock, CfSetInSyncState, CfSetPinState,
+    CfUpdatePlaceholder, CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE,
+    CF_CONVERT_FLAG_MARK_IN_SYNC, CF_CREATE_FLAG_NONE, CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA,
+    CF_IN_SYNC_STATE_IN_SYNC, CF_OPEN_FILE_FLAG_EXCLUSIVE, CF_OPEN_FILE_FLAG_WRITE_ACCESS,
     CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
     CF_OPERATION_PARAMETERS_0_7, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PIN_STATE, CF_PIN_STATE_UNSPECIFIED,
@@ -23,9 +24,10 @@ use windows::Win32::Storage::CloudFilters::{
     CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION, CF_UPDATE_FLAG_ENABLE_ON_DEMAND_POPULATION,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetFileAttributesW, FILE_ATTRIBUTE_PINNED, FILE_ATTRIBUTE_UNPINNED,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING,
+    CreateFileW, GetCompressedFileSizeW, GetFileAttributesW, FILE_ATTRIBUTE_PINNED,
+    FILE_ATTRIBUTE_UNPINNED, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_NONE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING,
 };
 
 pub const MY_DRIVE_FOLDER_NAME: &str = "My Drive";
@@ -340,12 +342,132 @@ pub fn ensure_cloud_placeholder(dir: &Path, item_type: &str, remote_id: &str) ->
     }
 }
 
+/// Allocated on-disk bytes (NTFS compressed/sparse size). `None` if query fails.
+pub fn on_disk_allocated_bytes(path: &Path) -> Option<u64> {
+    let wide = path_to_wide(path);
+    let mut high: u32 = 0;
+    let low = unsafe { GetCompressedFileSizeW(PCWSTR(wide.as_ptr()), Some(&mut high)) };
+    if low == u32::MAX {
+        let err = unsafe { GetLastError() };
+        if err.0 != 0 {
+            return None;
+        }
+    }
+    Some(((high as u64) << 32) | (low as u64))
+}
+
+fn logical_file_size(path: &Path) -> u64 {
+    std::fs::metadata(path)
+        .map(|m| m.len())
+        .unwrap_or(0)
+}
+
+/// True when dehydrate left local content (API lied or no-op).
+fn still_fully_on_disk(path: &Path) -> bool {
+    if is_dehydrated_placeholder(path) {
+        return false;
+    }
+    let logical = logical_file_size(path);
+    match on_disk_allocated_bytes(path) {
+        Some(on_disk) => {
+            if logical < 64 * 1024 {
+                // Tiny files: any remaining allocation means content is still local.
+                // (Previously required >= 4KiB, which mis-classified 100–300 B manifests as "freed".)
+                on_disk > 0
+            } else {
+                on_disk > logical / 2
+            }
+        }
+        None => true,
+    }
+}
+
+fn dehydrate_with_oplock(path: &Path) -> AppResult<()> {
+    let wide = path_to_wide(path);
+    let handle = unsafe {
+        CfOpenFileWithOplock(
+            PCWSTR(wide.as_ptr()),
+            CF_OPEN_FILE_FLAG_EXCLUSIVE | CF_OPEN_FILE_FLAG_WRITE_ACCESS,
+        )
+        .map_err(|e| AppError::msg(format!("CfOpenFileWithOplock: {}", e)))?
+    };
+    let result = unsafe {
+        CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAG_NONE, None)
+            .map_err(|e| AppError::msg(format!("CfDehydratePlaceholder: {}", e)))
+    };
+    unsafe {
+        CfCloseHandle(handle);
+    }
+    result
+}
+
+fn dehydrate_with_exclusive_create(path: &Path) -> AppResult<()> {
+    let wide = path_to_wide(path);
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+            FILE_SHARE_NONE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        .map_err(|e| AppError::msg(format!("open exclusive for CfDehydratePlaceholder: {}", e)))?
+    };
+    let result = unsafe {
+        CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAG_NONE, None)
+            .map_err(|e| AppError::msg(format!("CfDehydratePlaceholder: {}", e)))
+    };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    result
+}
+
+fn finish_dehydrate_success(path: &Path) {
+    // Clear UNPINNED so Status returns to cloud glyph (arrows mean “unpin pending”).
+    // No shell notify — notify triggers Explorer FETCH_DATA / re-hydrate.
+    if let Err(e) = clear_explicit_pin_state(path) {
+        sync_log(format!(
+            "cfapi: clear pin after dehydrate warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+    if let Err(e) = mark_file_in_sync(path) {
+        sync_log(format!(
+            "cfapi: In-Sync after dehydrate warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+}
+
+fn abort_dehydrate_keep_local(path: &Path, reason: &str) {
+    sync_log(format!(
+        "cfapi: dehydrate aborted keep local {}: {}",
+        path.display(),
+        reason
+    ));
+    // Honest Status: check (local kept), not stuck sync arrows.
+    refresh_placeholder_status(path);
+}
+
 /// Free local plaintext for a hydrated cloud file (Google Drive “free up space”).
 /// `length = -1` dehydrates from `starting_offset` through EOF.
 pub fn dehydrate_placeholder_file(path: &Path) -> AppResult<()> {
     if !path.is_file() {
         return Ok(());
     }
+    // Already cloud-only — just clear leftover Explorer UNPINNED.
+    if is_dehydrated_placeholder(path) {
+        finish_dehydrate_success(path);
+        return Ok(());
+    }
+
+    let before = on_disk_allocated_bytes(path).unwrap_or_else(|| logical_file_size(path));
+
     // Free up / Always keep: dehydrate fails with 0x80070188 while PINNED.
     // Explorer Free up sets UNPINNED on the selection, but children may still be PINNED.
     if let Err(e) = set_pin_state(path, CF_PIN_STATE_UNPINNED) {
@@ -356,38 +478,44 @@ pub fn dehydrate_placeholder_file(path: &Path) -> AppResult<()> {
         ));
     }
 
-    let wide = path_to_wide(path);
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(wide.as_ptr()),
-            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_OPEN_REPARSE_POINT,
-            None,
-        )
-        .map_err(|e| AppError::msg(format!("open file for CfDehydratePlaceholder: {}", e)))?
+    let first = dehydrate_with_oplock(path);
+    let result = match first {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            sync_log(format!(
+                "cfapi: oplock dehydrate failed {}, retry exclusive: {}",
+                path.display(),
+                e
+            ));
+            dehydrate_with_exclusive_create(path)
+        }
     };
 
-    let result = unsafe {
-        CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAG_NONE, None)
-            .map_err(|e| AppError::msg(format!("CfDehydratePlaceholder: {}", e)))
-    };
-
-    unsafe {
-        let _ = CloseHandle(handle);
+    match result {
+        Ok(()) => {
+            if still_fully_on_disk(path) {
+                let after = on_disk_allocated_bytes(path).unwrap_or(before);
+                abort_dehydrate_keep_local(
+                    path,
+                    &format!("free-up dehydrate no-op (on-disk {before} → {after})"),
+                );
+                return Err(AppError::msg(format!(
+                    "CfDehydratePlaceholder no-op (still on disk {before} → {after})"
+                )));
+            }
+            let after = on_disk_allocated_bytes(path).unwrap_or(0);
+            sync_log(format!(
+                "cfapi: dehydrated {} (on-disk {before} → {after})",
+                path.display()
+            ));
+            finish_dehydrate_success(path);
+            Ok(())
+        }
+        Err(e) => {
+            abort_dehydrate_keep_local(path, &e.to_string());
+            Err(e)
+        }
     }
-    result?;
-    // In-Sync only — no shell notify (notify triggers Explorer FETCH_DATA / re-hydrate).
-    if let Err(e) = mark_file_in_sync(path) {
-        sync_log(format!(
-            "cfapi: In-Sync after dehydrate warning {}: {}",
-            path.display(),
-            e
-        ));
-    }
-    Ok(())
 }
 
 /// Explorer Free up sets UNPINNED (sync arrows) until the provider dehydrates.
@@ -515,6 +643,14 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
     if let Err(e) = mark_file_in_sync(path) {
         sync_log(format!(
             "cfapi: finalize In-Sync warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+    // Clear leftover UNPINNED (e.g. after Free up on ancestors) so Status is not stuck on arrows.
+    if let Err(e) = clear_explicit_pin_state(path) {
+        sync_log(format!(
+            "cfapi: finalize clear pin warning {}: {}",
             path.display(),
             e
         ));

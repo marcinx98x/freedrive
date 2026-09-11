@@ -366,8 +366,15 @@ impl SyncEngine {
         ));
         let engine = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
+            // Clear pending even if the task is aborted mid-free-up (so auto-resume can re-queue).
+            struct PendingFreeUpGuard(String);
+            impl Drop for PendingFreeUpGuard {
+                fn drop(&mut self) {
+                    pending_free_up_paths().lock().remove(&self.0);
+                }
+            }
+            let _pending = PendingFreeUpGuard(key);
             let result = engine.free_up_my_drive_path(&path).await;
-            pending_free_up_paths().lock().remove(&key);
             if let Err(e) = result {
                 sync_log(format!(
                     "My Drive free up failed {}: {}",
@@ -375,6 +382,35 @@ impl SyncEngine {
                     e
                 ));
             }
+            // Fallback resume path if Drop stored one without a hook.
+            if let Some(resume) = crate::my_drive::take_pending_free_up_resume() {
+                sync_log(format!(
+                    "My Drive free-up auto-resume enqueue (pending) — {}",
+                    resume.display()
+                ));
+                engine.enqueue_my_drive_free_up(resume);
+            }
+        });
+    }
+
+    /// Wire incomplete Free up Drop → re-queue after a short delay (max 3 retries).
+    pub fn install_free_up_auto_resume(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        crate::my_drive::register_free_up_auto_resume(move |path| {
+            let Some(eng) = weak.upgrade() else {
+                return;
+            };
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if eng.is_shutdown() || eng.is_paused() {
+                    return;
+                }
+                sync_log(format!(
+                    "My Drive free-up auto-resume enqueue — {}",
+                    path.display()
+                ));
+                eng.enqueue_my_drive_free_up(path);
+            });
         });
     }
 
@@ -2871,6 +2907,15 @@ impl SyncEngine {
         if self.is_paused() || self.is_initial_sync_running() {
             return Ok(());
         }
+        // Prefer finishing Free up over a full poll when a previous job ended incompletely.
+        if let Some(resume) = crate::my_drive::take_pending_free_up_resume() {
+            sync_log(format!(
+                "My Drive free-up auto-resume enqueue (poll) — {}",
+                resume.display()
+            ));
+            self.enqueue_my_drive_free_up(resume);
+            return Ok(());
+        }
         if crate::my_drive::is_free_up_in_progress() {
             sync_log("poll My Drive skipped — free-up in progress");
             return Ok(());
@@ -3171,22 +3216,38 @@ fn path_key_covers(ancestor: &str, child: &str) -> bool {
     child.starts_with(ancestor) && child.as_bytes().get(ancestor.len()) == Some(&b'\\')
 }
 
-/// When Free up hits many files under one folder, free the folder once.
+/// When Free up hits many files under one folder, free the highest UNPINNED ancestor once.
 fn coalesce_free_up_target(path: PathBuf) -> PathBuf {
-    if !path.is_file() {
-        return path;
+    let mut cur = path;
+
+    // Climb to the highest UNPINNED ancestor under My Drive (not just the immediate parent).
+    // Explorer Free up marks the whole selection; without this we spawn one job per subfolder
+    // and later child events are dropped while a shallow free-up is active.
+    loop {
+        let Some(parent) = cur.parent() else {
+            break;
+        };
+        if !is_my_drive_path(parent) {
+            break;
+        }
+        if crate::cfapi::is_unpinned(parent) {
+            cur = parent.to_path_buf();
+            continue;
+        }
+        break;
     }
-    let Some(parent) = path.parent() else {
-        return path;
+
+    if !cur.is_file() {
+        return cur;
+    }
+    let Some(parent) = cur.parent() else {
+        return cur;
     };
     if !is_my_drive_path(parent) {
-        return path;
-    }
-    if crate::cfapi::is_unpinned(parent) {
-        return parent.to_path_buf();
+        return cur;
     }
     let parent_key = normalize_path_key(parent);
-    let file_key = normalize_path_key(&path);
+    let file_key = normalize_path_key(&cur);
     let pending = pending_free_up_paths().lock();
     let sibling_queued = pending.iter().any(|p| {
         p != &file_key && (path_key_covers(&parent_key, p) || p == &parent_key)
@@ -3194,7 +3255,7 @@ fn coalesce_free_up_target(path: PathBuf) -> PathBuf {
     if sibling_queued {
         parent.to_path_buf()
     } else {
-        path
+        cur
     }
 }
 

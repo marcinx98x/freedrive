@@ -10,11 +10,12 @@ pub mod custom_state;
 mod placeholders;
 #[cfg(windows)]
 pub use placeholders::{
-    convert_file_to_placeholder, create_file_placeholder, create_named_folder_placeholder,
-    dehydrate_my_drive_tree, dehydrate_placeholder_file, ensure_cloud_placeholder,
-    finalize_stream_placeholder, is_dehydrated_placeholder, is_duplicate_placeholder_error,
-    is_not_cloud_file_error, is_pinned, is_unpinned, mark_directory_partially_populated,
-    refresh_placeholder_status, MY_DRIVE_FOLDER_NAME,
+    clear_explicit_pin_state, convert_file_to_placeholder, create_file_placeholder,
+    create_named_folder_placeholder, dehydrate_my_drive_tree, dehydrate_placeholder_file,
+    ensure_cloud_placeholder, finalize_stream_placeholder, is_dehydrated_placeholder,
+    is_duplicate_placeholder_error, is_not_cloud_file_error, is_pinned, is_unpinned,
+    mark_directory_partially_populated, on_disk_allocated_bytes, refresh_placeholder_status,
+    MY_DRIVE_FOLDER_NAME,
 };
 #[cfg(windows)]
 mod register;

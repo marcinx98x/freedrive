@@ -117,6 +117,7 @@ impl AppState {
     }
 
     pub fn set_sync_engine(&self, engine: Arc<SyncEngine>) {
+        engine.install_free_up_auto_resume();
         *self.sync_engine.lock() = Some(engine);
     }
 
