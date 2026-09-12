@@ -6,14 +6,16 @@ use crate::cfapi::{
     finalize_hydrated_file, finalize_stream_placeholder, is_cloud_placeholder,
     is_dehydrated_placeholder, is_duplicate_placeholder_error, is_not_cloud_file_error,
     is_unpinned, mark_directory_partially_populated, mark_hydrated_available,
-    notify_directory_updated, on_disk_allocated_bytes, refresh_placeholder_status,
-    MY_DRIVE_FOLDER_NAME,
+    notify_directory_updated, on_disk_allocated_bytes, read_placeholder_identity,
+    refresh_placeholder_status, MY_DRIVE_FOLDER_NAME,
 };
 use crate::crypto::key_to_b64url;
 use crate::db::{
     get_file_key, insert_activity, my_drive_delete_placeholder,
     my_drive_delete_placeholders_under_prefix, my_drive_get_placeholder,
-    my_drive_reparent_direct_children, my_drive_upsert_placeholder, store_file_key, DbHandle,
+    my_drive_get_placeholder_by_remote_id, my_drive_list_placeholders,
+    my_drive_relocate_placeholder, my_drive_reparent_direct_children, my_drive_upsert_placeholder,
+    store_file_key, DbHandle, MyDrivePlaceholderRow,
 };
 use crate::error::{AppError, AppResult};
 use crate::my_drive::{
@@ -297,12 +299,53 @@ pub fn is_free_up_in_progress() -> bool {
 
 /// How long a delete-in-flight mark suppresses CLOSE upload / re-upload (Explorer delete race).
 const DELETE_IN_FLIGHT_TTL: Duration = Duration::from_secs(60);
+/// Cap concurrent My Drive soft-trash HTTP so large folder deletes cannot melt the API.
+const MY_DRIVE_DELETE_CONCURRENCY: usize = 3;
 
 /// Paths (files or folder prefixes) with soft-trash in flight after NOTIFY_DELETE ACK.
 static DELETE_IN_FLIGHT: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+static MY_DRIVE_DELETE_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+static FOLDER_DELETE_CLAIMED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 fn delete_in_flight() -> &'static Mutex<HashMap<PathBuf, Instant>> {
     DELETE_IN_FLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn my_drive_delete_semaphore() -> &'static Semaphore {
+    MY_DRIVE_DELETE_SEMAPHORE.get_or_init(|| Semaphore::new(MY_DRIVE_DELETE_CONCURRENCY))
+}
+
+fn folder_delete_claimed() -> &'static Mutex<HashSet<String>> {
+    FOLDER_DELETE_CLAIMED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+struct FolderDeleteClaim {
+    remote_id: String,
+}
+
+impl Drop for FolderDeleteClaim {
+    fn drop(&mut self) {
+        if let Ok(mut set) = folder_delete_claimed().lock() {
+            set.remove(&self.remote_id);
+        }
+    }
+}
+
+fn try_claim_folder_delete(remote_id: &str) -> Option<FolderDeleteClaim> {
+    if remote_id.is_empty() {
+        return None;
+    }
+    let Ok(mut set) = folder_delete_claimed().lock() else {
+        return Some(FolderDeleteClaim {
+            remote_id: remote_id.to_string(),
+        });
+    };
+    if !set.insert(remote_id.to_string()) {
+        return None;
+    }
+    Some(FolderDeleteClaim {
+        remote_id: remote_id.to_string(),
+    })
 }
 
 /// Mark `path` so NOTIFY_FILE_CLOSE / watcher uploads skip it (and descendants for folders).
@@ -331,6 +374,24 @@ pub fn is_path_under_active_delete(path: &Path) -> bool {
     let now = Instant::now();
     map.retain(|_, at| now.duration_since(*at) < DELETE_IN_FLIGHT_TTL);
     map.keys().any(|root| path_is_under_prefix(path, root))
+}
+
+/// True when an *ancestor* (not `path` itself) is already marked delete-in-flight.
+/// Used to skip per-child HTTP after a folder soft-trash was started.
+pub fn is_path_under_active_delete_ancestor(path: &Path) -> bool {
+    let Ok(mut map) = delete_in_flight().lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    map.retain(|_, at| now.duration_since(*at) < DELETE_IN_FLIGHT_TTL);
+    let path_s = path.to_string_lossy().to_ascii_lowercase();
+    map.keys().any(|root| {
+        let root_s = root.to_string_lossy().to_ascii_lowercase();
+        if path_s == root_s {
+            return false;
+        }
+        path_is_under_prefix(path, root)
+    })
 }
 
 fn path_is_under_prefix(path: &Path, root: &Path) -> bool {
@@ -389,6 +450,11 @@ pub async fn poll_my_drive(
     let sync_root = sync_root_dir(false)?;
     sync_log(&format!("poll My Drive started (mirror={})", mirror));
     let mut stats = MyDrivePollStats::default();
+    // Push offline local deletes/moves before recreating placeholders from the server.
+    if let Err(e) = reconcile_my_drive_offline_changes(api, db, &sync_root, &on_busy).await {
+        sync_log(format!("My Drive offline reconcile skipped: {e}"));
+        stats.errors = stats.errors.saturating_add(1);
+    }
     poll_my_drive_folder(
         api,
         db,
@@ -411,6 +477,774 @@ pub async fn poll_my_drive(
     Ok(stats)
 }
 
+/// Index on-disk CfAPI placeholders under My Drive by remote id.
+fn index_my_drive_identities(sync_root: &Path) -> HashMap<String, PathBuf> {
+    let mut map = HashMap::new();
+    let root = local_dir_for_relative(sync_root, MY_DRIVE_FOLDER_NAME);
+    if !root.is_dir() {
+        return map;
+    }
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some((ty, id)) = read_placeholder_identity(&path) {
+                    if (ty == "folder" || ty == "file") && !id.is_empty() {
+                        map.entry(id).or_insert(path.clone());
+                    }
+                }
+                stack.push(path);
+            } else if path.is_file() {
+                if let Some((ty, id)) = read_placeholder_identity(&path) {
+                    if ty == "file" && !id.is_empty() {
+                        map.entry(id).or_insert(path);
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+fn path_exists_for_placeholder(sync_root: &Path, relative: &str, item_type: &str) -> bool {
+    let path = local_dir_for_relative(sync_root, relative);
+    if item_type == "folder" {
+        path.is_dir()
+    } else {
+        path.is_file()
+    }
+}
+
+/// Drive Stream parity: confirm remote object by ID before any destructive sync action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemotePresence {
+    Exists,
+    Missing,
+    Unknown,
+}
+
+async fn probe_my_drive_remote_exists(
+    api: &ApiClient,
+    item_type: &str,
+    remote_id: &str,
+) -> RemotePresence {
+    if remote_id.is_empty() {
+        return RemotePresence::Missing;
+    }
+    let result = if item_type == "folder" {
+        // Lightweight listing probe (one page) — 404 means gone.
+        api.probe_folder(remote_id).await
+    } else {
+        api.get_file(remote_id).await.map(|_| ())
+    };
+    match result {
+        Ok(()) => RemotePresence::Exists,
+        Err(e) if e.is_not_found() => RemotePresence::Missing,
+        Err(e) => {
+            let lower = e.to_string().to_ascii_lowercase();
+            if lower.contains("not found") || lower.contains("(404)") {
+                RemotePresence::Missing
+            } else {
+                RemotePresence::Unknown
+            }
+        }
+    }
+}
+
+fn paths_equal_ci(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+}
+
+fn is_under_relative_prefix(relative: &str, prefix: &str) -> bool {
+    let rel = relative.replace('/', "\\").to_ascii_lowercase();
+    let pre = prefix.replace('/', "\\").to_ascii_lowercase();
+    if rel == pre {
+        return true;
+    }
+    let pre = pre.trim_end_matches('\\');
+    rel.starts_with(&format!("{pre}\\"))
+}
+
+/// Infer new folder path after offline move when the folder placeholder lost FileIdentity
+/// but children still carry theirs under a shared parent directory.
+fn infer_folder_dest_from_children(
+    folder: &MyDrivePlaceholderRow,
+    all_rows: &[MyDrivePlaceholderRow],
+    identity_index: &HashMap<String, PathBuf>,
+) -> Option<PathBuf> {
+    let prefix = format!(
+        "{}\\",
+        folder.relative_path.trim_end_matches(['\\', '/'])
+    );
+    let prefix_l = prefix.to_ascii_lowercase();
+    let mut parent_votes: HashMap<String, (PathBuf, u32)> = HashMap::new();
+    for row in all_rows {
+        if row.remote_id.is_empty() || row.remote_id == folder.remote_id {
+            continue;
+        }
+        let under = row
+            .relative_path
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+            .starts_with(&prefix_l);
+        let by_parent = row.parent_remote_id.as_deref() == Some(folder.remote_id.as_str());
+        if !under && !by_parent {
+            continue;
+        }
+        let Some(found) = identity_index.get(&row.remote_id) else {
+            continue;
+        };
+        let Some(parent) = found.parent() else {
+            continue;
+        };
+        let key = parent.to_string_lossy().to_ascii_lowercase();
+        let entry = parent_votes.entry(key).or_insert_with(|| (parent.to_path_buf(), 0));
+        entry.1 += 1;
+    }
+    parent_votes
+        .into_values()
+        .max_by_key(|(_, n)| *n)
+        .filter(|(_, n)| *n > 0)
+        .map(|(path, _)| path)
+}
+
+fn folder_has_any_child_identity_on_disk(
+    folder: &MyDrivePlaceholderRow,
+    all_rows: &[MyDrivePlaceholderRow],
+    identity_index: &HashMap<String, PathBuf>,
+) -> bool {
+    let prefix = format!(
+        "{}\\",
+        folder.relative_path.trim_end_matches(['\\', '/'])
+    );
+    let prefix_l = prefix.to_ascii_lowercase();
+    all_rows.iter().any(|row| {
+        if row.remote_id.is_empty() || row.remote_id == folder.remote_id {
+            return false;
+        }
+        let under = row
+            .relative_path
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+            .starts_with(&prefix_l);
+        let by_parent = row.parent_remote_id.as_deref() == Some(folder.remote_id.as_str());
+        (under || by_parent) && identity_index.contains_key(&row.remote_id)
+    })
+}
+
+/// True if path is a cloud placeholder, reparse point, or has FileIdentity.
+fn path_looks_like_cloud_placeholder(path: &Path) -> bool {
+    path_has_reparse_point(path)
+        || is_cloud_placeholder(path)
+        || read_placeholder_identity(path).is_some()
+}
+
+/// Recursive: any cloud/reparse placeholder under `dir` (incl. `dir` itself).
+fn tree_has_cloud_or_reparse(dir: &Path) -> bool {
+    if path_looks_like_cloud_placeholder(dir) {
+        return true;
+    }
+    let mut stack = vec![dir.to_path_buf()];
+    let mut visited = 0u32;
+    const MAX_NODES: u32 = 50_000;
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_NODES {
+                // Treat oversized trees conservatively as cloud-ish to avoid empty create.
+                return true;
+            }
+            let path = entry.path();
+            if path_looks_like_cloud_placeholder(&path) {
+                return true;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    false
+}
+
+/// Regular local file that can be uploaded (not placeholder / reparse / skip-name).
+fn path_is_uploadable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if name.eq_ignore_ascii_case("desktop.ini")
+        || name.starts_with('.')
+        || crate::sync::should_skip_file(name)
+    {
+        return false;
+    }
+    if path_looks_like_cloud_placeholder(path) {
+        return false;
+    }
+    true
+}
+
+/// True if tree contains at least one uploadable local file (early-exit DFS).
+fn tree_has_uploadable_file(dir: &Path) -> bool {
+    let mut stack = vec![dir.to_path_buf()];
+    let mut visited = 0u32;
+    const MAX_NODES: u32 = 50_000;
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_NODES {
+                return false;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                if path_looks_like_cloud_placeholder(&path) {
+                    continue;
+                }
+                stack.push(path);
+            } else if path_is_uploadable_file(&path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Vote for folder remote id from children's DB `parent_remote_id` (folder identity lost on move).
+fn infer_folder_remote_id_from_disk_children(dir: &Path, db: &DbHandle) -> Option<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return None;
+    };
+    let mut votes: HashMap<String, u32> = HashMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some((_, remote_id)) = read_placeholder_identity(&path) else {
+            continue;
+        };
+        if remote_id.is_empty() {
+            continue;
+        }
+        let Ok(conn) = db.lock() else {
+            continue;
+        };
+        if let Ok(Some((_, _, Some(parent_id)))) =
+            my_drive_get_placeholder_by_remote_id(&conn, &remote_id)
+        {
+            if !parent_id.is_empty() {
+                *votes.entry(parent_id).or_insert(0) += 1;
+            }
+        }
+    }
+    votes
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .filter(|(_, n)| *n > 0)
+        .map(|(id, _)| id)
+}
+
+/// PATCH + DB relocate for a cloud item found at a new local path (offline move).
+async fn relocate_my_drive_item_from_scan(
+    api: &ApiClient,
+    db: &DbHandle,
+    sync_root: &Path,
+    path: &Path,
+    child_relative: &str,
+    name: &str,
+    remote_id: &str,
+    item_type: &str,
+    parent_folder_id: &str,
+) -> AppResult<()> {
+    let parent_opt = api_folder_parent_id(parent_folder_id);
+    if item_type == "folder" {
+        api.patch_folder(remote_id, Some(name), parent_opt, None)
+            .await
+            .map(|_| ())?;
+    } else {
+        api.patch_file(remote_id, Some(name), parent_opt, None)
+            .await
+            .map(|_| ())?;
+    }
+    if let Ok(conn) = db.lock() {
+        if let Ok(Some((old_rel, _, _))) = my_drive_get_placeholder_by_remote_id(&conn, remote_id) {
+            if !old_rel.eq_ignore_ascii_case(child_relative) {
+                my_drive_relocate_placeholder(&conn, &old_rel, child_relative, parent_opt)?;
+            } else {
+                my_drive_upsert_placeholder(
+                    &conn,
+                    child_relative,
+                    remote_id,
+                    item_type,
+                    parent_opt,
+                    None,
+                )?;
+            }
+        } else {
+            my_drive_upsert_placeholder(
+                &conn,
+                child_relative,
+                remote_id,
+                item_type,
+                parent_opt,
+                None,
+            )?;
+        }
+    }
+    let _ = ensure_cloud_placeholder(path, item_type, remote_id);
+    if item_type == "folder" {
+        relink_orphan_placeholders_under(db, sync_root, path, remote_id);
+    }
+    Ok(())
+}
+
+/// Relink orphan placeholders under `dir` into DB using FileIdentity (after offline folder move).
+fn relink_orphan_placeholders_under(
+    db: &DbHandle,
+    sync_root: &Path,
+    dir: &Path,
+    parent_remote_id: &str,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some((ty, remote_id)) = read_placeholder_identity(&path) else {
+            continue;
+        };
+        if remote_id.is_empty() {
+            continue;
+        }
+        let Some(rel) = relative_path_from_sync_root(sync_root, &path) else {
+            continue;
+        };
+        let item_type = if ty == "folder" { "folder" } else { "file" };
+        if let Ok(conn) = db.lock() {
+            let existing = my_drive_get_placeholder_by_remote_id(&conn, &remote_id)
+                .ok()
+                .flatten();
+            if let Some((old_rel, _, _)) = existing {
+                if !old_rel.eq_ignore_ascii_case(&rel) {
+                    let _ = my_drive_relocate_placeholder(
+                        &conn,
+                        &old_rel,
+                        &rel,
+                        Some(parent_remote_id),
+                    );
+                } else {
+                    let _ = my_drive_upsert_placeholder(
+                        &conn,
+                        &rel,
+                        &remote_id,
+                        item_type,
+                        Some(parent_remote_id),
+                        None,
+                    );
+                }
+            } else {
+                let _ = my_drive_upsert_placeholder(
+                    &conn,
+                    &rel,
+                    &remote_id,
+                    item_type,
+                    Some(parent_remote_id),
+                    None,
+                );
+            }
+            sync_log(format!("My Drive relinked orphan — {rel}"));
+        }
+    }
+}
+
+async fn resolve_parent_remote_id_for_relative(
+    db: &DbHandle,
+    sync_root: &Path,
+    relative: &str,
+) -> AppResult<String> {
+    let parent_relative = Path::new(relative)
+        .parent()
+        .map(|p| p.to_string_lossy().replace('/', "\\"))
+        .unwrap_or_else(|| MY_DRIVE_FOLDER_NAME.to_string());
+    if parent_relative.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) {
+        return resolve_my_drive_root_id(db);
+    }
+    {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        if let Some((id, ty, _)) = my_drive_get_placeholder(&conn, &parent_relative)? {
+            if ty == "folder" && !id.is_empty() {
+                return Ok(id);
+            }
+        }
+    }
+    // Parent may have been moved offline — DB path stale; read identity from disk.
+    let parent_path = local_dir_for_relative(sync_root, &parent_relative);
+    if let Some((ty, id)) = read_placeholder_identity(&parent_path) {
+        if ty == "folder" && !id.is_empty() {
+            return Ok(id);
+        }
+    }
+    Err(AppError::msg(format!(
+        "parent placeholder missing for {relative}"
+    )))
+}
+
+/// Drive-like: after offline Explorer cleanup, push local deletes/moves before restore.
+async fn reconcile_my_drive_offline_changes(
+    api: &ApiClient,
+    db: &DbHandle,
+    sync_root: &Path,
+    on_busy: &Option<MyDriveBusyCb>,
+) -> AppResult<()> {
+    let my_drive = local_dir_for_relative(sync_root, MY_DRIVE_FOLDER_NAME);
+    if !my_drive.is_dir() {
+        // Unavailable tree — do not mass soft-trash (same guard as computer sync folders).
+        return Ok(());
+    }
+
+    let rows = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        my_drive_list_placeholders(&conn)?
+    };
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(cb) = on_busy {
+        cb("Reconciling My Drive…");
+    }
+
+    let identity_index = index_my_drive_identities(sync_root);
+    let mut moves: Vec<(MyDrivePlaceholderRow, PathBuf)> = Vec::new();
+    let mut missing: Vec<MyDrivePlaceholderRow> = Vec::new();
+
+    for row in rows.iter() {
+        if row.relative_path.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) {
+            continue;
+        }
+        if row.remote_id.is_empty() {
+            continue;
+        }
+        let expected = local_dir_for_relative(sync_root, &row.relative_path);
+        if path_exists_for_placeholder(sync_root, &row.relative_path, &row.item_type) {
+            continue;
+        }
+        if let Some(found) = identity_index.get(&row.remote_id) {
+            if !paths_equal_ci(found, &expected) {
+                moves.push((row.clone(), found.clone()));
+            }
+            continue;
+        }
+        // Folder identity often lost on Explorer move; infer destination from children.
+        if row.item_type == "folder" {
+            if let Some(dest) =
+                infer_folder_dest_from_children(row, &rows, &identity_index)
+            {
+                moves.push((row.clone(), dest));
+                continue;
+            }
+            // Children still on disk as placeholders somewhere — never soft-trash.
+            if folder_has_any_child_identity_on_disk(row, &rows, &identity_index) {
+                sync_log(format!(
+                    "My Drive offline folder missing without dest — skipped delete {}",
+                    row.relative_path
+                ));
+                continue;
+            }
+        }
+        missing.push(row.clone());
+    }
+
+    let mut moved = 0u32;
+    // Shallow paths first so folder relocate covers descendants.
+    moves.sort_by(|a, b| a.0.relative_path.len().cmp(&b.0.relative_path.len()));
+    let mut moved_old_roots: Vec<String> = Vec::new();
+    for (row, new_path) in moves {
+        if moved_old_roots
+            .iter()
+            .any(|r| is_under_relative_prefix(&row.relative_path, r))
+        {
+            continue;
+        }
+        let Some(new_rel) = relative_path_from_sync_root(sync_root, &new_path) else {
+            continue;
+        };
+        if !is_under_my_drive(&new_rel) {
+            continue;
+        }
+        let name = new_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&row.relative_path)
+            .to_string();
+        let parent_id = match resolve_parent_remote_id_for_relative(db, sync_root, &new_rel).await {
+            Ok(id) => id,
+            Err(e) => {
+                sync_log(format!(
+                    "My Drive offline move skipped {} → {}: {e}",
+                    row.relative_path, new_rel
+                ));
+                continue;
+            }
+        };
+        let patch = if row.item_type == "folder" {
+            api.patch_folder(&row.remote_id, Some(&name), Some(&parent_id), None)
+                .await
+                .map(|_| ())
+        } else {
+            api.patch_file(&row.remote_id, Some(&name), Some(&parent_id), None)
+                .await
+                .map(|_| ())
+        };
+        match patch {
+            Ok(()) => {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_relocate_placeholder(
+                    &conn,
+                    &row.relative_path,
+                    &new_rel,
+                    Some(&parent_id),
+                )?;
+                if row.item_type == "folder" {
+                    moved_old_roots.push(row.relative_path.clone());
+                    // Ensure folder placeholder identity on disk at the new path when possible.
+                    drop(conn);
+                    let _ = ensure_cloud_placeholder(&new_path, "folder", &row.remote_id);
+                    relink_orphan_placeholders_under(db, sync_root, &new_path, &row.remote_id);
+                }
+                moved += 1;
+                sync_log(format!(
+                    "My Drive offline move — {} → {}",
+                    row.relative_path, new_rel
+                ));
+            }
+            Err(e) => sync_log(format!(
+                "My Drive offline move failed {} → {}: {e}",
+                row.relative_path, new_rel
+            )),
+        }
+    }
+
+    // Coalesce missing folders: topmost missing folder covers descendants.
+    let mut missing_folders: Vec<_> = missing
+        .iter()
+        .filter(|r| r.item_type == "folder")
+        .cloned()
+        .collect();
+    missing_folders.sort_by(|a, b| a.relative_path.len().cmp(&b.relative_path.len()));
+    let mut delete_roots: Vec<String> = Vec::new();
+    let mut deleted = 0u32;
+
+    for folder in missing_folders {
+        if delete_roots
+            .iter()
+            .any(|r| is_under_relative_prefix(&folder.relative_path, r))
+        {
+            continue;
+        }
+        {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            if my_drive_get_placeholder(&conn, &folder.relative_path)?.is_none() {
+                // Already relocated as part of a parent offline move.
+                continue;
+            }
+        }
+        match probe_my_drive_remote_exists(api, "folder", &folder.remote_id).await {
+            RemotePresence::Unknown => {
+                // Network/API uncertainty — never soft-trash on a guess (Drive Stream).
+                sync_log(format!(
+                    "My Drive offline skip destructive — probe failed {}",
+                    folder.relative_path
+                ));
+                continue;
+            }
+            RemotePresence::Missing => {
+                // Already gone on server — clear mapping only.
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_delete_placeholders_under_prefix(&conn, &folder.relative_path)?;
+                delete_roots.push(folder.relative_path.clone());
+                deleted += 1;
+                sync_log(format!(
+                    "My Drive offline cleared gone folder — {}",
+                    folder.relative_path
+                ));
+                continue;
+            }
+            RemotePresence::Exists => {
+                // Local path gone, identity not found → treat as offline delete (Drive-like).
+            }
+        }
+        match api
+            .delete_folder_with_mutation(&folder.remote_id, None)
+            .await
+        {
+            Ok(()) => {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_delete_placeholders_under_prefix(&conn, &folder.relative_path)?;
+                delete_roots.push(folder.relative_path.clone());
+                deleted += 1;
+                let name = Path::new(&folder.relative_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("folder");
+                sync_log(format!("My Drive offline deleted folder — {name}"));
+            }
+            Err(e) if e.is_not_found()
+                || e.to_string().to_ascii_lowercase().contains("not found") =>
+            {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_delete_placeholders_under_prefix(&conn, &folder.relative_path)?;
+                delete_roots.push(folder.relative_path.clone());
+                deleted += 1;
+                sync_log(format!(
+                    "My Drive offline cleared gone folder — {}",
+                    folder.relative_path
+                ));
+            }
+            Err(e) => sync_log(format!(
+                "My Drive offline folder delete failed {}: {e}",
+                folder.relative_path
+            )),
+        }
+    }
+
+    for file in missing.into_iter().filter(|r| r.item_type == "file") {
+        if delete_roots
+            .iter()
+            .any(|r| is_under_relative_prefix(&file.relative_path, r))
+        {
+            continue;
+        }
+        {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            if my_drive_get_placeholder(&conn, &file.relative_path)?.is_none() {
+                continue;
+            }
+        }
+        match probe_my_drive_remote_exists(api, "file", &file.remote_id).await {
+            RemotePresence::Unknown => {
+                sync_log(format!(
+                    "My Drive offline skip destructive — probe failed {}",
+                    file.relative_path
+                ));
+                continue;
+            }
+            RemotePresence::Missing => {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_delete_placeholder(&conn, &file.relative_path)?;
+                deleted += 1;
+                sync_log(format!(
+                    "My Drive offline cleared gone file — {}",
+                    file.relative_path
+                ));
+                continue;
+            }
+            RemotePresence::Exists => {}
+        }
+        match api.delete_file(&file.remote_id).await {
+            Ok(()) => {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_delete_placeholder(&conn, &file.relative_path)?;
+                deleted += 1;
+                let name = Path::new(&file.relative_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("file");
+                sync_log(format!("My Drive offline deleted — {name}"));
+            }
+            Err(e) if e.is_not_found()
+                || e.to_string().to_ascii_lowercase().contains("not found") =>
+            {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                my_drive_delete_placeholder(&conn, &file.relative_path)?;
+                deleted += 1;
+                sync_log(format!(
+                    "My Drive offline cleared gone file — {}",
+                    file.relative_path
+                ));
+            }
+            Err(e) => sync_log(format!(
+                "My Drive offline file delete failed {}: {e}",
+                file.relative_path
+            )),
+        }
+    }
+
+    if moved > 0 || deleted > 0 {
+        sync_log(format!(
+            "My Drive offline reconcile — {moved} move(s), {deleted} delete(s)"
+        ));
+    }
+    Ok(())
+}
+
+/// Live Explorer rename/move inside My Drive while the app is running.
+pub async fn rename_my_drive_path(
+    api: &ApiClient,
+    db: &DbHandle,
+    from: &Path,
+    to: &Path,
+) -> AppResult<()> {
+    let sync_root = sync_root_dir(false)?;
+    let old_rel = relative_path_from_sync_root(&sync_root, from)
+        .ok_or_else(|| AppError::msg("rename source outside sync root"))?;
+    let new_rel = relative_path_from_sync_root(&sync_root, to)
+        .ok_or_else(|| AppError::msg("rename destination outside sync root"))?;
+    if !is_under_my_drive(&old_rel) || !is_under_my_drive(&new_rel) {
+        return Ok(());
+    }
+    if old_rel.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME)
+        || new_rel.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME)
+    {
+        return Ok(());
+    }
+    if old_rel.eq_ignore_ascii_case(&new_rel) {
+        return Ok(());
+    }
+
+    let placeholder = {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        my_drive_get_placeholder(&conn, &old_rel)?
+    };
+    let Some((remote_id, item_type, _)) = placeholder else {
+        // Untracked — next poll / CLOSE upload will pick it up.
+        return Ok(());
+    };
+    if remote_id.is_empty() {
+        return Ok(());
+    }
+
+    let name = to
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| AppError::msg("rename destination has no file name"))?
+        .to_string();
+    let parent_id = resolve_parent_remote_id_for_relative(db, &sync_root, &new_rel).await?;
+
+    if item_type == "folder" {
+        api.patch_folder(&remote_id, Some(&name), Some(&parent_id), None)
+            .await?;
+    } else {
+        api.patch_file(&remote_id, Some(&name), Some(&parent_id), None)
+            .await?;
+    }
+
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    my_drive_relocate_placeholder(&conn, &old_rel, &new_rel, Some(&parent_id))?;
+    sync_log(format!("My Drive renamed — {old_rel} → {new_rel}"));
+    Ok(())
+}
+
 async fn poll_my_drive_folder(
     api: &ApiClient,
     db: &DbHandle,
@@ -430,7 +1264,8 @@ async fn poll_my_drive_folder(
     let mut local_only_folders = Vec::new();
     if std::fs::create_dir_all(&local_dir).is_ok() {
         apply_remote_children(db, parent_relative, &local_dir, &contents, suppress);
-        reconcile_local_against_remote(db, parent_relative, &local_dir, &contents, suppress);
+        reconcile_local_against_remote(api, db, parent_relative, &local_dir, &contents, suppress)
+            .await;
         refresh_files_when_remote_newer(
             api,
             db,
@@ -607,6 +1442,7 @@ async fn upload_local_only_children(
 
     let mut folders_to_register: Vec<(String, PathBuf, String)> = Vec::new();
     let mut files_to_upload: Vec<PathBuf> = Vec::new();
+    let mut items_to_relocate: Vec<(String, PathBuf, String, String, String)> = Vec::new();
 
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -631,12 +1467,63 @@ async fn upload_local_only_children(
             continue;
         }
         if path.is_dir() {
+            if let Some((ty, remote_id)) = read_placeholder_identity(&path) {
+                if ty == "folder" && !remote_id.is_empty() {
+                    items_to_relocate.push((
+                        name,
+                        path,
+                        child_relative,
+                        remote_id,
+                        "folder".to_string(),
+                    ));
+                    continue;
+                }
+            }
+            if tree_has_cloud_or_reparse(&path) {
+                if let Some(folder_id) = infer_folder_remote_id_from_disk_children(&path, db) {
+                    items_to_relocate.push((
+                        name,
+                        path,
+                        child_relative,
+                        folder_id,
+                        "folder".to_string(),
+                    ));
+                } else {
+                    // Placeholder tree without recoverable folder id — never create empty remote.
+                    sync_log(format!(
+                        "My Drive local-scan skip empty create (cloud children) — {}",
+                        child_relative
+                    ));
+                }
+                continue;
+            }
+            // Drive Stream parity: never invent empty remote folders from leftover dirs.
+            // Watcher/ensure still creates empty folders when the user makes them live.
+            if !tree_has_uploadable_file(&path) {
+                sync_log(format!(
+                    "My Drive local-scan skip empty create — {}",
+                    child_relative
+                ));
+                continue;
+            }
             folders_to_register.push((name, path, child_relative));
         } else if path.is_file() {
             if crate::sync::should_skip_file(&name) {
                 continue;
             }
-            // Skip orphan CfAPI dehydrate placeholders (reparse) without a DB row.
+            if let Some((ty, remote_id)) = read_placeholder_identity(&path) {
+                if ty == "file" && !remote_id.is_empty() {
+                    items_to_relocate.push((
+                        name,
+                        path,
+                        child_relative,
+                        remote_id,
+                        "file".to_string(),
+                    ));
+                    continue;
+                }
+            }
+            // Skip orphan CfAPI dehydrate placeholders (reparse) without a DB row / identity.
             if path_has_reparse_point(&path) {
                 continue;
             }
@@ -644,11 +1531,76 @@ async fn upload_local_only_children(
         }
     }
 
-    if !folders_to_register.is_empty() || !files_to_upload.is_empty() {
+    if !folders_to_register.is_empty()
+        || !files_to_upload.is_empty()
+        || !items_to_relocate.is_empty()
+    {
         notify_my_drive_busy(on_busy);
     }
 
+    let sync_root = match sync_root_dir(false) {
+        Ok(p) => p,
+        Err(_) => local_dir
+            .ancestors()
+            .nth(parent_relative.matches('\\').count() + parent_relative.matches('/').count())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| local_dir.to_path_buf()),
+    };
+
     let mut registered_folders = Vec::new();
+    for (name, path, child_relative, remote_id, item_type) in items_to_relocate {
+        match relocate_my_drive_item_from_scan(
+            api,
+            db,
+            &sync_root,
+            &path,
+            &child_relative,
+            &name,
+            &remote_id,
+            &item_type,
+            parent_folder_id,
+        )
+        .await
+        {
+            Ok(()) => {
+                sync_log(format!(
+                    "My Drive local-scan relocate — {} ({})",
+                    child_relative, item_type
+                ));
+                if item_type == "folder" {
+                    stats.folders_created += 1;
+                    registered_folders.push((child_relative, remote_id));
+                } else {
+                    stats.files_uploaded += 1;
+                }
+            }
+            Err(e) => {
+                // Dead remote id after server wipe — clear mapping, never create empty replacement.
+                if e.is_not_found()
+                    || e.to_string().to_ascii_lowercase().contains("not found")
+                {
+                    if let Ok(conn) = db.lock() {
+                        if let Ok(Some((old_rel, _, _))) =
+                            my_drive_get_placeholder_by_remote_id(&conn, &remote_id)
+                        {
+                            let _ = my_drive_delete_placeholders_under_prefix(&conn, &old_rel);
+                        }
+                    }
+                    sync_log(format!(
+                        "My Drive local-scan dead remote id cleared — {} ({})",
+                        child_relative, remote_id
+                    ));
+                } else {
+                    stats.errors += 1;
+                    sync_log(format!(
+                        "My Drive local-scan relocate failed {}: {}",
+                        child_relative, e
+                    ));
+                }
+            }
+        }
+    }
+
     for (name, path, child_relative) in folders_to_register {
         match api
             .create_or_resolve_folder(&name, api_folder_parent_id(parent_folder_id))
@@ -854,7 +1806,11 @@ fn apply_remote_children(
         let folder_path = local_dir.join(&name);
         match create_named_folder_placeholder(local_dir, &name, &folder.id) {
             Ok(()) => created += 1,
-            Err(e) if is_duplicate_placeholder_error(&e) => {
+            Err(e)
+                if is_duplicate_placeholder_error(&e)
+                    || e.to_string().contains("0x8007017C")
+                    || folder_path.is_dir() =>
+            {
                 skipped += 1;
                 ensure_or_replace_folder_placeholder(
                     local_dir,
@@ -1017,9 +1973,12 @@ fn missing_remote_children(
 }
 
 /// Remove local My Drive placeholders that are no longer in the remote listing
-/// (e.g. soft-deleted from mobile). Local-only paths without a placeholder row
-/// are left for `upload_local_only_children` (pending upload).
-fn reconcile_local_against_remote(
+/// (e.g. soft-deleted from mobile). Drive Stream parity: missing from a parent
+/// listing is not enough — probe remote ID; only remove local when the object
+/// is confirmed gone (404). Network errors skip destructive work.
+/// Orphan CfAPI placeholders with FileIdentity are **relinked** (0.1.74+).
+async fn reconcile_local_against_remote(
+    api: &ApiClient,
     db: &DbHandle,
     parent_relative: &str,
     local_dir: &Path,
@@ -1033,6 +1992,22 @@ fn reconcile_local_against_remote(
     for file in &contents.files {
         remote_names.insert(sanitize_name(&file.name).to_ascii_lowercase());
     }
+
+    let parent_remote_id = {
+        let Ok(conn) = db.lock() else {
+            return;
+        };
+        my_drive_get_placeholder(&conn, parent_relative)
+            .ok()
+            .flatten()
+            .and_then(|(id, ty, _)| {
+                if ty == "folder" && !id.is_empty() {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+    };
 
     let entries = match std::fs::read_dir(local_dir) {
         Ok(e) => e,
@@ -1056,12 +2031,73 @@ fn reconcile_local_against_remote(
             my_drive_get_placeholder(&conn, &child_relative)
                 .ok()
                 .flatten()
-                .is_some()
         };
-        if !tracked {
+        let Some((remote_id, item_type, _)) = tracked else {
+            // Relink orphan FileIdentity → DB; do not delete cloud placeholders.
+            if let Some((ty, remote_id)) = read_placeholder_identity(&path) {
+                if !remote_id.is_empty() {
+                    let item_type = if ty == "folder" { "folder" } else { "file" };
+                    let parent_opt = parent_remote_id.as_deref();
+                    if let Ok(conn) = db.lock() {
+                        if let Ok(Some((old_rel, _, _))) =
+                            my_drive_get_placeholder_by_remote_id(&conn, &remote_id)
+                        {
+                            if !old_rel.eq_ignore_ascii_case(&child_relative) {
+                                let _ = my_drive_relocate_placeholder(
+                                    &conn,
+                                    &old_rel,
+                                    &child_relative,
+                                    parent_opt,
+                                );
+                            } else {
+                                let _ = my_drive_upsert_placeholder(
+                                    &conn,
+                                    &child_relative,
+                                    &remote_id,
+                                    item_type,
+                                    parent_opt,
+                                    None,
+                                );
+                            }
+                        } else {
+                            let _ = my_drive_upsert_placeholder(
+                                &conn,
+                                &child_relative,
+                                &remote_id,
+                                item_type,
+                                parent_opt,
+                                None,
+                            );
+                        }
+                    }
+                    sync_log(format!(
+                        "My Drive reconcile relinked orphan — {}",
+                        child_relative
+                    ));
+                }
+            }
             continue;
+        };
+
+        // Tracked but missing from parent listing — confirm remote ID before wipe.
+        match probe_my_drive_remote_exists(api, &item_type, &remote_id).await {
+            RemotePresence::Exists => {
+                sync_log(format!(
+                    "My Drive reconcile keep local — still on server {}",
+                    child_relative
+                ));
+                continue;
+            }
+            RemotePresence::Unknown => {
+                sync_log(format!(
+                    "My Drive reconcile skip destructive — probe failed {}",
+                    child_relative
+                ));
+                continue;
+            }
+            RemotePresence::Missing => {}
         }
-        // Clear DB first so NOTIFY_DELETE / watcher cannot re-trash on the server.
+
         if let Ok(conn) = db.lock() {
             let _ = my_drive_delete_placeholders_under_prefix(&conn, &child_relative);
         }
@@ -1342,6 +2378,48 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         return Ok(());
     }
 
+    // Another task already soft-trashed an ancestor folder covering this path.
+    if is_path_under_active_delete_ancestor(path) {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        let _ = my_drive_delete_placeholder(&conn, &relative);
+        return Ok(());
+    }
+
+    let _permit = my_drive_delete_semaphore()
+        .acquire()
+        .await
+        .map_err(|e| AppError::msg(format!("delete semaphore closed: {e}")))?;
+
+    // Re-check after waiting — a coalesced folder delete may have finished.
+    if is_path_under_active_delete_ancestor(path) {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        let _ = my_drive_delete_placeholder(&conn, &relative);
+        return Ok(());
+    }
+    {
+        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+        if my_drive_get_placeholder(&conn, &relative)?.is_none() {
+            return Ok(());
+        }
+    }
+
+    // Explorer often deletes children first; if a tracked ancestor folder is already
+    // gone from disk, soft-trash that folder once instead of N file DELETEs.
+    if let Some((folder_path, folder_rel, folder_remote_id, folder_name)) =
+        highest_missing_folder_ancestor(db, &sync_root, &relative)?
+    {
+        let Some(_claim) = try_claim_folder_delete(&folder_remote_id) else {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            let _ = my_drive_delete_placeholder(&conn, &relative);
+            return Ok(());
+        };
+        mark_delete_in_flight(&folder_path);
+        let result =
+            soft_trash_my_drive_folder(api, db, &folder_rel, &folder_remote_id, &folder_name).await;
+        clear_delete_in_flight(&folder_path);
+        return result;
+    }
+
     let placeholder = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         my_drive_get_placeholder(&conn, &relative)?
@@ -1357,16 +2435,14 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
             "folder"
         } else {
             "file"
-        });
+        })
+        .to_string();
 
     if item_type == "folder" {
-        if !remote_id.is_empty() {
-            api.delete_folder_with_mutation(&remote_id, None).await?;
-        }
-        let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-        my_drive_delete_placeholders_under_prefix(&conn, &relative)?;
-        sync_log(format!("My Drive deleted folder — {name}"));
-        return Ok(());
+        let Some(_claim) = try_claim_folder_delete(&remote_id) else {
+            return Ok(());
+        };
+        return soft_trash_my_drive_folder(api, db, &relative, &remote_id, &name).await;
     }
 
     if item_type == "file" {
@@ -1377,6 +2453,72 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         my_drive_delete_placeholder(&conn, &relative)?;
         sync_log(format!("My Drive deleted — {name}"));
     }
+    Ok(())
+}
+
+async fn soft_trash_my_drive_folder(
+    api: &ApiClient,
+    db: &DbHandle,
+    relative: &str,
+    remote_id: &str,
+    name: &str,
+) -> AppResult<()> {
+    if !remote_id.is_empty() {
+        api.delete_folder_with_mutation(remote_id, None).await?;
+    }
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    my_drive_delete_placeholders_under_prefix(&conn, relative)?;
+    sync_log(format!("My Drive deleted folder — {name}"));
+    Ok(())
+}
+
+/// Highest tracked folder ancestor of `relative` whose local path no longer exists.
+fn highest_missing_folder_ancestor(
+    db: &DbHandle,
+    sync_root: &Path,
+    relative: &str,
+) -> AppResult<Option<(PathBuf, String, String, String)>> {
+    let mut best: Option<(PathBuf, String, String, String)> = None;
+    let mut cursor = Path::new(relative)
+        .parent()
+        .map(|p| p.to_string_lossy().replace('/', "\\"));
+    while let Some(parent_rel) = cursor {
+        if parent_rel.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) || parent_rel.is_empty() {
+            break;
+        }
+        let local = local_dir_for_relative(sync_root, &parent_rel);
+        let row = {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            my_drive_get_placeholder(&conn, &parent_rel)?
+        };
+        if let Some((remote_id, item_type, _)) = row {
+            if item_type == "folder" && !remote_id.is_empty() && !local.is_dir() {
+                let name = Path::new(&parent_rel)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("folder")
+                    .to_string();
+                best = Some((local, parent_rel.clone(), remote_id, name));
+            }
+        }
+        cursor = Path::new(&parent_rel)
+            .parent()
+            .map(|p| p.to_string_lossy().replace('/', "\\"));
+    }
+    Ok(best)
+}
+
+/// Drop a local placeholder row without calling the server (child under folder delete).
+pub fn forget_my_drive_placeholder(db: &DbHandle, path: &Path) -> AppResult<()> {
+    let sync_root = sync_root_dir(false)?;
+    let Some(relative) = relative_path_from_sync_root(&sync_root, path) else {
+        return Ok(());
+    };
+    if !is_under_my_drive(&relative) || relative.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) {
+        return Ok(());
+    }
+    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+    my_drive_delete_placeholder(&conn, &relative)?;
     Ok(())
 }
 

@@ -816,6 +816,126 @@ pub fn my_drive_delete_placeholders_under_prefix(
     Ok(n)
 }
 
+#[derive(Debug, Clone)]
+pub struct MyDrivePlaceholderRow {
+    pub relative_path: String,
+    pub remote_id: String,
+    pub item_type: String,
+    pub parent_remote_id: Option<String>,
+}
+
+/// All My Drive placeholder mappings (files + folders).
+pub fn my_drive_list_placeholders(conn: &Connection) -> AppResult<Vec<MyDrivePlaceholderRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT relative_path, remote_id, item_type, parent_remote_id
+         FROM my_drive_placeholders
+         ORDER BY length(relative_path) ASC, relative_path ASC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(MyDrivePlaceholderRow {
+            relative_path: row.get(0)?,
+            remote_id: row.get(1)?,
+            item_type: row.get(2)?,
+            parent_remote_id: row.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Rewrite `old_relative` (and descendants) to `new_relative` after an offline/live move.
+pub fn my_drive_relocate_placeholder(
+    conn: &Connection,
+    old_relative: &str,
+    new_relative: &str,
+    new_parent_remote_id: Option<&str>,
+) -> AppResult<()> {
+    let old_relative = normalize_my_drive_relative_path(old_relative);
+    let new_relative = normalize_my_drive_relative_path(new_relative);
+    if old_relative.eq_ignore_ascii_case(&new_relative) {
+        if let Some(pid) = new_parent_remote_id {
+            conn.execute(
+                "UPDATE my_drive_placeholders SET parent_remote_id = ?1
+                 WHERE relative_path = ?2 COLLATE NOCASE",
+                params![pid, old_relative],
+            )?;
+        }
+        return Ok(());
+    }
+
+    let like = format!("{}\\%", old_relative.trim_end_matches(['\\', '/']));
+    let mut stmt = conn.prepare(
+        "SELECT relative_path, remote_id, item_type, parent_remote_id, remote_version, content_hash
+         FROM my_drive_placeholders
+         WHERE relative_path = ?1 COLLATE NOCASE
+            OR relative_path LIKE ?2 COLLATE NOCASE
+         ORDER BY length(relative_path) DESC",
+    )?;
+    let rows = stmt.query_map(params![old_relative, like], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, i32>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
+    let mut collected = Vec::new();
+    for row in rows {
+        collected.push(row?);
+    }
+    if collected.is_empty() {
+        return Ok(());
+    }
+
+    my_drive_delete_placeholders_under_prefix(conn, &old_relative)?;
+
+    let old_prefix = old_relative.trim_end_matches(['\\', '/']).to_string();
+    let new_prefix = new_relative.trim_end_matches(['\\', '/']).to_string();
+    for (rel, remote_id, item_type, parent_remote_id, remote_version, content_hash) in collected {
+        let suffix = if rel.eq_ignore_ascii_case(&old_relative)
+            || rel.eq_ignore_ascii_case(&old_prefix)
+        {
+            String::new()
+        } else if let Some(rest) = rel
+            .get(old_prefix.len()..)
+            .filter(|r| r.starts_with('\\') || r.starts_with('/'))
+        {
+            rest.replace('/', "\\")
+        } else {
+            continue;
+        };
+        let new_rel = if suffix.is_empty() {
+            new_prefix.clone()
+        } else {
+            format!("{new_prefix}{suffix}")
+        };
+        let parent_id = if new_rel.eq_ignore_ascii_case(&new_prefix) {
+            new_parent_remote_id
+                .map(|s| s.to_string())
+                .or(parent_remote_id)
+        } else {
+            parent_remote_id
+        };
+        my_drive_upsert_placeholder(
+            conn,
+            &new_rel,
+            &remote_id,
+            &item_type,
+            parent_id.as_deref(),
+            Some(remote_version),
+        )?;
+        if !content_hash.is_empty() {
+            let _ = my_drive_set_content_hash(conn, &remote_id, &content_hash);
+        }
+    }
+    Ok(())
+}
+
 pub fn get_sync_state(
     conn: &Connection,
     sync_folder_id: i64,
@@ -1389,6 +1509,47 @@ mod tests {
             get_folder_mapping(&conn, id, "other").unwrap().as_deref(),
             Some("f-other")
         );
+    }
+
+    #[test]
+    fn my_drive_relocate_placeholder_moves_descendants() {
+        let conn = test_conn();
+        init_schema(&conn).unwrap();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\Old",
+            "f-1",
+            "folder",
+            Some("root-1"),
+            None,
+        )
+        .unwrap();
+        my_drive_upsert_placeholder(
+            &conn,
+            "My Drive\\Old\\a.txt",
+            "file-1",
+            "file",
+            Some("f-1"),
+            Some(2),
+        )
+        .unwrap();
+        my_drive_relocate_placeholder(
+            &conn,
+            "My Drive\\Old",
+            "My Drive\\New",
+            Some("root-1"),
+        )
+        .unwrap();
+        assert!(my_drive_get_placeholder(&conn, "My Drive\\Old")
+            .unwrap()
+            .is_none());
+        let folder = my_drive_get_placeholder(&conn, "My Drive\\New").unwrap().unwrap();
+        assert_eq!(folder.0, "f-1");
+        let file = my_drive_get_placeholder(&conn, "My Drive\\New\\a.txt")
+            .unwrap()
+            .unwrap();
+        assert_eq!(file.0, "file-1");
+        assert_eq!(file.1, "file");
     }
 
     #[test]

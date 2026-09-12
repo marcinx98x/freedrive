@@ -402,7 +402,9 @@ Var AppStartMenuFolder
 ; Use show readme button in the finish page as a button create a desktop shortcut
 !define MUI_FINISHPAGE_SHOWREADME
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
-!define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateOrUpdateDesktopShortcut
+; Must ignore UpdateMode — reinstall/upgrade sets UpdateMode=1 but the user still
+; explicitly opts in via this checkbox (Tauri stock template returned early → no .lnk).
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateDesktopShortcutFromFinishPage
 ; Show run app after installation.
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary
@@ -925,11 +927,20 @@ Function CreateOrUpdateStartMenuShortcut
  ${EndIf}
 
  ; Skip creating shortcut if in update mode or no shortcut mode
- ; but always create if migrating from wix
+ ; but always create if migrating from wix.
+ ; On update: if the user already deleted the shortcut, respect that;
+ ; if it still exists, refresh the target below.
  ${If} $WixMode = 0
- ${If} $UpdateMode = 1
- ${OrIf} $NoShortcutMode = 1
+ ${If} $NoShortcutMode = 1
  Return
+ ${EndIf}
+ ${If} $UpdateMode = 1
+ ${If} ${FileExists} "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+ ${OrIf} ${FileExists} "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+ ; fall through to recreate/refresh
+ ${Else}
+ Return
+ ${EndIf}
  ${EndIf}
  ${EndIf}
 
@@ -943,6 +954,15 @@ Function CreateOrUpdateStartMenuShortcut
  !endif
 FunctionEnd
 
+; Finish-page checkbox — user explicitly asked for a desktop shortcut.
+Function CreateDesktopShortcutFromFinishPage
+ ${If} $NoShortcutMode = 1
+ Return
+ ${EndIf}
+ CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+ !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
+FunctionEnd
+
 Function CreateOrUpdateDesktopShortcut
  ; We used to use product name as MAINBINARYNAME
  ; migrate old shortcuts to target the new MAINBINARYNAME
@@ -954,11 +974,18 @@ Function CreateOrUpdateDesktopShortcut
  ${EndIf}
 
  ; Skip creating shortcut if in update mode or no shortcut mode
- ; but always create if migrating from wix
+ ; but always create if migrating from wix.
+ ; On update: do not recreate a shortcut the user deleted; refresh if present.
  ${If} $WixMode = 0
- ${If} $UpdateMode = 1
- ${OrIf} $NoShortcutMode = 1
+ ${If} $NoShortcutMode = 1
  Return
+ ${EndIf}
+ ${If} $UpdateMode = 1
+ ${If} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+ ; fall through to recreate/refresh
+ ${Else}
+ Return
+ ${EndIf}
  ${EndIf}
  ${EndIf}
 

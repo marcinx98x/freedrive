@@ -14,10 +14,11 @@ use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_dir
 use crate::my_drive::{
     begin_fetch_data_inflight, clear_delete_in_flight, clear_hydrate_cache_for_file,
     end_fetch_data_inflight, ensure_hydrated_plaintext_with_progress, fetch_folder_contents,
-    is_fetch_data_inflight, is_free_up_in_progress, is_path_under_active_delete,
-    is_path_under_active_free_up, is_under_my_drive, mark_delete_in_flight, mark_recent_hydrate,
-    pin_hydrated_cache_to_path, relative_path_from_sync_root, resolve_folder_id_for_fetch,
-    resolve_my_drive_root_id, was_recently_dehydrated, FolderIdSource,
+    forget_my_drive_placeholder, is_fetch_data_inflight, is_free_up_in_progress,
+    is_path_under_active_delete, is_path_under_active_delete_ancestor, is_path_under_active_free_up,
+    is_under_my_drive, mark_delete_in_flight, mark_recent_hydrate, pin_hydrated_cache_to_path,
+    relative_path_from_sync_root, resolve_folder_id_for_fetch, resolve_my_drive_root_id,
+    was_recently_dehydrated, FolderIdSource,
 };
 use crate::sync::log::sync_log;
 use serde::Serialize;
@@ -1254,6 +1255,25 @@ fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         ack_delete(info, STATUS_SUCCESS);
         return Ok(());
     }
+
+    // Ancestor folder soft-trash already covers this child — ACK + drop DB row, no HTTP.
+    if is_path_under_active_delete_ancestor(&full) {
+        cfapi_callback_log(&format!(
+            "NOTIFY_DELETE skipped (ancestor delete) {}",
+            full.display()
+        ));
+        ack_delete(info, STATUS_SUCCESS);
+        let db = db.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = forget_my_drive_placeholder(&db, &full) {
+                cfapi_callback_log(&format!(
+                    "NOTIFY_DELETE local forget failed: {e}"
+                ));
+            }
+        });
+        return Ok(());
+    }
+
     cfapi_callback_log(&format!("NOTIFY_DELETE {}", full.display()));
     // ACK first so Explorer removes locally; soft-trash on server runs async.
     // Suppress CLOSE upload / watcher re-upload while soft-trash is in flight.

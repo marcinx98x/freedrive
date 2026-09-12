@@ -828,6 +828,20 @@ impl ApiClient {
             .await
     }
 
+    /// Existence probe for a folder id (single page). Used before destructive sync.
+    pub async fn probe_folder(&self, folder_id: &str) -> AppResult<()> {
+        let _: FolderContents = self
+            .request_json(
+                reqwest::Method::GET,
+                &format!("/folders/{}?page_size=1", folder_id),
+                None,
+                false,
+                2,
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Fetch every page of folder contents so sync/orphan walks see the full set.
     async fn fetch_all_folder_pages(&self, base_path: &str) -> AppResult<FolderContents> {
         const PAGE_SIZE: u32 = 500;

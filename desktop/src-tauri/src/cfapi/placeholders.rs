@@ -1,6 +1,7 @@
 use crate::api::types::{FileRecord, Folder};
 use crate::cfapi::util::{
-    cf_operation_param_size, file_fs_metadata, file_identity, folder_fs_metadata, path_to_wide,
+    cf_operation_param_size, file_fs_metadata, file_identity, folder_fs_metadata, parse_file_identity,
+    path_to_wide,
 };
 use crate::cfapi::util::{notify_directory_updated, notify_item_updated};
 use crate::sync::log::sync_log;
@@ -10,17 +11,18 @@ use windows::core::{HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, GetLastError, NTSTATUS, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::{
     CfCloseHandle, CfConvertToPlaceholder, CfCreatePlaceholders, CfDehydratePlaceholder, CfExecute,
-    CfGetPlaceholderStateFromAttributeTag, CfOpenFileWithOplock, CfSetInSyncState, CfSetPinState,
-    CfUpdatePlaceholder, CF_CALLBACK_INFO, CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE,
-    CF_CONVERT_FLAG_MARK_IN_SYNC, CF_CREATE_FLAG_NONE, CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA,
-    CF_IN_SYNC_STATE_IN_SYNC, CF_OPEN_FILE_FLAG_EXCLUSIVE, CF_OPEN_FILE_FLAG_WRITE_ACCESS,
-    CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
-    CF_OPERATION_PARAMETERS_0_7, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
+    CfGetPlaceholderInfo, CfGetPlaceholderStateFromAttributeTag, CfOpenFileWithOplock,
+    CfSetInSyncState, CfSetPinState, CfUpdatePlaceholder, CF_CALLBACK_INFO,
+    CF_CONVERT_FLAG_FORCE_CONVERT_TO_CLOUD_FILE, CF_CONVERT_FLAG_MARK_IN_SYNC, CF_CREATE_FLAG_NONE,
+    CF_DEHYDRATE_FLAG_NONE, CF_FS_METADATA, CF_IN_SYNC_STATE_IN_SYNC, CF_OPEN_FILE_FLAG_EXCLUSIVE,
+    CF_OPEN_FILE_FLAG_NONE, CF_OPEN_FILE_FLAG_WRITE_ACCESS, CF_OPERATION_INFO,
+    CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_7,
+    CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PIN_STATE, CF_PIN_STATE_PINNED,
-    CF_PIN_STATE_UNSPECIFIED, CF_PIN_STATE_UNPINNED,
+    CF_PIN_STATE_UNSPECIFIED, CF_PIN_STATE_UNPINNED, CF_PLACEHOLDER_BASIC_INFO,
     CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
-    CF_PLACEHOLDER_STATE_PARTIAL, CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK,
+    CF_PLACEHOLDER_INFO_BASIC, CF_PLACEHOLDER_STATE_PARTIAL, CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK,
     CF_PLACEHOLDER_STATE_PLACEHOLDER, CF_SET_IN_SYNC_FLAG_NONE, CF_SET_PIN_FLAG_NONE,
     CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION, CF_UPDATE_FLAG_ENABLE_ON_DEMAND_POPULATION,
 };
@@ -631,6 +633,59 @@ pub fn is_cloud_placeholder(path: &Path) -> bool {
     }
     let state = unsafe { CfGetPlaceholderStateFromAttributeTag(attrs, 0) };
     (state.0 & CF_PLACEHOLDER_STATE_PLACEHOLDER.0) != 0
+}
+
+/// Read CfAPI FileIdentity (`file:` / `folder:` + remote id) from a placeholder on disk.
+pub fn read_placeholder_identity(path: &Path) -> Option<(String, String)> {
+    if !is_cloud_placeholder(path) {
+        return None;
+    }
+    let wide = path_to_wide(path);
+    let handle = unsafe { CfOpenFileWithOplock(PCWSTR(wide.as_ptr()), CF_OPEN_FILE_FLAG_NONE).ok()? };
+    let mut buf = vec![0u8; 1024];
+    let identity = (|| {
+        loop {
+            let mut returned = 0u32;
+            let result = unsafe {
+                CfGetPlaceholderInfo(
+                    handle,
+                    CF_PLACEHOLDER_INFO_BASIC,
+                    buf.as_mut_ptr() as *mut _,
+                    buf.len() as u32,
+                    Some(&mut returned),
+                )
+            };
+            match result {
+                Ok(()) => break,
+                Err(e) => {
+                    // ERROR_MORE_DATA (234) — grow buffer to returned length.
+                    if e.code().0 as u32 == 0x800700EA || e.code().0 as u32 == 234 {
+                        let need = returned.max(buf.len() as u32 + 256) as usize;
+                        if need <= buf.len() || need > 64 * 1024 {
+                            return None;
+                        }
+                        buf.resize(need, 0);
+                        continue;
+                    }
+                    return None;
+                }
+            }
+        }
+        let identity_offset = std::mem::offset_of!(CF_PLACEHOLDER_BASIC_INFO, FileIdentity);
+        if buf.len() < identity_offset + 1 {
+            return None;
+        }
+        let info = unsafe { &*(buf.as_ptr() as *const CF_PLACEHOLDER_BASIC_INFO) };
+        let len = info.FileIdentityLength as usize;
+        if len == 0 || identity_offset + len > buf.len() {
+            return None;
+        }
+        parse_file_identity(&buf[identity_offset..identity_offset + len])
+    })();
+    unsafe {
+        CfCloseHandle(handle);
+    }
+    identity
 }
 
 /// When Free up keeps local content (blob missing): clear UNPINNED arrows without shell notify.

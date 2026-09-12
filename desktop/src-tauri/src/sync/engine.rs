@@ -499,7 +499,28 @@ impl SyncEngine {
         {
             return;
         }
-        if is_my_drive_path(&from) || is_my_drive_path(&to) {
+        let from_my = is_my_drive_path(&from);
+        let to_my = is_my_drive_path(&to);
+        if from_my || to_my {
+            let engine = Arc::clone(self);
+            tauri::async_runtime::spawn(async move {
+                if from_my && to_my {
+                    if let Err(e) =
+                        crate::my_drive::rename_my_drive_path(&engine.api, &engine.db, &from, &to)
+                            .await
+                    {
+                        sync_log(format!(
+                            "My Drive rename failed {} → {}: {e}",
+                            from.display(),
+                            to.display()
+                        ));
+                    }
+                    return;
+                }
+                if from_my && !to_my {
+                    let _ = engine.delete_remote_file(&from).await;
+                }
+            });
             return;
         }
         let engine = Arc::clone(self);

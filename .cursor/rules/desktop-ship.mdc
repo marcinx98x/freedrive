@@ -1,0 +1,27 @@
+---
+description: Desktop ship — installer only, no per-user machine hacks
+alwaysApply: true
+---
+
+# Desktop ship (Windows) — DO NOT HACK THE USER MACHINE
+
+FreeDrive Desktop is shipped to **many users** via the NSIS installer. Fixes must live in the repo/installer, never as one-off changes on the developer's PC.
+
+## Allowed when shipping / updating desktop
+
+1. Change code in the repo (including [`desktop/src-tauri/windows/installer.nsi`](desktop/src-tauri/windows/installer.nsi) / hooks).
+2. `cd desktop` → `npm run build:exe` (produces `FreeDrive_*_x64-setup.exe`).
+3. Install for local verify with **only**:
+   - `npm run install:update` (NSIS `/UPDATE`), or
+   - tell the user the path to the setup.exe so **they** run it.
+
+## Forbidden
+
+- `WScript.Shell` / `CreateShortcut` / writing `.lnk` to Desktop or Start Menu
+- Manually copying `freedrive-desktop.exe` into `%LOCALAPPDATA%\FreeDrive` as a substitute for the installer (except emergency recovery the user explicitly requested)
+- “If shortcut missing, create it for this user” scripts
+- Any per-machine fix that other users would not get from the setup.exe
+
+## Shortcuts
+
+Desktop / Start Menu shortcuts are created **only** by NSIS (finish-page checkbox, silent/passive paths in `installer.nsi`). If shortcuts are broken for upgrades, fix `installer.nsi` and ship a new version — do not invent shortcuts on the agent host.

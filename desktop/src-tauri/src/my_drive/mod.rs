@@ -16,10 +16,11 @@ pub use provider::{
 
 #[cfg(windows)]
 pub use sync::{
-    clear_delete_in_flight, delete_my_drive_path, ensure_my_drive_folder_path, free_up_my_drive_path,
-    hydrate_my_drive_path, is_free_up_in_progress, is_path_under_active_delete,
-    is_path_under_active_free_up, mark_delete_in_flight, poll_my_drive,
-    register_free_up_auto_resume, take_pending_free_up_resume, try_claim_my_drive_upload,
+    clear_delete_in_flight, delete_my_drive_path, ensure_my_drive_folder_path,
+    forget_my_drive_placeholder, free_up_my_drive_path, hydrate_my_drive_path,
+    is_free_up_in_progress, is_path_under_active_delete, is_path_under_active_delete_ancestor,
+    is_path_under_active_free_up, mark_delete_in_flight, poll_my_drive, register_free_up_auto_resume,
+    rename_my_drive_path, take_pending_free_up_resume, try_claim_my_drive_upload,
     upload_my_drive_path, MyDriveBusyCb, MyDrivePollStats,
 };
 
@@ -125,4 +126,27 @@ pub fn clear_delete_in_flight(_path: &std::path::Path) {}
 #[cfg(not(windows))]
 pub fn is_path_under_active_delete(_path: &std::path::Path) -> bool {
     false
+}
+
+#[cfg(not(windows))]
+pub fn is_path_under_active_delete_ancestor(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn forget_my_drive_placeholder(
+    _db: &crate::db::DbHandle,
+    _path: &std::path::Path,
+) -> crate::error::AppResult<()> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub async fn rename_my_drive_path(
+    _api: &crate::api::ApiClient,
+    _db: &crate::db::DbHandle,
+    _from: &std::path::Path,
+    _to: &std::path::Path,
+) -> crate::error::AppResult<()> {
+    Ok(())
 }

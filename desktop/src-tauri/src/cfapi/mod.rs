@@ -15,8 +15,8 @@ pub use placeholders::{
     ensure_cloud_placeholder, finalize_hydrated_file, finalize_stream_placeholder,
     is_cloud_placeholder, is_dehydrated_placeholder, is_duplicate_placeholder_error,
     is_not_cloud_file_error, is_pinned, is_unpinned, mark_directory_partially_populated,
-    mark_hydrated_available, on_disk_allocated_bytes, refresh_placeholder_status,
-    MY_DRIVE_FOLDER_NAME,
+    mark_hydrated_available, on_disk_allocated_bytes, read_placeholder_identity,
+    refresh_placeholder_status, MY_DRIVE_FOLDER_NAME,
 };
 #[cfg(windows)]
 mod register;
