@@ -1,11 +1,11 @@
 use crate::api::ApiClient;
 use crate::cfapi::placeholders::{
     build_placeholder_infos, complete_fetch_placeholders, count_existing_children,
-    create_named_folder_placeholder, ensure_cloud_placeholder, finalize_stream_placeholder,
-    filter_new_entries, is_dehydrated_placeholder, is_duplicate_placeholder_error,
-    is_pinned,
-    mark_directory_populated, transfer_or_complete_fetch, transfer_placeholders_via_callback,
-    PlaceholderEntry, MY_DRIVE_FOLDER_NAME,
+    create_named_folder_placeholder, ensure_cloud_placeholder, finalize_hydrated_file,
+    finalize_stream_placeholder, filter_new_entries, is_cloud_placeholder,
+    is_dehydrated_placeholder, is_duplicate_placeholder_error, is_pinned,
+    mark_directory_populated, mark_hydrated_available, transfer_or_complete_fetch,
+    transfer_placeholders_via_callback, PlaceholderEntry, MY_DRIVE_FOLDER_NAME,
 };
 use crate::cfapi::util::parse_file_identity;
 use crate::db::DbHandle;
@@ -771,10 +771,13 @@ fn handle_fetch_data(
             return;
         };
         match pin_hydrated_cache_to_path(&cache_path, dest) {
-            Ok(()) => cfapi_callback_log(format!(
-                "FETCH_DATA pin-after-cancel ok file={remote_id} {}",
-                dest.display()
-            )),
+            Ok(()) => {
+                finalize_hydrated_file(dest, &remote_id);
+                cfapi_callback_log(format!(
+                    "FETCH_DATA pin-after-cancel ok file={remote_id} {}",
+                    dest.display()
+                ));
+            }
             Err(e) => cfapi_callback_log(format!(
                 "FETCH_DATA pin-after-cancel failed file={remote_id}: {e}"
             )),
@@ -877,6 +880,13 @@ fn handle_fetch_data(
         "FETCH_DATA transfer ok file={remote_id} bytes={transferred} in {:?}",
         transfer_started.elapsed()
     ));
+    if let Some(dest) = placeholder_path.as_ref() {
+        if is_cloud_placeholder(dest) {
+            mark_hydrated_available(dest);
+        } else {
+            finalize_hydrated_file(dest, &remote_id);
+        }
+    }
     Ok(())
 }
 

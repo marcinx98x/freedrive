@@ -337,11 +337,13 @@ pub async fn ensure_hydrated_plaintext_with_progress(
 
 /// Copy plaintext from hydrate_cache onto a My Drive placeholder path (shell hydrate / pin-after-cancel).
 pub fn pin_hydrated_cache_to_path(cache_path: &Path, dest: &Path) -> AppResult<()> {
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::copy(cache_path, dest)?;
-    Ok(())
+    crate::sync::suppress::run_with_active_suppress(dest, || {
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(cache_path, dest)?;
+        Ok(())
+    })
 }
 
 fn plaintext_hash_hex(data: &[u8]) -> String {

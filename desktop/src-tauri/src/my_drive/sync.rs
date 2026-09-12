@@ -3,8 +3,9 @@ use crate::auth_store::sync_root_dir;
 use crate::cfapi::{
     clear_explicit_pin_state, convert_file_to_placeholder, create_file_placeholder,
     create_named_folder_placeholder, dehydrate_placeholder_file, ensure_cloud_placeholder,
-    finalize_stream_placeholder, is_dehydrated_placeholder, is_duplicate_placeholder_error,
-    is_not_cloud_file_error, is_unpinned, mark_directory_partially_populated,
+    finalize_hydrated_file, finalize_stream_placeholder, is_cloud_placeholder,
+    is_dehydrated_placeholder, is_duplicate_placeholder_error, is_not_cloud_file_error,
+    is_unpinned, mark_directory_partially_populated, mark_hydrated_available,
     notify_directory_updated, on_disk_allocated_bytes, refresh_placeholder_status,
     MY_DRIVE_FOLDER_NAME,
 };
@@ -474,7 +475,7 @@ async fn poll_my_drive_folder(
     Ok(())
 }
 
-/// Clear leftover Explorer UNPINNED on hydrated synced files (stuck sync arrows after Free up).
+/// Clear leftover Explorer UNPINNED / reconvert demoted hydrated files (stuck sync arrows).
 fn heal_hydrated_unpinned_status(db: &DbHandle, parent_relative: &str, local_dir: &Path) {
     if is_free_up_in_progress() {
         return;
@@ -501,9 +502,6 @@ fn heal_hydrated_unpinned_status(db: &DbHandle, parent_relative: &str, local_dir
         if crate::sync::should_skip_file(&name) {
             continue;
         }
-        if !is_unpinned(&path) {
-            continue;
-        }
         if is_dehydrated_placeholder(&path) {
             continue;
         }
@@ -511,23 +509,35 @@ fn heal_hydrated_unpinned_status(db: &DbHandle, parent_relative: &str, local_dir
             continue;
         }
         let child_relative = join_my_drive_relative(parent_relative, &name);
-        let has_remote = {
+        let remote_id = {
             let Ok(conn) = db.lock() else {
                 continue;
             };
             my_drive_get_placeholder(&conn, &child_relative)
                 .ok()
                 .flatten()
-                .is_some()
+                .filter(|(_, ty, _)| ty == "file")
+                .map(|(id, _, _)| id)
         };
-        if !has_remote {
+        let Some(remote_id) = remote_id else {
+            continue;
+        };
+        // fs::copy demotion: plain local file still PINNED / no In-Sync → arrows.
+        if !is_cloud_placeholder(&path) {
+            finalize_hydrated_file(&path, &remote_id);
+            sync_log(format!(
+                "My Drive heal demoted hydrate — {}",
+                path.display()
+            ));
             continue;
         }
-        refresh_placeholder_status(&path);
-        sync_log(format!(
-            "My Drive heal UNPINNED status — {}",
-            path.display()
-        ));
+        if is_unpinned(&path) {
+            refresh_placeholder_status(&path);
+            sync_log(format!(
+                "My Drive heal UNPINNED status — {}",
+                path.display()
+            ));
+        }
     }
 }
 
@@ -1466,25 +1476,51 @@ pub async fn hydrate_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) 
         return Ok(());
     }
     if path.is_file() {
-        hydrate_my_drive_file(api, db, path, &relative).await?;
-        sync_log(format!("My Drive hydrated file — {}", relative));
+        if hydrate_my_drive_file(api, db, path, &relative).await? {
+            sync_log(format!("My Drive hydrated file — {}", relative));
+        }
         return Ok(());
     }
     Err(AppError::msg("path is not a file or folder"))
 }
 
+/// Returns `true` when content was fetched/copied onto `path`.
 async fn hydrate_my_drive_file(
     api: &ApiClient,
     db: &DbHandle,
     path: &Path,
     relative: &str,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
     if crate::sync::should_skip_file(file_name) {
-        return Ok(());
+        return Ok(false);
+    }
+    // Already on disk — do not re-copy from hydrate_cache (watcher feedback loop).
+    // Demoted plain files (after prior fs::copy) still need reconvert + In-Sync.
+    if !is_dehydrated_placeholder(path) {
+        let remote_id = {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            my_drive_get_placeholder(&conn, relative)?
+                .filter(|(_, ty, _)| ty == "file")
+                .map(|(id, _, _)| id)
+        };
+        if let Some(remote_id) = remote_id {
+            if !is_cloud_placeholder(path) {
+                finalize_hydrated_file(path, &remote_id);
+            } else {
+                mark_hydrated_available(path);
+            }
+        } else {
+            mark_hydrated_available(path);
+        }
+        sync_log(format!(
+            "My Drive hydrate skipped (already local) — {}",
+            relative
+        ));
+        return Ok(false);
     }
     let remote_id = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
@@ -1498,12 +1534,13 @@ async fn hydrate_my_drive_file(
             "My Drive hydrate skipped (no remote id) — {}",
             relative
         ));
-        return Ok(());
+        return Ok(false);
     };
     let cached = ensure_hydrated_plaintext(api, db, &remote_id).await?;
     crate::my_drive::pin_hydrated_cache_to_path(&cached, path)?;
     crate::my_drive::mark_recent_hydrate(&remote_id);
-    Ok(())
+    finalize_hydrated_file(path, &remote_id);
+    Ok(true)
 }
 
 async fn hydrate_my_drive_folder(api: &ApiClient, db: &DbHandle, dir: &Path) -> AppResult<()> {

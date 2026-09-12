@@ -1,7 +1,7 @@
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -39,5 +39,23 @@ impl WatcherSuppress {
 impl Default for WatcherSuppress {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Process-wide suppress used by My Drive pin/copy helpers outside SyncEngine call stacks.
+static ACTIVE_SUPPRESS: OnceLock<WatcherSuppress> = OnceLock::new();
+
+pub fn install_active_suppress(suppress: WatcherSuppress) {
+    let _ = ACTIVE_SUPPRESS.set(suppress);
+}
+
+pub fn run_with_active_suppress<F, R>(path: &Path, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    if let Some(suppress) = ACTIVE_SUPPRESS.get() {
+        suppress.run_suppressed(path, f)
+    } else {
+        f()
     }
 }

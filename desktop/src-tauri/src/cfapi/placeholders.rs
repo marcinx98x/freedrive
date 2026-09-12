@@ -16,8 +16,9 @@ use windows::Win32::Storage::CloudFilters::{
     CF_IN_SYNC_STATE_IN_SYNC, CF_OPEN_FILE_FLAG_EXCLUSIVE, CF_OPEN_FILE_FLAG_WRITE_ACCESS,
     CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0,
     CF_OPERATION_PARAMETERS_0_7, CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
-    CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PIN_STATE, CF_PIN_STATE_UNSPECIFIED,
-    CF_PIN_STATE_UNPINNED, CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
+    CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PIN_STATE, CF_PIN_STATE_PINNED,
+    CF_PIN_STATE_UNSPECIFIED, CF_PIN_STATE_UNPINNED,
+    CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
     CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
     CF_PLACEHOLDER_STATE_PARTIAL, CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK,
     CF_PLACEHOLDER_STATE_PLACEHOLDER, CF_SET_IN_SYNC_FLAG_NONE, CF_SET_PIN_FLAG_NONE,
@@ -572,6 +573,66 @@ pub fn clear_explicit_pin_state(path: &Path) -> AppResult<()> {
     set_pin_state(path, CF_PIN_STATE_UNSPECIFIED)
 }
 
+/// After content is local: mark In-Sync (check glyph). Clear UNPINNED only — keep PINNED (Always keep).
+pub fn mark_hydrated_available(path: &Path) {
+    if path.is_file() {
+        if let Err(e) = mark_file_in_sync(path) {
+            sync_log(format!(
+                "cfapi: In-Sync after hydrate warning {}: {}",
+                path.display(),
+                e
+            ));
+        }
+    }
+    if is_unpinned(path) {
+        if let Err(e) = clear_explicit_pin_state(path) {
+            sync_log(format!(
+                "cfapi: clear UNPINNED after hydrate warning {}: {}",
+                path.display(),
+                e
+            ));
+        }
+    }
+}
+
+/// Reconvert demoted plain files (after `fs::copy`) then In-Sync + shell notify.
+/// Restores PINNED when Always keep was set before finalize.
+pub fn finalize_hydrated_file(path: &Path, remote_id: &str) {
+    if remote_id.is_empty() || !path.is_file() {
+        mark_hydrated_available(path);
+        return;
+    }
+    let keep_pinned = is_pinned(path);
+    if let Err(e) = finalize_stream_placeholder(path, remote_id) {
+        sync_log(format!(
+            "cfapi: finalize hydrated warning {}: {}",
+            path.display(),
+            e
+        ));
+        mark_hydrated_available(path);
+    }
+    if keep_pinned {
+        if let Err(e) = set_pin_state(path, CF_PIN_STATE_PINNED) {
+            sync_log(format!(
+                "cfapi: restore PINNED after hydrate warning {}: {}",
+                path.display(),
+                e
+            ));
+        }
+    }
+}
+
+/// True when the path is a CfAPI cloud placeholder (reparse cloud file).
+pub fn is_cloud_placeholder(path: &Path) -> bool {
+    let wide = path_to_wide(path);
+    let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+    if attrs == INVALID_FILE_ATTRIBUTES {
+        return false;
+    }
+    let state = unsafe { CfGetPlaceholderStateFromAttributeTag(attrs, 0) };
+    (state.0 & CF_PLACEHOLDER_STATE_PLACEHOLDER.0) != 0
+}
+
 /// When Free up keeps local content (blob missing): clear UNPINNED arrows without shell notify.
 pub fn refresh_placeholder_status(path: &Path) {
     if path.is_file() {
@@ -637,7 +698,21 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
             "cfapi: finalize converting plain file {}",
             path.display()
         ));
-        convert_file_to_placeholder(path, remote_id)?;
+        if let Err(e) = convert_file_to_placeholder(path, remote_id) {
+            // Already a cloud file / invalid convert — still mark In-Sync so Status is not arrows.
+            let soft = is_cloud_placeholder(path)
+                || is_not_cloud_file_error(&e)
+                || e.to_string().contains("0x8007017C");
+            if soft {
+                sync_log(format!(
+                    "cfapi: finalize convert warning {}: {}",
+                    path.display(),
+                    e
+                ));
+            } else {
+                return Err(e);
+            }
+        }
     }
 
     if let Err(e) = mark_file_in_sync(path) {
@@ -647,13 +722,15 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
             e
         ));
     }
-    // Clear leftover UNPINNED (e.g. after Free up on ancestors) so Status is not stuck on arrows.
-    if let Err(e) = clear_explicit_pin_state(path) {
-        sync_log(format!(
-            "cfapi: finalize clear pin warning {}: {}",
-            path.display(),
-            e
-        ));
+    // Clear leftover UNPINNED only (keep Always keep PINNED).
+    if is_unpinned(path) {
+        if let Err(e) = clear_explicit_pin_state(path) {
+            sync_log(format!(
+                "cfapi: finalize clear pin warning {}: {}",
+                path.display(),
+                e
+            ));
+        }
     }
     if let Err(e) = crate::cfapi::storage_provider::set_status_property(path) {
         sync_log(format!(
@@ -671,16 +748,6 @@ pub fn finalize_stream_placeholder(path: &Path, remote_id: &str) -> AppResult<()
         path.display()
     ));
     Ok(())
-}
-
-fn is_cloud_placeholder(path: &Path) -> bool {
-    let wide = path_to_wide(path);
-    let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
-    if attrs == INVALID_FILE_ATTRIBUTES {
-        return false;
-    }
-    let state = unsafe { CfGetPlaceholderStateFromAttributeTag(attrs, 0) };
-    (state.0 & CF_PLACEHOLDER_STATE_PLACEHOLDER.0) != 0
 }
 
 /// True when the cloud file has no (or incomplete) local content — reading it would FETCH_DATA.

@@ -1,7 +1,7 @@
 {
   "name": "freedrive-desktop",
   "private": true,
-  "version": "0.1.66",
+  "version": "0.1.69",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -176,7 +176,11 @@ impl SyncEngine {
             }),
             computer_id: RwLock::new(None),
             computer_root_id: RwLock::new(None),
-            watcher_suppress: WatcherSuppress::new(),
+            watcher_suppress: {
+                let suppress = WatcherSuppress::new();
+                crate::sync::suppress::install_active_suppress(suppress.clone());
+                suppress
+            },
             shutdown: AtomicBool::new(false),
             my_drive_busy_count: AtomicUsize::new(0),
             journal_drain_lock: tokio::sync::Mutex::new(()),
@@ -287,6 +291,27 @@ impl SyncEngine {
         }
         if crate::cfapi::is_pinned(&path) {
             if crate::my_drive::is_path_under_active_free_up(&path) {
+                return;
+            }
+            // Already fully local — re-hydrate would fs::copy → watcher → busy flicker loop.
+            // Demoted PINNED plain files still need reconvert + In-Sync.
+            if path.is_file() && !crate::cfapi::is_dehydrated_placeholder(&path) {
+                let remote_id = (|| {
+                    let sync_root = crate::auth_store::sync_root_dir(false).ok()?;
+                    let rel =
+                        crate::my_drive::relative_path_from_sync_root(&sync_root, &path)?;
+                    let conn = self.db.lock().ok()?;
+                    crate::db::my_drive_get_placeholder(&conn, &rel)
+                        .ok()
+                        .flatten()
+                        .filter(|(_, ty, _)| ty == "file")
+                        .map(|(id, _, _)| id)
+                })();
+                if let Some(id) = remote_id {
+                    crate::cfapi::finalize_hydrated_file(&path, &id);
+                } else {
+                    crate::cfapi::mark_hydrated_available(&path);
+                }
                 return;
             }
             let engine = Arc::clone(self);
