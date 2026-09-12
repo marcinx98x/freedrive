@@ -16,8 +16,9 @@ pub use provider::{
 
 #[cfg(windows)]
 pub use sync::{
-    delete_my_drive_path, ensure_my_drive_folder_path, free_up_my_drive_path, hydrate_my_drive_path,
-    is_free_up_in_progress, is_path_under_active_free_up, poll_my_drive,
+    clear_delete_in_flight, delete_my_drive_path, ensure_my_drive_folder_path, free_up_my_drive_path,
+    hydrate_my_drive_path, is_free_up_in_progress, is_path_under_active_delete,
+    is_path_under_active_free_up, mark_delete_in_flight, poll_my_drive,
     register_free_up_auto_resume, take_pending_free_up_resume, try_claim_my_drive_upload,
     upload_my_drive_path, MyDriveBusyCb, MyDrivePollStats,
 };
@@ -112,5 +113,16 @@ pub fn is_free_up_in_progress() -> bool {
 
 #[cfg(not(windows))]
 pub fn is_path_under_active_free_up(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn mark_delete_in_flight(_path: &std::path::Path) {}
+
+#[cfg(not(windows))]
+pub fn clear_delete_in_flight(_path: &std::path::Path) {}
+
+#[cfg(not(windows))]
+pub fn is_path_under_active_delete(_path: &std::path::Path) -> bool {
     false
 }

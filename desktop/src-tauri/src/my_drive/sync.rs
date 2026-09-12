@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -293,6 +293,44 @@ pub fn is_free_up_in_progress() -> bool {
         .ok()
         .and_then(|g| g.as_ref().map(|_| ()))
         .is_some()
+}
+
+/// How long a delete-in-flight mark suppresses CLOSE upload / re-upload (Explorer delete race).
+const DELETE_IN_FLIGHT_TTL: Duration = Duration::from_secs(60);
+
+/// Paths (files or folder prefixes) with soft-trash in flight after NOTIFY_DELETE ACK.
+static DELETE_IN_FLIGHT: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+
+fn delete_in_flight() -> &'static Mutex<HashMap<PathBuf, Instant>> {
+    DELETE_IN_FLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Mark `path` so NOTIFY_FILE_CLOSE / watcher uploads skip it (and descendants for folders).
+pub fn mark_delete_in_flight(path: &Path) {
+    let Ok(mut map) = delete_in_flight().lock() else {
+        return;
+    };
+    let now = Instant::now();
+    map.retain(|_, at| now.duration_since(*at) < DELETE_IN_FLIGHT_TTL);
+    map.insert(path.to_path_buf(), now);
+}
+
+/// Clear the mark for `path` after soft-trash finishes (success or error).
+pub fn clear_delete_in_flight(path: &Path) {
+    let Ok(mut map) = delete_in_flight().lock() else {
+        return;
+    };
+    map.remove(path);
+}
+
+/// True while Explorer delete soft-trash is in flight for `path` or an ancestor.
+pub fn is_path_under_active_delete(path: &Path) -> bool {
+    let Ok(mut map) = delete_in_flight().lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    map.retain(|_, at| now.duration_since(*at) < DELETE_IN_FLIGHT_TTL);
+    map.keys().any(|root| path_is_under_prefix(path, root))
 }
 
 fn path_is_under_prefix(path: &Path, root: &Path) -> bool {

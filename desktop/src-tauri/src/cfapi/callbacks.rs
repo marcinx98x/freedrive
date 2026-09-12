@@ -12,9 +12,10 @@ use crate::db::DbHandle;
 use crate::error::AppResult;
 use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_directory_updated};
 use crate::my_drive::{
-    begin_fetch_data_inflight, clear_hydrate_cache_for_file, end_fetch_data_inflight,
-    ensure_hydrated_plaintext_with_progress, fetch_folder_contents, is_fetch_data_inflight,
-    is_free_up_in_progress, is_path_under_active_free_up, is_under_my_drive, mark_recent_hydrate,
+    begin_fetch_data_inflight, clear_delete_in_flight, clear_hydrate_cache_for_file,
+    end_fetch_data_inflight, ensure_hydrated_plaintext_with_progress, fetch_folder_contents,
+    is_fetch_data_inflight, is_free_up_in_progress, is_path_under_active_delete,
+    is_path_under_active_free_up, is_under_my_drive, mark_delete_in_flight, mark_recent_hydrate,
     pin_hydrated_cache_to_path, relative_path_from_sync_root, resolve_folder_id_for_fetch,
     resolve_my_drive_root_id, was_recently_dehydrated, FolderIdSource,
 };
@@ -965,6 +966,14 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         return Ok(());
     }
 
+    if is_path_under_active_delete(&full) {
+        cfapi_callback_log(&format!(
+            "NOTIFY_FILE_CLOSE skipped (delete) {}",
+            full.display()
+        ));
+        return Ok(());
+    }
+
     if is_dehydrated_placeholder(&full) {
         cfapi_callback_log(&format!(
             "NOTIFY_FILE_CLOSE skipped (dehydrated) {}",
@@ -1045,7 +1054,10 @@ fn handle_notify_file_close(info: &CF_CALLBACK_INFO) -> Result<(), String> {
             clear_hydrate_cache_for_file(&id);
         }
         tokio::time::sleep(Duration::from_millis(400)).await;
-        if is_fetch_data_inflight(&id) || is_path_under_active_free_up(&full) {
+        if is_fetch_data_inflight(&id)
+            || is_path_under_active_free_up(&full)
+            || is_path_under_active_delete(&full)
+        {
             return;
         }
         match finalize_stream_placeholder(&full, &id) {
@@ -1244,9 +1256,13 @@ fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
     }
     cfapi_callback_log(&format!("NOTIFY_DELETE {}", full.display()));
     // ACK first so Explorer removes locally; soft-trash on server runs async.
+    // Suppress CLOSE upload / watcher re-upload while soft-trash is in flight.
+    mark_delete_in_flight(&full);
     ack_delete(info, STATUS_SUCCESS);
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::my_drive::delete_my_drive_path(&api, &db, &full).await {
+        let result = crate::my_drive::delete_my_drive_path(&api, &db, &full).await;
+        clear_delete_in_flight(&full);
+        if let Err(e) = result {
             cfapi_callback_log(&format!("NOTIFY_DELETE failed: {}", e));
         }
     });

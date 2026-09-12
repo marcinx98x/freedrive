@@ -343,8 +343,14 @@ impl SyncEngine {
             if crate::cfapi::is_dehydrated_placeholder(&path) {
                 return;
             }
+            if crate::my_drive::is_path_under_active_delete(&path) {
+                return;
+            }
             let engine = Arc::clone(self);
             tauri::async_runtime::spawn(async move {
+                if crate::my_drive::is_path_under_active_delete(&path) {
+                    return;
+                }
                 let _ = engine.sync_my_drive_path(&path).await;
             });
             return;
@@ -3037,6 +3043,13 @@ impl SyncEngine {
         self: &Arc<Self>,
         path: &Path,
     ) -> AppResult<Option<bool>> {
+        if crate::my_drive::is_path_under_active_delete(path) {
+            sync_log(format!(
+                "my drive upload skipped (delete in flight) — {}",
+                path.display()
+            ));
+            return Ok(None);
+        }
         let Some(_claim) = crate::my_drive::try_claim_my_drive_upload(path) else {
             sync_log(format!(
                 "my drive upload skipped (already in flight) — {}",
@@ -3051,6 +3064,13 @@ impl SyncEngine {
             size
         ));
         let _permit = self.acquire_upload_permit().await?;
+        if crate::my_drive::is_path_under_active_delete(path) {
+            sync_log(format!(
+                "my drive upload skipped (delete in flight after wait) — {}",
+                path.display()
+            ));
+            return Ok(None);
+        }
         sync_log(format!(
             "my drive upload started — {} ({} bytes)",
             path.display(),
