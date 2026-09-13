@@ -15,6 +15,17 @@ import type { RootStackParamList } from "../navigation/types";
 import { isSpreadsheetFile } from "./sheetCodec";
 import { assertTransferAllowed } from "../settings/wifiGate";
 
+const STORAGE_FULL_MESSAGE =
+  "Brak miejsca w aplikacji na telefonie. Wyczyść cache FreeDrive albo zwolnij miejsce na urządzeniu.";
+
+export function openFileErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/SQLITE_FULL|disk is full|database or disk is full/i.test(raw)) {
+    return STORAGE_FULL_MESSAGE;
+  }
+  return raw;
+}
+
 type DownloadsNativeModule = {
   beginDownload(fileName: string): Promise<number>;
   completeDownload(
@@ -451,7 +462,7 @@ export async function openFile(
       Alert.alert("Downloaded", `Saved to cache as ${file.name}`);
     }
   } catch (err) {
-    Alert.alert("Cannot open file", err instanceof Error ? err.message : String(err));
+    Alert.alert("Cannot open file", openFileErrorMessage(err));
   }
 }
 
@@ -465,7 +476,7 @@ export async function downloadFileToShare(file: FileItem): Promise<void> {
       Alert.alert("Ready", file.name);
     }
   } catch (err) {
-    Alert.alert("Share failed", err instanceof Error ? err.message : String(err));
+    Alert.alert("Share failed", openFileErrorMessage(err));
   }
 }
 
@@ -524,7 +535,7 @@ export async function downloadFileToDevice(file: FileItem): Promise<void> {
     await downloadsModule.completeDownload(notificationId, file.name, mime, savedUri);
     notificationId = undefined;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = openFileErrorMessage(err);
     if (notificationId != null && downloadsModule) {
       try {
         await downloadsModule.failDownload(notificationId, message);

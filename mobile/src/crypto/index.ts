@@ -12,6 +12,13 @@ const DEVICE_UEK_PREFIX = "fd_device_uek_";
 const FILE_KEY_PREFIX = "fd_file_key_";
 
 let uekRaw: Uint8Array | null = null;
+/** Session cache. Do not persist every server key — Android AsyncStorage is SQLite and fills (SQLITE_FULL). */
+const fileKeyMemory = new Map<string, string>();
+
+function isStorageFullError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /SQLITE_FULL|disk is full|database or disk is full/i.test(msg);
+}
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -143,6 +150,7 @@ export function isUnlocked(): boolean {
 
 export function lockCrypto(): void {
   uekRaw = null;
+  fileKeyMemory.clear();
 }
 
 export async function lockAndClearDevice(userId: string | null): Promise<void> {
@@ -151,24 +159,25 @@ export async function lockAndClearDevice(userId: string | null): Promise<void> {
 }
 
 async function storeFileKeyB64(fileId: string, keyB64url: string): Promise<void> {
-  await AsyncStorage.setItem(FILE_KEY_PREFIX + fileId, keyB64url);
+  fileKeyMemory.set(fileId, keyB64url);
+  try {
+    await AsyncStorage.setItem(FILE_KEY_PREFIX + fileId, keyB64url);
+  } catch (err) {
+    if (!isStorageFullError(err)) {
+      /* keep the in-memory copy; a full local DB must not block open */
+    }
+  }
 }
 
 async function getStoredFileKeyB64(fileId: string): Promise<string | null> {
-  return AsyncStorage.getItem(FILE_KEY_PREFIX + fileId);
-}
-
-async function pullKeysFromServer(): Promise<void> {
-  if (!isUnlocked() || !uekRaw) return;
-  const keys = await api.listEncryptionKeys();
-  for (const entry of keys) {
-    if (!entry?.file_id || !entry?.wrapped_file_key) continue;
-    try {
-      const raw = await unwrapRawKey(entry.wrapped_file_key, uekRaw);
-      await storeFileKeyB64(entry.file_id, arrayBufferToBase64Url(raw));
-    } catch {
-      /* skip invalid */
-    }
+  const mem = fileKeyMemory.get(fileId);
+  if (mem) return mem;
+  try {
+    const stored = await AsyncStorage.getItem(FILE_KEY_PREFIX + fileId);
+    if (stored) fileKeyMemory.set(fileId, stored);
+    return stored;
+  } catch {
+    return null;
   }
 }
 
@@ -185,17 +194,11 @@ export async function unlockWithPassword(password: string, userId: string): Prom
   const kek = await deriveKek(password, salt);
   uekRaw = await unwrapRawKey(account.wrapped_uek, kek);
   await persistDeviceUek(userId);
-  // Sync file keys in background — do not block login UI.
-  void pullKeysFromServer().catch(() => {});
+  // File keys are fetched on demand. Bulk-writing them into AsyncStorage fills Android SQLite.
 }
 
 export async function tryRestoreUnlock(userId: string): Promise<boolean> {
-  const ok = await restoreDeviceUek(userId);
-  if (ok) {
-    // Local UEK is enough for boot; key sync must not block the splash screen.
-    void pullKeysFromServer().catch(() => {});
-  }
-  return ok;
+  return restoreDeviceUek(userId);
 }
 
 export async function ensureFileKey(fileId: string): Promise<Uint8Array> {

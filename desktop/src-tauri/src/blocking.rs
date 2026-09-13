@@ -25,6 +25,31 @@ where
         .map_err(|_| "async bridge thread disconnected".to_string())?
 }
 
+/// Run `future` on the Tauri/app tokio runtime (the one that owns reqwest), then wait.
+/// A private `current_thread` runtime sharing that client hangs after upload storms.
+pub fn run_on_app_runtime_with_timeout<T, F>(timeout: Duration, future: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T, String>> + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel(1);
+    tauri::async_runtime::spawn(async move {
+        let result = match tokio::time::timeout(timeout, future).await {
+            Ok(inner) => inner,
+            Err(_) => Err("operation timed out".to_string()),
+        };
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(timeout + Duration::from_secs(5)) {
+        Ok(Ok(v)) => Ok(v),
+        Ok(Err(e)) => Err(e),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err("operation timed out".to_string()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("async bridge thread disconnected".to_string())
+        }
+    }
+}
+
 /// Like `run_async_future`, but returns an error if the future does not complete in time.
 pub fn run_async_future_with_timeout<T, F>(
     timeout: Duration,

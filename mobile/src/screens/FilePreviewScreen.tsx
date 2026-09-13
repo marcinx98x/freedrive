@@ -27,6 +27,7 @@ import { SheetEditorView, loadAndSerializeSheet } from "../components/SheetEdito
 import {
   canPrefetchMedia,
   downloadAndDecrypt,
+  openFileErrorMessage,
   isImageFile,
   isTooLargeForInAppPreview,
   isVideoFile,
@@ -167,7 +168,7 @@ export function FilePreviewScreen({ route, navigation }: Props) {
       } catch (err) {
         setErrorById((prev) => ({
           ...prev,
-          [item.id]: err instanceof Error ? err.message : String(err),
+          [item.id]: openFileErrorMessage(err),
         }));
       } finally {
         loadingRef.current.delete(item.id);

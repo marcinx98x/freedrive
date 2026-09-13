@@ -53,6 +53,9 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 /// Large My Drive opens (download + decrypt) can take many minutes — do not use the
 /// short placeholder timeout. Google Drive for desktop likewise waits for full hydrate.
 const HYDRATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
+/// Small cloud opens should fail in about a minute, not sit on a 2h hydrate timeout.
+const HYDRATE_TIMEOUT_BASE: Duration = Duration::from_secs(90);
+const HYDRATE_PERMIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Cap concurrent Explorer hydrates so a folder stampede cannot starve JSON/API under load.
 const FETCH_DATA_HYDRATE_CONCURRENCY: usize = 4;
 const CLOSE_DEBOUNCE: Duration = Duration::from_secs(3);
@@ -65,6 +68,13 @@ static FETCH_DATA_HYDRATE_SEM: OnceLock<tokio::sync::Semaphore> = OnceLock::new(
 
 fn close_debounce_map() -> &'static Mutex<HashMap<String, Instant>> {
     CLOSE_DEBOUNCE_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn fetch_hydrate_timeout(length: u64) -> Duration {
+    let extra_secs = (length / (1024 * 1024)).saturating_mul(2);
+    HYDRATE_TIMEOUT_BASE
+        .saturating_add(Duration::from_secs(extra_secs))
+        .min(HYDRATE_TIMEOUT)
 }
 
 fn fetch_data_hydrate_sem() -> &'static tokio::sync::Semaphore {
@@ -732,16 +742,24 @@ fn handle_fetch_data(
     };
 
     let hydrate_started = Instant::now();
+    let hydrate_timeout = fetch_hydrate_timeout(req_length);
     let remote_id_for_hydrate = remote_id.clone();
     let db_for_hydrate = db_ctx.clone();
     let api_for_hydrate = api_ctx.clone();
-    let hydrate_result = crate::blocking::run_async_future_with_timeout(
-        HYDRATE_TIMEOUT,
+    cfapi_callback_log(format!(
+        "FETCH_DATA waiting for hydrate permit file={remote_id} timeout={hydrate_timeout:?}"
+    ));
+    let hydrate_result = crate::blocking::run_on_app_runtime_with_timeout(
+        hydrate_timeout,
         async move {
-            let _permit = fetch_data_hydrate_sem()
-                .acquire()
-                .await
-                .map_err(|_| "hydrate semaphore closed".to_string())?;
+            let permit = tokio::time::timeout(
+                HYDRATE_PERMIT_TIMEOUT,
+                fetch_data_hydrate_sem().acquire(),
+            )
+            .await
+            .map_err(|_| "hydrate permit timed out".to_string())?
+            .map_err(|_| "hydrate semaphore closed".to_string())?;
+            let _permit = permit;
             ensure_hydrated_plaintext_with_progress(
                 &api_for_hydrate,
                 &db_for_hydrate,
