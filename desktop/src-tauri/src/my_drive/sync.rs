@@ -1576,12 +1576,19 @@ fn heal_hydrated_unpinned_status(db: &DbHandle, parent_relative: &str, local_dir
     if is_free_up_in_progress() {
         return;
     }
-    if is_unpinned(local_dir) && !is_path_under_active_free_up(local_dir) {
+    // Folder Status is independent of children. Mark In-Sync even when UNPINNED is already clear.
+    if !is_path_under_active_free_up(local_dir)
+        && !is_path_under_active_delete(local_dir)
+        && !is_path_under_active_rename(local_dir)
+    {
+        let was_unpinned = is_unpinned(local_dir);
         refresh_placeholder_status(local_dir);
-        sync_log(format!(
-            "My Drive heal UNPINNED folder — {}",
-            local_dir.display()
-        ));
+        if was_unpinned {
+            sync_log(format!(
+                "My Drive heal UNPINNED folder — {}",
+                local_dir.display()
+            ));
+        }
     }
     let Ok(entries) = std::fs::read_dir(local_dir) else {
         return;
@@ -3766,6 +3773,13 @@ fn clear_unpinned_dirs_under(dir: &Path) {
                 refresh_placeholder_status(&path);
             }
         }
+    }
+    // Free-up root itself stays on arrows if only children were cleared.
+    if dir.is_dir()
+        && !is_path_under_active_delete(dir)
+        && !is_path_under_active_rename(dir)
+    {
+        refresh_placeholder_status(dir);
     }
 }
 

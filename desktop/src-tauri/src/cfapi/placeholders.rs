@@ -688,28 +688,35 @@ pub fn read_placeholder_identity(path: &Path) -> Option<(String, String)> {
     identity
 }
 
-/// When Free up keeps local content (blob missing): clear UNPINNED arrows without shell notify.
+/// Clear leftover sync arrows: mark In-Sync (files and folders) and drop UNPINNED.
+/// PINNED (Always keep) is left alone.
 pub fn refresh_placeholder_status(path: &Path) {
-    if path.is_file() {
-        if let Err(e) = mark_file_in_sync(path) {
+    if let Err(e) = mark_placeholder_in_sync(path) {
+        sync_log(format!(
+            "cfapi: In-Sync after free-up warning {}: {}",
+            path.display(),
+            e
+        ));
+    }
+    if is_unpinned(path) && !is_pinned(path) {
+        if let Err(e) = clear_explicit_pin_state(path) {
             sync_log(format!(
-                "cfapi: In-Sync after free-up warning {}: {}",
+                "cfapi: clear pin after free-up warning {}: {}",
                 path.display(),
                 e
             ));
         }
     }
-    if let Err(e) = clear_explicit_pin_state(path) {
-        sync_log(format!(
-            "cfapi: clear pin after free-up warning {}: {}",
-            path.display(),
-            e
-        ));
-    }
 }
 
-fn mark_file_in_sync(path: &Path) -> AppResult<()> {
+/// Mark a file or directory placeholder In-Sync so Explorer Status is not sync arrows.
+pub fn mark_placeholder_in_sync(path: &Path) -> AppResult<()> {
     let wide = path_to_wide(path);
+    let flags = if path.is_dir() {
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
+    } else {
+        FILE_FLAG_OPEN_REPARSE_POINT
+    };
     let handle = unsafe {
         CreateFileW(
             PCWSTR(wide.as_ptr()),
@@ -717,10 +724,10 @@ fn mark_file_in_sync(path: &Path) -> AppResult<()> {
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             None,
             OPEN_EXISTING,
-            FILE_FLAG_OPEN_REPARSE_POINT,
+            flags,
             None,
         )
-        .map_err(|e| AppError::msg(format!("open file for CfSetInSyncState: {}", e)))?
+        .map_err(|e| AppError::msg(format!("open for CfSetInSyncState: {}", e)))?
     };
     let result = unsafe {
         CfSetInSyncState(
@@ -735,6 +742,10 @@ fn mark_file_in_sync(path: &Path) -> AppResult<()> {
         let _ = CloseHandle(handle);
     }
     result
+}
+
+fn mark_file_in_sync(path: &Path) -> AppResult<()> {
+    mark_placeholder_in_sync(path)
 }
 
 /// After Stream upload/close: ensure cloud placeholder + In-Sync.
@@ -899,7 +910,10 @@ pub unsafe fn transfer_or_complete_fetch(
 
 /// Mark a placeholder directory as fully populated (no further FETCH_PLACEHOLDERS).
 pub fn mark_directory_populated(dir: &Path) -> AppResult<()> {
-    update_directory_population(dir, CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION)
+    update_directory_population(dir, CF_UPDATE_FLAG_DISABLE_ON_DEMAND_POPULATION)?;
+    // Population flag alone leaves the folder NOT_IN_SYNC (sync arrows) even when children are cloud-only.
+    refresh_placeholder_status(dir);
+    Ok(())
 }
 
 /// Re-enable on-demand population so Explorer will send FETCH_PLACEHOLDERS again
