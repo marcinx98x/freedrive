@@ -276,6 +276,9 @@ export function MainApp({ user, serverUrl, onLogout, onUserUpdate }: MainAppProp
         setActivityErrorsOnly(true);
         setView("sync");
         break;
+      case "log-list":
+        api.openSyncLogFolder().catch(console.error);
+        break;
       case "about":
         setAboutOpen(true);
         break;

@@ -903,7 +903,7 @@ impl ApiClient {
                 None,
                 client_mutation_id,
                 false,
-                2,
+                6,
             )
             .await
         {
@@ -930,7 +930,7 @@ impl ApiClient {
                 None,
                 client_mutation_id,
                 false,
-                2,
+                6,
             )
             .await
         {
@@ -976,7 +976,7 @@ impl ApiClient {
             Some(serde_json::Value::Object(body)),
             client_mutation_id,
             false,
-            2,
+            6,
         )
         .await
     }
@@ -1002,7 +1002,7 @@ impl ApiClient {
                 Some(serde_json::Value::Object(body)),
                 client_mutation_id,
                 false,
-                2,
+                6,
             )
             .await?;
         // New API returns Folder; older servers returned {"message":"updated"}.
@@ -1145,7 +1145,16 @@ impl ApiClient {
         }
 
         if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && rl_retries > 0 {
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            // Escalate backoff so user mutations (delete/rename) survive free-up API storms.
+            let delay_ms = match rl_retries {
+                n if n >= 6 => 1_000,
+                5 => 2_000,
+                4 => 5_000,
+                3 => 10_000,
+                2 => 15_000,
+                _ => 20_000,
+            };
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             return Box::pin(self.request_json_mutation_inner(
                 method,
                 path,
@@ -1596,7 +1605,9 @@ impl ApiClient {
         if let Some(parent) = tmp.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        self.download_file_to_path(file_id, key_b64url, &tmp).await?;
+        let _ = self
+            .download_file_to_path(file_id, key_b64url, &tmp)
+            .await?;
         let bytes = tokio::fs::read(&tmp).await?;
         let _ = tokio::fs::remove_file(&tmp).await;
         Ok(bytes)
@@ -1640,13 +1651,14 @@ impl ApiClient {
     }
 
     /// Download ciphertext to disk (streamed), decrypt, write plaintext to `dest`.
-    /// Avoids buffering the whole HTTP body as a second in-memory copy during transfer.
+    /// Returns ciphertext byte length (before decrypt). Avoids buffering the whole HTTP body
+    /// as a second in-memory copy during transfer.
     pub async fn download_file_to_path(
         &self,
         file_id: &str,
         key_b64url: Option<&str>,
         dest: &Path,
-    ) -> AppResult<()> {
+    ) -> AppResult<u64> {
         self.download_file_to_path_with_progress(file_id, key_b64url, dest, None)
             .await
     }
@@ -1657,7 +1669,7 @@ impl ApiClient {
         key_b64url: Option<&str>,
         dest: &Path,
         on_progress: Option<&UploadProgressCb>,
-    ) -> AppResult<()> {
+    ) -> AppResult<u64> {
         let mut auth_retry = false;
         let mut rl_retries = 2u32;
         let mut transient_retries = 3u32;
@@ -1668,7 +1680,7 @@ impl ApiClient {
                 .download_file_to_path_once(file_id, key_b64url, dest, on_progress)
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(cipher_len) => return Ok(cipher_len),
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.contains("auth retry") {
@@ -1704,7 +1716,7 @@ impl ApiClient {
         key_b64url: Option<&str>,
         dest: &Path,
         on_progress: Option<&UploadProgressCb>,
-    ) -> AppResult<()> {
+    ) -> AppResult<u64> {
         use futures_util::StreamExt;
         use tokio::io::AsyncWriteExt;
 
@@ -1757,10 +1769,10 @@ impl ApiClient {
         let _ = tokio::fs::remove_file(&enc_path).await;
         let _ = tokio::fs::remove_file(dest).await;
 
+        let mut downloaded = 0u64;
         {
             let mut file = tokio::fs::File::create(&enc_path).await?;
             let mut stream = res.bytes_stream();
-            let mut downloaded = 0u64;
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk
                     .map_err(|e| AppError::msg(format!("download interrupted: {e}")))?;
@@ -1773,6 +1785,7 @@ impl ApiClient {
         }
         report_progress(on_progress, 90, 100);
 
+        let ciphertext_len = downloaded;
         let result = async {
             if iv_header.is_empty() {
                 tokio::fs::rename(&enc_path, dest).await?;
@@ -1805,8 +1818,9 @@ impl ApiClient {
             let plain_tmp = dest.with_extension("plain.tmp");
             let _ = tokio::fs::remove_file(&plain_tmp).await;
             let _ = tokio::fs::remove_file(dest).await;
+            return result.map(|_| 0);
         }
-        result
+        result.map(|_| ciphertext_len)
     }
 
     async fn resumable_stream_once(

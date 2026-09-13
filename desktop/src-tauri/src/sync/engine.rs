@@ -515,6 +515,7 @@ impl SyncEngine {
                             to.display()
                         ));
                     }
+                    engine.drain_my_drive_upload_retries().await;
                     return;
                 }
                 if from_my && !to_my {
@@ -738,8 +739,10 @@ impl SyncEngine {
         if self.is_paused() {
             return;
         }
+        // Overwrite Offline/Error so a brief 502 (or prior Error) does not sticky-block
+        // "Syncing My Drive…" while poll/heal is actually running. Paused stays blocked.
         match self.get_status().status {
-            SyncStatusKind::Error | SyncStatusKind::Offline | SyncStatusKind::Paused => {}
+            SyncStatusKind::Paused => {}
             _ => self.set_status(SyncStatusKind::Syncing, message),
         }
     }
@@ -757,8 +760,10 @@ impl SyncEngine {
         if self.is_paused() || self.is_initial_sync_running() {
             return;
         }
+        // Also clear Offline: mark_my_drive_busy used to skip Offline→Syncing, leaving
+        // "Waiting for server…" stuck after poll finished under a stale Offline status.
         match self.get_status().status {
-            SyncStatusKind::Syncing => {
+            SyncStatusKind::Syncing | SyncStatusKind::Offline => {
                 if had_error {
                     self.set_status(
                         SyncStatusKind::Error,
@@ -2959,19 +2964,47 @@ impl SyncEngine {
         if self.is_paused() || self.is_initial_sync_running() {
             return Ok(());
         }
-        // Prefer finishing Free up over a full poll when a previous job ended incompletely.
-        if let Some(resume) = crate::my_drive::take_pending_free_up_resume() {
-            sync_log(format!(
-                "My Drive free-up auto-resume enqueue (poll) — {}",
-                resume.display()
-            ));
-            self.enqueue_my_drive_free_up(resume);
+
+        // Drive-like: user mutations (offline delete/move catch-up) must not be starved by Free up.
+        let free_up_busy = crate::my_drive::is_free_up_in_progress();
+        let pending_resume = crate::my_drive::take_pending_free_up_resume();
+        if free_up_busy || pending_resume.is_some() {
+            sync_log(if free_up_busy {
+                "poll My Drive offline-only — free-up in progress"
+            } else {
+                "poll My Drive offline-only — before free-up auto-resume"
+            });
+            let eng = Arc::clone(self);
+            let started = Arc::new(AtomicBool::new(false));
+            let started_cb = Arc::clone(&started);
+            let on_busy: crate::my_drive::MyDriveBusyCb = Arc::new(move |msg: &str| {
+                if started_cb
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    eng.mark_my_drive_busy(msg);
+                }
+            });
+            let offline_err =
+                crate::my_drive::poll_my_drive_offline_only(&self.api, &self.db, Some(on_busy))
+                    .await
+                    .err();
+            if started.load(Ordering::SeqCst) {
+                self.release_my_drive_busy(offline_err.is_some());
+            }
+            if let Some(resume) = pending_resume {
+                sync_log(format!(
+                    "My Drive free-up auto-resume enqueue (poll) — {}",
+                    resume.display()
+                ));
+                self.enqueue_my_drive_free_up(resume);
+            }
+            if let Some(e) = offline_err {
+                return Err(e);
+            }
             return Ok(());
         }
-        if crate::my_drive::is_free_up_in_progress() {
-            sync_log("poll My Drive skipped — free-up in progress");
-            return Ok(());
-        }
+
         let mirror = sync_mode_is_mirror(&self.db);
         let eng = Arc::clone(self);
         let started = Arc::new(AtomicBool::new(false));
@@ -3064,9 +3097,12 @@ impl SyncEngine {
         self: &Arc<Self>,
         path: &Path,
     ) -> AppResult<Option<bool>> {
-        if crate::my_drive::is_path_under_active_delete(path) {
+        if crate::my_drive::is_path_under_active_delete(path)
+            || crate::my_drive::is_path_under_active_rename(path)
+            || crate::my_drive::is_my_drive_upload_cancelled(path)
+        {
             sync_log(format!(
-                "my drive upload skipped (delete in flight) — {}",
+                "my drive upload skipped (user mutation) — {}",
                 path.display()
             ));
             return Ok(None);
@@ -3085,9 +3121,13 @@ impl SyncEngine {
             size
         ));
         let _permit = self.acquire_upload_permit().await?;
-        if crate::my_drive::is_path_under_active_delete(path) {
+        if crate::my_drive::is_path_under_active_delete(path)
+            || crate::my_drive::is_path_under_active_rename(path)
+            || crate::my_drive::is_my_drive_upload_cancelled(path)
+            || !path.is_file()
+        {
             sync_log(format!(
-                "my drive upload skipped (delete in flight after wait) — {}",
+                "my drive upload skipped (user mutation after wait) — {}",
                 path.display()
             ));
             return Ok(None);
@@ -3099,6 +3139,18 @@ impl SyncEngine {
         ));
         let uploaded = crate::my_drive::upload_my_drive_path(&self.api, &self.db, path).await?;
         Ok(Some(uploaded))
+    }
+
+    /// Drain post-rename upload retries (hydrated files moved while uploading).
+    pub async fn drain_my_drive_upload_retries(self: &Arc<Self>) {
+        for path in crate::my_drive::drain_my_drive_upload_retries() {
+            if let Err(e) = self.upload_my_drive_path_gated(&path).await {
+                sync_log(format!(
+                    "my drive upload retry failed {}: {e}",
+                    path.display()
+                ));
+            }
+        }
     }
 
     /// Explorer context menu: make My Drive path available offline (hydrate).

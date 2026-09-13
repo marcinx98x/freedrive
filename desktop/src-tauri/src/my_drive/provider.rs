@@ -305,30 +305,47 @@ pub async fn ensure_hydrated_plaintext_with_progress(
     if let Some(parent) = cache_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    api.download_file_to_path_with_progress(
-        file_id,
-        Some(&key_b64url),
-        &cache_path,
-        on_progress.as_ref(),
-    )
-    .await?;
+    let ciphertext_len = api
+        .download_file_to_path_with_progress(
+            file_id,
+            Some(&key_b64url),
+            &cache_path,
+            on_progress.as_ref(),
+        )
+        .await?;
 
-    if remote.size > 0 {
-        let got = std::fs::metadata(&cache_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        if got != remote.size as u64 {
-            let _ = std::fs::remove_file(&cache_path);
-            let _ = std::fs::remove_file(hydrate_meta_path(&cache_path));
-            return Err(AppError::msg(format!(
-                "hydrate size mismatch for {}: got {got}, expected {}",
-                file_id, remote.size
-            )));
-        }
+    if ciphertext_len == 0 {
+        let _ = std::fs::remove_file(&cache_path);
+        let _ = std::fs::remove_file(hydrate_meta_path(&cache_path));
+        return Err(AppError::msg(format!(
+            "empty download body for {file_id}"
+        )));
+    }
+
+    let got = std::fs::metadata(&cache_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    // AES-GCM empty plaintext → ciphertext is exactly the 16-byte auth tag.
+    // Some historical uploads stored size=16 (ciphertext) instead of original_size=0.
+    let empty_tag_only = got == 0 && ciphertext_len == 16;
+    if empty_tag_only {
+        crate::sync::log::sync_log(format!(
+            "hydrate empty ciphertext tag-only, remote.size={} — {file_id}",
+            remote.size
+        ));
+    } else if remote.size > 0 && got != remote.size as u64 {
+        let _ = std::fs::remove_file(&cache_path);
+        let _ = std::fs::remove_file(hydrate_meta_path(&cache_path));
+        return Err(AppError::msg(format!(
+            "hydrate size mismatch for {}: got {got}, expected {} (ciphertext_len={ciphertext_len})",
+            file_id, remote.size
+        )));
     }
 
     let content_hash = hash_local_file(&cache_path)?;
-    write_hydrate_meta(&cache_path, remote.version, remote.size, &content_hash)?;
+    // Persist actual plaintext size so empty tag-only caches hit on the next poll.
+    let meta_size = if empty_tag_only { 0 } else { remote.size };
+    write_hydrate_meta(&cache_path, remote.version, meta_size, &content_hash)?;
     if let Ok(conn) = db.lock() {
         let _ = my_drive_set_content_hash(&conn, file_id, &content_hash);
     }
@@ -486,19 +503,23 @@ fn hydrate_cache_matches(cache_path: &Path, version: i32, size: i64) -> bool {
     let Ok(fs_meta) = std::fs::metadata(cache_path) else {
         return false;
     };
-    if fs_meta.len() == 0 {
-        return false;
-    }
-    if size > 0 && fs_meta.len() != size as u64 {
-        return false;
-    }
     let Ok(bytes) = std::fs::read(hydrate_meta_path(cache_path)) else {
         return false;
     };
     let Ok(meta) = serde_json::from_slice::<HydrateMeta>(&bytes) else {
         return false;
     };
-    meta.version == version && meta.size == size
+    if meta.version != version {
+        return false;
+    }
+    // Empty plaintext from AES-GCM tag-only ciphertext; remote may still report size=16.
+    if fs_meta.len() == 0 {
+        return meta.size == 0 && (size == 0 || size == 16);
+    }
+    if size > 0 && fs_meta.len() != size as u64 {
+        return false;
+    }
+    meta.size == size
 }
 
 fn write_hydrate_meta(

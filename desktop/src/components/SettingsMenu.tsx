@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 export type SettingsMenuAction =
   | "preferences"
   | "error-list"
+  | "log-list"
   | "about"
   | "help"
   | "quit";
@@ -16,6 +17,7 @@ interface SettingsMenuProps {
 const items: { id: SettingsMenuAction; label: string; danger?: boolean }[] = [
   { id: "preferences", label: "Preferences" },
   { id: "error-list", label: "Error list" },
+  { id: "log-list", label: "Log list" },
   { id: "about", label: "About" },
   { id: "help", label: "Help" },
   { id: "quit", label: "Quit", danger: true },

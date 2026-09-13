@@ -10,13 +10,17 @@ use crate::cfapi::placeholders::{
 use crate::cfapi::util::parse_file_identity;
 use crate::db::DbHandle;
 use crate::error::AppResult;
-use crate::cfapi::util::{callback_full_path, cf_operation_param_size, notify_directory_updated};
+use crate::cfapi::util::{
+    callback_full_path, cf_operation_param_size, combine_volume_path, notify_directory_updated,
+    wide_ptr_to_string,
+};
 use crate::my_drive::{
     begin_fetch_data_inflight, clear_delete_in_flight, clear_hydrate_cache_for_file,
-    end_fetch_data_inflight, ensure_hydrated_plaintext_with_progress, fetch_folder_contents,
-    forget_my_drive_placeholder, is_fetch_data_inflight, is_free_up_in_progress,
-    is_path_under_active_delete, is_path_under_active_delete_ancestor, is_path_under_active_free_up,
-    is_under_my_drive, mark_delete_in_flight, mark_recent_hydrate, pin_hydrated_cache_to_path,
+    clear_rename_in_flight, end_fetch_data_inflight, ensure_hydrated_plaintext_with_progress,
+    fetch_folder_contents, forget_my_drive_placeholder, is_fetch_data_inflight,
+    is_free_up_in_progress, is_path_under_active_delete, is_path_under_active_delete_ancestor,
+    is_path_under_active_free_up, is_path_under_active_rename, is_under_my_drive,
+    mark_delete_in_flight, mark_recent_hydrate, mark_rename_in_flight, pin_hydrated_cache_to_path,
     relative_path_from_sync_root, resolve_folder_id_for_fetch, resolve_my_drive_root_id,
     was_recently_dehydrated, FolderIdSource,
 };
@@ -35,10 +39,14 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Storage::CloudFilters::{
     CfExecute, CfReportProviderProgress, CF_CALLBACK_INFO, CF_CALLBACK_PARAMETERS,
-    CF_OPERATION_ACK_DELETE_FLAG_NONE, CF_OPERATION_ACK_DEHYDRATE_FLAG_NONE, CF_OPERATION_INFO,
-    CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_1,
-    CF_OPERATION_PARAMETERS_0_2, CF_OPERATION_PARAMETERS_0_6, CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
-    CF_OPERATION_TYPE_ACK_DELETE, CF_OPERATION_TYPE_ACK_DEHYDRATE, CF_OPERATION_TYPE_TRANSFER_DATA,
+    CF_CALLBACK_RENAME_FLAG_SOURCE_IN_SCOPE, CF_CALLBACK_RENAME_FLAG_TARGET_IN_SCOPE,
+    CF_OPERATION_ACK_DELETE_FLAG_NONE, CF_OPERATION_ACK_DEHYDRATE_FLAG_NONE,
+    CF_OPERATION_ACK_RENAME_FLAG_NONE, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS,
+    CF_OPERATION_PARAMETERS_0, CF_OPERATION_PARAMETERS_0_1, CF_OPERATION_PARAMETERS_0_2,
+    CF_OPERATION_PARAMETERS_0_3, CF_OPERATION_PARAMETERS_0_6,
+    CF_OPERATION_TRANSFER_DATA_FLAG_NONE, CF_OPERATION_TYPE_ACK_DELETE,
+    CF_OPERATION_TYPE_ACK_DEHYDRATE, CF_OPERATION_TYPE_ACK_RENAME,
+    CF_OPERATION_TYPE_TRANSFER_DATA,
 };
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -682,8 +690,9 @@ fn handle_fetch_data(
 
     begin_fetch_data_inflight(&remote_id);
 
-    let ctx = with_context(|c| (c.db.clone(), c.api.clone()))
+    let ctx = with_context(|c| (c.db.clone(), c.api.clone(), c.sync_root.clone()))
         .ok_or_else(|| "CfAPI context not initialized".to_string())?;
+    let (db_ctx, api_ctx, sync_root_ctx) = ctx;
 
     let request_key = info.RequestKey;
     let connection_key = info.ConnectionKey;
@@ -724,6 +733,8 @@ fn handle_fetch_data(
 
     let hydrate_started = Instant::now();
     let remote_id_for_hydrate = remote_id.clone();
+    let db_for_hydrate = db_ctx.clone();
+    let api_for_hydrate = api_ctx.clone();
     let hydrate_result = crate::blocking::run_async_future_with_timeout(
         HYDRATE_TIMEOUT,
         async move {
@@ -732,8 +743,8 @@ fn handle_fetch_data(
                 .await
                 .map_err(|_| "hydrate semaphore closed".to_string())?;
             ensure_hydrated_plaintext_with_progress(
-                &ctx.1,
-                &ctx.0,
+                &api_for_hydrate,
+                &db_for_hydrate,
                 &remote_id_for_hydrate,
                 Some(progress_cb),
             )
@@ -765,10 +776,16 @@ fn handle_fetch_data(
     ));
     mark_recent_hydrate(&remote_id);
 
+    let pin_dest = resolve_fetch_data_pin_path(
+        &db_ctx,
+        &sync_root_ctx,
+        &remote_id,
+        placeholder_path.as_deref(),
+    );
     let pin_after_cancel = |reason: &str| {
-        let Some(dest) = placeholder_path.as_ref() else {
+        let Some(dest) = pin_dest.as_ref() else {
             cfapi_callback_log(format!(
-                "FETCH_DATA {reason}: no placeholder path file={remote_id}"
+                "FETCH_DATA {reason}: skip pin (deleted or unknown) file={remote_id}"
             ));
             return;
         };
@@ -882,14 +899,55 @@ fn handle_fetch_data(
         "FETCH_DATA transfer ok file={remote_id} bytes={transferred} in {:?}",
         transfer_started.elapsed()
     ));
-    if let Some(dest) = placeholder_path.as_ref() {
-        if is_cloud_placeholder(dest) {
-            mark_hydrated_available(dest);
+    if let Some(dest) = resolve_fetch_data_pin_path(
+        &db_ctx,
+        &sync_root_ctx,
+        &remote_id,
+        placeholder_path.as_deref(),
+    ) {
+        if is_cloud_placeholder(&dest) {
+            mark_hydrated_available(&dest);
         } else {
-            finalize_hydrated_file(dest, &remote_id);
+            finalize_hydrated_file(&dest, &remote_id);
         }
+    } else {
+        cfapi_callback_log(format!(
+            "FETCH_DATA skip finalize (deleted or unknown) file={remote_id}"
+        ));
     }
     Ok(())
+}
+
+/// Prefer current DB path for `remote_id` so a mid-hydrate move pins at the new location.
+fn resolve_fetch_data_pin_path(
+    db: &DbHandle,
+    sync_root: &Path,
+    remote_id: &str,
+    fallback: Option<&Path>,
+) -> Option<PathBuf> {
+    let row = {
+        let Ok(conn) = db.lock() else {
+            return fallback
+                .map(|p| p.to_path_buf())
+                .filter(|p| !is_path_under_active_delete(p));
+        };
+        crate::db::my_drive_get_placeholder_by_remote_id(&conn, remote_id).ok()?
+    };
+    match row {
+        Some((rel, ty, _)) if ty == "file" => {
+            let full = sync_root.join(rel.replace('/', "\\"));
+            if is_path_under_active_delete(&full) {
+                None
+            } else {
+                Some(full)
+            }
+        }
+        // Soft-trashed / forgotten — do not pin hydrated bytes back onto disk.
+        None => None,
+        Some(_) => fallback
+            .map(|p| p.to_path_buf())
+            .filter(|p| !is_path_under_active_delete(p)),
+    }
 }
 
 unsafe fn transfer_data(
@@ -1198,6 +1256,178 @@ fn ack_delete(info: &CF_CALLBACK_INFO, status: NTSTATUS) {
     }
 }
 
+fn ack_rename(info: &CF_CALLBACK_INFO, status: NTSTATUS) {
+    let op_info = CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
+        Type: CF_OPERATION_TYPE_ACK_RENAME,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: info.CorrelationVector,
+        RequestKey: info.RequestKey,
+        SyncStatus: std::ptr::null(),
+    };
+    let mut op_params = CF_OPERATION_PARAMETERS {
+        ParamSize: cf_operation_param_size::<CF_OPERATION_PARAMETERS_0_3>(),
+        Anonymous: CF_OPERATION_PARAMETERS_0 {
+            AckRename: CF_OPERATION_PARAMETERS_0_3 {
+                Flags: CF_OPERATION_ACK_RENAME_FLAG_NONE,
+                CompletionStatus: status,
+            },
+        },
+    };
+    if let Err(e) = unsafe { CfExecute(&op_info, &mut op_params) } {
+        cfapi_callback_log(format!("CfExecute ACK_RENAME failed: {e}"));
+    }
+}
+
+fn resolve_rename_target(
+    info: &CF_CALLBACK_INFO,
+    target: windows::core::PCWSTR,
+) -> Result<PathBuf, String> {
+    let target_s = wide_ptr_to_string(target)?;
+    if target_s.len() >= 2 {
+        let bytes = target_s.as_bytes();
+        if bytes[1] == b':' {
+            return Ok(PathBuf::from(target_s));
+        }
+    }
+    let volume = wide_ptr_to_string(info.VolumeDosName)?;
+    Ok(combine_volume_path(&volume, &target_s))
+}
+
+pub unsafe extern "system" fn notify_rename(
+    info: *const CF_CALLBACK_INFO,
+    params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() || params.is_null() {
+        return;
+    }
+    let info = &*info;
+    let params = &*params;
+    let _ = std::panic::catch_unwind(|| handle_notify_rename(info, params));
+}
+
+fn handle_notify_rename(
+    info: &CF_CALLBACK_INFO,
+    params: &CF_CALLBACK_PARAMETERS,
+) -> Result<(), String> {
+    let rename = unsafe { params.Anonymous.Rename };
+    let source_in = rename
+        .Flags
+        .contains(CF_CALLBACK_RENAME_FLAG_SOURCE_IN_SCOPE);
+    let target_in = rename
+        .Flags
+        .contains(CF_CALLBACK_RENAME_FLAG_TARGET_IN_SCOPE);
+
+    let from = match callback_full_path(info) {
+        Ok(p) => p,
+        Err(e) => {
+            cfapi_callback_log(format!("NOTIFY_RENAME source resolve failed: {e}"));
+            ack_rename(info, STATUS_CLOUD_FILE_UNSUCCESSFUL);
+            return Ok(());
+        }
+    };
+    let to = match resolve_rename_target(info, rename.TargetPath) {
+        Ok(p) => p,
+        Err(e) => {
+            cfapi_callback_log(format!("NOTIFY_RENAME target resolve failed: {e}"));
+            ack_rename(info, STATUS_CLOUD_FILE_UNSUCCESSFUL);
+            return Ok(());
+        }
+    };
+
+    let Some((api, db, sync_root)) = with_context(|ctx| {
+        (ctx.api.clone(), ctx.db.clone(), ctx.sync_root.clone())
+    }) else {
+        cfapi_callback_log(&format!(
+            "NOTIFY_RENAME ack (no context) {} → {}",
+            from.display(),
+            to.display()
+        ));
+        ack_rename(info, STATUS_SUCCESS);
+        return Ok(());
+    };
+
+    let from_my = path_is_under_my_drive(&sync_root, &from);
+    let to_my = path_is_under_my_drive(&sync_root, &to);
+
+    // Move out of My Drive → soft-trash (Drive-like leave sync root).
+    if from_my && !to_my {
+        cfapi_callback_log(&format!(
+            "NOTIFY_RENAME out of My Drive → soft-trash {} → {} (source_in={source_in} target_in={target_in})",
+            from.display(),
+            to.display()
+        ));
+        ack_rename(info, STATUS_SUCCESS);
+        mark_delete_in_flight(&from);
+        tauri::async_runtime::spawn(async move {
+            let result =
+                crate::my_drive::delete_my_drive_path_with_retry(&api, &db, &from).await;
+            clear_delete_in_flight(&from);
+            if let Err(e) = result {
+                cfapi_callback_log(&format!("NOTIFY_RENAME soft-trash failed: {e}"));
+            }
+        });
+        return Ok(());
+    }
+
+    // Within My Drive: PATCH relocate (cloud-only move/rename).
+    if from_my && to_my {
+        let remote_id = {
+            let identity = unsafe {
+                std::slice::from_raw_parts(
+                    info.FileIdentity as *const u8,
+                    info.FileIdentityLength as usize,
+                )
+            };
+            parse_file_identity(identity)
+                .map(|(_, id)| id)
+                .unwrap_or_default()
+        };
+        let remote_id = if remote_id.is_empty() {
+            let relative = relative_path_from_sync_root(&sync_root, &from).unwrap_or_default();
+            let conn = db.lock().map_err(|e| e.to_string())?;
+            crate::db::my_drive_get_placeholder(&conn, &relative)
+                .ok()
+                .flatten()
+                .map(|(id, _, _)| id)
+                .unwrap_or_default()
+        } else {
+            remote_id
+        };
+
+        cfapi_callback_log(&format!(
+            "NOTIFY_RENAME {} → {}",
+            from.display(),
+            to.display()
+        ));
+        mark_rename_in_flight(&from, &to, &remote_id);
+        ack_rename(info, STATUS_SUCCESS);
+        let from_spawn = from.clone();
+        let to_spawn = to.clone();
+        tauri::async_runtime::spawn(async move {
+            let result =
+                crate::my_drive::rename_my_drive_path(&api, &db, &from_spawn, &to_spawn).await;
+            clear_rename_in_flight(&from_spawn, &to_spawn);
+            if let Err(e) = result {
+                cfapi_callback_log(&format!(
+                    "NOTIFY_RENAME failed {} → {}: {e}",
+                    from_spawn.display(),
+                    to_spawn.display()
+                ));
+            }
+            if let Some(engine) = sync_engine_from_app() {
+                engine.drain_my_drive_upload_retries().await;
+            }
+        });
+        return Ok(());
+    }
+
+    // Outside My Drive — allow local rename without server work.
+    ack_rename(info, STATUS_SUCCESS);
+    Ok(())
+}
+
 pub unsafe extern "system" fn notify_delete(
     info: *const CF_CALLBACK_INFO,
     _params: *const CF_CALLBACK_PARAMETERS,
@@ -1256,6 +1486,16 @@ fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
         return Ok(());
     }
 
+    // Rename/move in flight — ACK local remove at source; do not soft-trash.
+    if is_path_under_active_rename(&full) {
+        cfapi_callback_log(&format!(
+            "NOTIFY_DELETE skipped (rename in flight) {}",
+            full.display()
+        ));
+        ack_delete(info, STATUS_SUCCESS);
+        return Ok(());
+    }
+
     // Ancestor folder soft-trash already covers this child — ACK + drop DB row, no HTTP.
     if is_path_under_active_delete_ancestor(&full) {
         cfapi_callback_log(&format!(
@@ -1280,7 +1520,8 @@ fn handle_notify_delete(info: &CF_CALLBACK_INFO) -> Result<(), String> {
     mark_delete_in_flight(&full);
     ack_delete(info, STATUS_SUCCESS);
     tauri::async_runtime::spawn(async move {
-        let result = crate::my_drive::delete_my_drive_path(&api, &db, &full).await;
+        let result =
+            crate::my_drive::delete_my_drive_path_with_retry(&api, &db, &full).await;
         clear_delete_in_flight(&full);
         if let Err(e) = result {
             cfapi_callback_log(&format!("NOTIFY_DELETE failed: {}", e));

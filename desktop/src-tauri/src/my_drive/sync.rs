@@ -54,9 +54,91 @@ fn folder_ensure_lock(relative: &str) -> Arc<tokio::sync::Mutex<()>> {
 }
 
 static MY_DRIVE_UPLOAD_IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Paths whose in-flight / pending upload must abort (user delete or rename won).
+static MY_DRIVE_UPLOAD_CANCELLED: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+/// After rename, retry upload at the new path when the file still has local content.
+static MY_DRIVE_UPLOAD_RETRY: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+const UPLOAD_CANCEL_TTL: Duration = Duration::from_secs(120);
 
 fn my_drive_upload_in_flight() -> &'static Mutex<HashSet<String>> {
     MY_DRIVE_UPLOAD_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn my_drive_upload_cancelled() -> &'static Mutex<HashMap<String, Instant>> {
+    MY_DRIVE_UPLOAD_CANCELLED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn my_drive_upload_retry() -> &'static Mutex<Vec<PathBuf>> {
+    MY_DRIVE_UPLOAD_RETRY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().to_ascii_lowercase()
+}
+
+/// Cancel uploads for `path` and descendants (user mutation wins over transfer).
+pub fn cancel_my_drive_uploads_under(path: &Path) {
+    let prefix = path_key(path);
+    let prefix_slash = if prefix.ends_with('\\') {
+        prefix.clone()
+    } else {
+        format!("{prefix}\\")
+    };
+    let now = Instant::now();
+    if let Ok(mut cancelled) = my_drive_upload_cancelled().lock() {
+        cancelled.retain(|_, at| now.duration_since(*at) < UPLOAD_CANCEL_TTL);
+        cancelled.insert(prefix.clone(), now);
+        if let Ok(in_flight) = my_drive_upload_in_flight().lock() {
+            for key in in_flight.iter() {
+                if key == &prefix || key.starts_with(&prefix_slash) {
+                    cancelled.insert(key.clone(), now);
+                }
+            }
+        }
+    }
+}
+
+pub fn is_my_drive_upload_cancelled(path: &Path) -> bool {
+    let key = path_key(path);
+    let Ok(mut cancelled) = my_drive_upload_cancelled().lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    cancelled.retain(|_, at| now.duration_since(*at) < UPLOAD_CANCEL_TTL);
+    cancelled.contains_key(&key)
+        || cancelled.keys().any(|root| {
+            let root_slash = if root.ends_with('\\') {
+                root.clone()
+            } else {
+                format!("{root}\\")
+            };
+            key == *root || key.starts_with(&root_slash)
+        })
+}
+
+/// Queue a post-rename upload when the destination still has local bytes.
+pub fn queue_my_drive_upload_retry(path: &Path) {
+    if !path.is_file() {
+        return;
+    }
+    if is_dehydrated_placeholder(path) {
+        return;
+    }
+    let Ok(mut q) = my_drive_upload_retry().lock() else {
+        return;
+    };
+    let key = path_key(path);
+    if q.iter().any(|p| path_key(p) == key) {
+        return;
+    }
+    q.push(path.to_path_buf());
+}
+
+pub fn drain_my_drive_upload_retries() -> Vec<PathBuf> {
+    my_drive_upload_retry()
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
 }
 
 /// RAII claim so close+watcher+poll cannot encrypt the same path concurrently.
@@ -74,7 +156,7 @@ impl Drop for MyDriveUploadInFlightGuard {
 
 /// Returns `None` when this path is already being uploaded.
 pub fn try_claim_my_drive_upload(path: &Path) -> Option<MyDriveUploadInFlightGuard> {
-    let key = path.to_string_lossy().to_ascii_lowercase();
+    let key = path_key(path);
     let Ok(mut set) = my_drive_upload_in_flight().lock() else {
         return Some(MyDriveUploadInFlightGuard { key });
     };
@@ -299,13 +381,26 @@ pub fn is_free_up_in_progress() -> bool {
 
 /// How long a delete-in-flight mark suppresses CLOSE upload / re-upload (Explorer delete race).
 const DELETE_IN_FLIGHT_TTL: Duration = Duration::from_secs(60);
+/// Live CfAPI rename/move in flight — suppress soft-trash for the same identity/path.
+const RENAME_IN_FLIGHT_TTL: Duration = Duration::from_secs(45);
+/// Let NOTIFY_RENAME / dest placeholder settle before treating a missing path as soft-trash.
+const DELETE_MOVE_GRACE: Duration = Duration::from_millis(1500);
 /// Cap concurrent My Drive soft-trash HTTP so large folder deletes cannot melt the API.
 const MY_DRIVE_DELETE_CONCURRENCY: usize = 3;
 
 /// Paths (files or folder prefixes) with soft-trash in flight after NOTIFY_DELETE ACK.
 static DELETE_IN_FLIGHT: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+static RENAME_IN_FLIGHT: OnceLock<Mutex<Vec<RenameInFlight>>> = OnceLock::new();
 static MY_DRIVE_DELETE_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 static FOLDER_DELETE_CLAIMED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct RenameInFlight {
+    from: PathBuf,
+    to: PathBuf,
+    remote_id: String,
+    at: Instant,
+}
 
 fn delete_in_flight() -> &'static Mutex<HashMap<PathBuf, Instant>> {
     DELETE_IN_FLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
@@ -356,6 +451,8 @@ pub fn mark_delete_in_flight(path: &Path) {
     let now = Instant::now();
     map.retain(|_, at| now.duration_since(*at) < DELETE_IN_FLIGHT_TTL);
     map.insert(path.to_path_buf(), now);
+    drop(map);
+    cancel_my_drive_uploads_under(path);
 }
 
 /// Clear the mark for `path` after soft-trash finishes (success or error).
@@ -406,6 +503,69 @@ fn path_is_under_prefix(path: &Path, root: &Path) -> bool {
         format!("{root_s}\\")
     };
     path_s.starts_with(&root_prefix)
+}
+
+fn rename_in_flight() -> &'static Mutex<Vec<RenameInFlight>> {
+    RENAME_IN_FLIGHT.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn prune_rename_in_flight(entries: &mut Vec<RenameInFlight>, now: Instant) {
+    entries.retain(|e| now.duration_since(e.at) < RENAME_IN_FLIGHT_TTL);
+}
+
+/// Mark a live Explorer rename/move so concurrent NOTIFY_DELETE does not soft-trash.
+pub fn mark_rename_in_flight(from: &Path, to: &Path, remote_id: &str) {
+    let Ok(mut entries) = rename_in_flight().lock() else {
+        return;
+    };
+    let now = Instant::now();
+    prune_rename_in_flight(&mut entries, now);
+    entries.push(RenameInFlight {
+        from: from.to_path_buf(),
+        to: to.to_path_buf(),
+        remote_id: remote_id.to_string(),
+        at: now,
+    });
+    drop(entries);
+    // Abort uploads at the old path; retry at `to` once rename finishes (if hydrated).
+    cancel_my_drive_uploads_under(from);
+}
+
+pub fn clear_rename_in_flight(from: &Path, to: &Path) {
+    let Ok(mut entries) = rename_in_flight().lock() else {
+        return;
+    };
+    let from_s = from.to_string_lossy().to_ascii_lowercase();
+    let to_s = to.to_string_lossy().to_ascii_lowercase();
+    entries.retain(|e| {
+        let ef = e.from.to_string_lossy().to_ascii_lowercase();
+        let et = e.to.to_string_lossy().to_ascii_lowercase();
+        !(ef == from_s && et == to_s)
+    });
+}
+
+/// True while a CfAPI rename/move covers `path` (source, dest, or under either).
+pub fn is_path_under_active_rename(path: &Path) -> bool {
+    let Ok(mut entries) = rename_in_flight().lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    prune_rename_in_flight(&mut entries, now);
+    entries.iter().any(|e| {
+        path_is_under_prefix(path, &e.from) || path_is_under_prefix(path, &e.to)
+    })
+}
+
+pub fn is_remote_id_rename_in_flight(remote_id: &str) -> bool {
+    if remote_id.is_empty() {
+        return false;
+    }
+    let Ok(mut entries) = rename_in_flight().lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    prune_rename_in_flight(&mut entries, now);
+    entries.iter().any(|e| e.remote_id == remote_id)
 }
 
 fn is_blob_missing_error(msg: &str) -> bool {
@@ -475,6 +635,23 @@ pub async fn poll_my_drive(
         stats.folders_created, stats.files_uploaded, stats.files_mirrored, stats.errors
     ));
     Ok(stats)
+}
+
+/// Drive-like: catch up local deletes/moves even while Free up is running.
+/// Skips full tree upload/mirror so it does not fight free-up for IO/API quota.
+pub async fn poll_my_drive_offline_only(
+    api: &ApiClient,
+    db: &DbHandle,
+    on_busy: Option<MyDriveBusyCb>,
+) -> AppResult<()> {
+    let sync_root = sync_root_dir(false)?;
+    sync_log("poll My Drive offline-only started");
+    if let Err(e) = reconcile_my_drive_offline_changes(api, db, &sync_root, &on_busy).await {
+        sync_log(format!("My Drive offline reconcile skipped: {e}"));
+        return Err(e);
+    }
+    sync_log("poll My Drive offline-only finished");
+    Ok(())
 }
 
 /// Index on-disk CfAPI placeholders under My Drive by remote id.
@@ -1195,6 +1372,33 @@ pub async fn rename_my_drive_path(
     from: &Path,
     to: &Path,
 ) -> AppResult<()> {
+    const BACKOFFS_MS: &[u64] = &[1_000, 2_000, 5_000, 10_000, 20_000];
+    let mut attempt = 0usize;
+    loop {
+        match rename_my_drive_path_inner(api, db, from, to).await {
+            Ok(()) => return Ok(()),
+            Err(e) if is_rate_limit_error(&e) && attempt < BACKOFFS_MS.len() => {
+                let delay = BACKOFFS_MS[attempt];
+                sync_log(format!(
+                    "My Drive rename rate-limited, retry in {delay}ms (attempt {}) — {} → {}",
+                    attempt + 1,
+                    from.display(),
+                    to.display()
+                ));
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+async fn rename_my_drive_path_inner(
+    api: &ApiClient,
+    db: &DbHandle,
+    from: &Path,
+    to: &Path,
+) -> AppResult<()> {
     let sync_root = sync_root_dir(false)?;
     let old_rel = relative_path_from_sync_root(&sync_root, from)
         .ok_or_else(|| AppError::msg("rename source outside sync root"))?;
@@ -1241,7 +1445,12 @@ pub async fn rename_my_drive_path(
 
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     my_drive_relocate_placeholder(&conn, &old_rel, &new_rel, Some(&parent_id))?;
+    drop(conn);
     sync_log(format!("My Drive renamed — {old_rel} → {new_rel}"));
+    // Hydrated file may have had an upload interrupted by the move — finish under new path.
+    if item_type == "file" {
+        queue_my_drive_upload_retry(to);
+    }
     Ok(())
 }
 
@@ -1258,9 +1467,16 @@ async fn poll_my_drive_folder(
     on_busy: &Option<MyDriveBusyCb>,
     stats: &mut MyDrivePollStats,
 ) -> AppResult<()> {
+    let local_dir = local_dir_for_relative(sync_root, parent_relative);
+    // User is deleting this tree — do not recreate placeholders from the server.
+    if is_path_under_active_delete(&local_dir) {
+        sync_log(format!(
+            "poll My Drive skip restore (delete in flight) — {parent_relative}"
+        ));
+        return Ok(());
+    }
     let contents =
         fetch_folder_contents(api, db, sync_root, parent_relative, folder_id).await?;
-    let local_dir = local_dir_for_relative(sync_root, parent_relative);
     let mut local_only_folders = Vec::new();
     if std::fs::create_dir_all(&local_dir).is_ok() {
         apply_remote_children(db, parent_relative, &local_dir, &contents, suppress);
@@ -1312,6 +1528,13 @@ async fn poll_my_drive_folder(
 
     for folder in unique_remote_folders_for_poll(db, parent_relative, &contents.folders) {
         let sub_rel = join_my_drive_relative(parent_relative, &folder.name);
+        let sub_dir = local_dir_for_relative(sync_root, &sub_rel);
+        if is_path_under_active_delete(&sub_dir) {
+            sync_log(format!(
+                "poll My Drive skip subtree (delete in flight) — {sub_rel}"
+            ));
+            continue;
+        }
         Box::pin(poll_my_drive_folder(
             api,
             db,
@@ -1780,6 +2003,12 @@ fn apply_remote_children(
     contents: &crate::api::types::FolderContents,
     suppress: Option<&WatcherSuppress>,
 ) {
+    if is_path_under_active_delete(local_dir) {
+        sync_log(format!(
+            "My Drive skip apply_remote_children (delete in flight) — {parent_relative}"
+        ));
+        return;
+    }
     let (missing_folders, missing_files) = missing_remote_children(local_dir, contents);
     let had_missing = !missing_folders.is_empty() || !missing_files.is_empty();
 
@@ -1804,6 +2033,9 @@ fn apply_remote_children(
     for folder in &contents.folders {
         let name = sanitize_name(&folder.name);
         let folder_path = local_dir.join(&name);
+        if is_path_under_active_delete(&folder_path) {
+            continue;
+        }
         match create_named_folder_placeholder(local_dir, &name, &folder.id) {
             Ok(()) => created += 1,
             Err(e)
@@ -1843,6 +2075,10 @@ fn apply_remote_children(
     }
 
     for file in &contents.files {
+        let file_path = local_dir.join(sanitize_name(&file.name));
+        if is_path_under_active_delete(&file_path) {
+            continue;
+        }
         match create_file_placeholder(local_dir, file) {
             Ok(()) => created += 1,
             Err(e) if is_duplicate_placeholder_error(&e) => skipped += 1,
@@ -2136,8 +2372,12 @@ async fn mirror_files_parallel(
 ) {
     let needs_any = files.iter().any(|file| {
         let local_path = local_dir.join(sanitize_name(&file.name));
+        let expected = file.size.max(0) as u64;
         match std::fs::metadata(&local_path) {
-            Ok(meta) => meta.len() < file.size.max(0) as u64,
+            Ok(meta) => {
+                let len = meta.len();
+                len < expected && !(len == 0 && expected == 16)
+            }
             Err(_) => true,
         }
     });
@@ -2180,6 +2420,15 @@ async fn mirror_files_parallel(
                 Err(e) => {
                     mirror_errors.fetch_add(1, Ordering::Relaxed);
                     sync_log(format!("mirror {} failed: {}", file.name, e));
+                    if let Ok(conn) = db.lock() {
+                        let _ = insert_activity(
+                            &conn,
+                            &file.name,
+                            &format!("My Drive mirror failed: {e}"),
+                            file.size.max(0),
+                            "error",
+                        );
+                    }
                 }
             }
         });
@@ -2203,13 +2452,19 @@ async fn mirror_file_if_needed(
     file: &crate::api::types::FileRecord,
 ) -> AppResult<bool> {
     let local_path = local_dir.join(sanitize_name(&file.name));
+    if is_path_under_active_delete(&local_path) {
+        return Ok(false);
+    }
     let expected = file.size.max(0) as u64;
     let known_version = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         crate::db::my_drive_known_remote_version(&conn, &file.id).unwrap_or(0)
     };
     let size_mismatch = match std::fs::metadata(&local_path) {
-        Ok(meta) => meta.len() != expected,
+        Ok(meta) => {
+            let len = meta.len();
+            len != expected && !(len == 0 && expected == 16)
+        }
         Err(_) => true,
     };
     let version_newer = file.version > known_version;
@@ -2240,6 +2495,16 @@ async fn mirror_file_if_needed(
 }
 
 pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -> AppResult<bool> {
+    if is_path_under_active_delete(path)
+        || is_path_under_active_rename(path)
+        || is_my_drive_upload_cancelled(path)
+    {
+        sync_log(format!(
+            "My Drive upload aborted (user mutation) — {}",
+            path.display()
+        ));
+        return Ok(false);
+    }
     if !path.is_file() {
         return Ok(false);
     }
@@ -2307,9 +2572,44 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
             get_file_key(&conn, &remote_id)?
                 .and_then(|k| crate::crypto::key_from_b64url(&k).ok())
         };
-        let (rec, key) = api
+        if is_path_under_active_delete(path)
+            || is_path_under_active_rename(path)
+            || is_my_drive_upload_cancelled(path)
+            || !path.is_file()
+        {
+            sync_log(format!(
+                "My Drive upload aborted before content put (user mutation) — {}",
+                path.display()
+            ));
+            return Ok(false);
+        }
+        let (rec, key) = match api
             .update_file_content(&remote_id, path, &file_name, existing_key, None)
-            .await?;
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                if is_path_under_active_delete(path)
+                    || is_path_under_active_rename(path)
+                    || is_my_drive_upload_cancelled(path)
+                    || !path.is_file()
+                {
+                    sync_log(format!(
+                        "My Drive upload aborted after mutation race — {}: {e}",
+                        path.display()
+                    ));
+                    return Ok(false);
+                }
+                return Err(e);
+            }
+        };
+        if is_path_under_active_delete(path) || is_my_drive_upload_cancelled(path) {
+            sync_log(format!(
+                "My Drive upload discarded after delete race — {}",
+                path.display()
+            ));
+            return Ok(false);
+        }
         let local_hash = crate::my_drive::hash_local_file(path).unwrap_or_default();
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
@@ -2330,11 +2630,40 @@ pub async fn upload_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         return Ok(true);
     }
 
+    if is_path_under_active_delete(path)
+        || is_path_under_active_rename(path)
+        || is_my_drive_upload_cancelled(path)
+        || !path.is_file()
+    {
+        sync_log(format!(
+            "My Drive upload aborted before create (user mutation) — {}",
+            path.display()
+        ));
+        return Ok(false);
+    }
+
     let parent_folder_id = ensure_my_drive_parent_folder(api, db, &relative).await?;
     let api_parent = api_folder_parent_id(&parent_folder_id);
-    let (rec, key) = api
+    let (rec, key) = match api
         .upload_file(db, path, &file_name, api_parent, None)
-        .await?;
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            if is_path_under_active_delete(path)
+                || is_path_under_active_rename(path)
+                || is_my_drive_upload_cancelled(path)
+                || !path.is_file()
+            {
+                sync_log(format!(
+                    "My Drive create upload aborted after mutation race — {}: {e}",
+                    path.display()
+                ));
+                return Ok(false);
+            }
+            return Err(e);
+        }
+    };
     let local_hash = crate::my_drive::hash_local_file(path).unwrap_or_default();
     let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
     store_file_key(&conn, &rec.id, &key_to_b64url(&key))?;
@@ -2378,6 +2707,15 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         return Ok(());
     }
 
+    // Live rename/move owns this identity — do not soft-trash.
+    if is_path_under_active_rename(path) {
+        sync_log(format!(
+            "My Drive delete skipped (rename in flight) — {}",
+            path.display()
+        ));
+        return Ok(());
+    }
+
     // Another task already soft-trashed an ancestor folder covering this path.
     if is_path_under_active_delete_ancestor(path) {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
@@ -2390,7 +2728,14 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         .await
         .map_err(|e| AppError::msg(format!("delete semaphore closed: {e}")))?;
 
-    // Re-check after waiting — a coalesced folder delete may have finished.
+    // Re-check after waiting — a coalesced folder delete / rename may have finished.
+    if is_path_under_active_rename(path) {
+        sync_log(format!(
+            "My Drive delete skipped (rename in flight) — {}",
+            path.display()
+        ));
+        return Ok(());
+    }
     if is_path_under_active_delete_ancestor(path) {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
         let _ = my_drive_delete_placeholder(&conn, &relative);
@@ -2403,22 +2748,30 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         }
     }
 
-    // Explorer often deletes children first; if a tracked ancestor folder is already
-    // gone from disk, soft-trash that folder once instead of N file DELETEs.
-    if let Some((folder_path, folder_rel, folder_remote_id, folder_name)) =
-        highest_missing_folder_ancestor(db, &sync_root, &relative)?
-    {
-        let Some(_claim) = try_claim_folder_delete(&folder_remote_id) else {
-            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-            let _ = my_drive_delete_placeholder(&conn, &relative);
+    // Confirmed Explorer delete (NOTIFY_DELETE marked the path): soft-trash immediately.
+    // Grace + full identity scan only when this might be a cloud-only move mis-signaled as delete.
+    let confirmed_delete =
+        is_path_under_active_delete(path) && !is_path_under_active_rename(path);
+
+    let identity_index = if confirmed_delete {
+        HashMap::new()
+    } else {
+        tokio::time::sleep(DELETE_MOVE_GRACE).await;
+        if is_path_under_active_rename(path) {
+            sync_log(format!(
+                "My Drive delete skipped (rename in flight after grace) — {}",
+                path.display()
+            ));
             return Ok(());
-        };
-        mark_delete_in_flight(&folder_path);
-        let result =
-            soft_trash_my_drive_folder(api, db, &folder_rel, &folder_remote_id, &folder_name).await;
-        clear_delete_in_flight(&folder_path);
-        return result;
-    }
+        }
+        {
+            let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+            if my_drive_get_placeholder(&conn, &relative)?.is_none() {
+                return Ok(());
+            }
+        }
+        index_my_drive_identities(&sync_root)
+    };
 
     let placeholder = {
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
@@ -2427,7 +2780,133 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
     let Some((remote_id, item_type, _)) = placeholder else {
         return Ok(());
     };
+    if !remote_id.is_empty() && is_remote_id_rename_in_flight(&remote_id) {
+        sync_log(format!(
+            "My Drive delete skipped (remote rename in flight) — {}",
+            path.display()
+        ));
+        return Ok(());
+    }
 
+    // Identity still on disk elsewhere → relocate (move), never soft-trash.
+    if !confirmed_delete && !remote_id.is_empty() {
+        if let Some(found) = identity_index.get(&remote_id) {
+            if !paths_equal_ci(found, path) {
+                sync_log(format!(
+                    "My Drive delete→relocate (identity elsewhere) — {} → {}",
+                    relative,
+                    found.display()
+                ));
+                return rename_my_drive_path(api, db, path, found).await;
+            }
+        }
+    }
+
+    // Explorer often deletes children first; soft-trash the highest missing folder once.
+    if let Some((folder_path, folder_rel, folder_remote_id, folder_name)) =
+        highest_missing_folder_ancestor(db, &sync_root, &relative)?
+    {
+        if !folder_remote_id.is_empty() {
+            if is_remote_id_rename_in_flight(&folder_remote_id) {
+                let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                let _ = my_drive_delete_placeholder(&conn, &relative);
+                return Ok(());
+            }
+            if !confirmed_delete {
+                if let Some(found) = identity_index.get(&folder_remote_id) {
+                    if !paths_equal_ci(found, &folder_path) {
+                        let old_full = local_dir_for_relative(&sync_root, &folder_rel);
+                        sync_log(format!(
+                            "My Drive delete→relocate folder (identity elsewhere) — {} → {}",
+                            folder_rel,
+                            found.display()
+                        ));
+                        return rename_my_drive_path(api, db, &old_full, found).await;
+                    }
+                }
+                let rows = {
+                    let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
+                    my_drive_list_placeholders(&conn)?
+                };
+                if let Some(folder_row) = rows.iter().find(|r| r.remote_id == folder_remote_id) {
+                    if let Some(dest) =
+                        infer_folder_dest_from_children(folder_row, &rows, &identity_index)
+                    {
+                        // Dest outside the deleted tree → real move.
+                        if !path_is_under_prefix(&dest, &folder_path)
+                            && !is_path_under_active_delete(&dest)
+                        {
+                            let old_full = local_dir_for_relative(&sync_root, &folder_rel);
+                            sync_log(format!(
+                                "My Drive delete→relocate folder (children elsewhere) — {} → {}",
+                                folder_rel,
+                                dest.display()
+                            ));
+                            return rename_my_drive_path(api, db, &old_full, &dest).await;
+                        }
+                    }
+                    // Children still under old prefix during mass delete — soft-trash folder
+                    // (do not no-op; that left server rows and poll restored files on PC).
+                    if folder_has_any_child_identity_on_disk(folder_row, &rows, &identity_index)
+                        && !confirmed_delete
+                        && !folder_children_mostly_deleting(folder_row, &rows)
+                    {
+                        // Ambiguous offline state — soft-trash this item only.
+                        sync_log(format!(
+                            "My Drive delete coalesce skipped (children on disk) — soft-trash item {relative}"
+                        ));
+                        return soft_trash_current_item(
+                            api, db, path, &relative, &remote_id, &item_type,
+                        )
+                        .await;
+                    }
+                    let Some(_claim) = try_claim_folder_delete(&folder_remote_id) else {
+                        return soft_trash_current_item(
+                            api, db, path, &relative, &remote_id, &item_type,
+                        )
+                        .await;
+                    };
+                    mark_delete_in_flight(&folder_path);
+                    let result = soft_trash_my_drive_folder(
+                        api,
+                        db,
+                        &folder_rel,
+                        &folder_remote_id,
+                        &folder_name,
+                    )
+                    .await;
+                    clear_delete_in_flight(&folder_path);
+                    return result;
+                }
+            }
+        }
+        // Confirmed delete (or empty folder id): soft-trash folder when we have a remote id.
+        if !folder_remote_id.is_empty() {
+            let Some(_claim) = try_claim_folder_delete(&folder_remote_id) else {
+                return soft_trash_current_item(api, db, path, &relative, &remote_id, &item_type)
+                    .await;
+            };
+            mark_delete_in_flight(&folder_path);
+            let result =
+                soft_trash_my_drive_folder(api, db, &folder_rel, &folder_remote_id, &folder_name)
+                    .await;
+            clear_delete_in_flight(&folder_path);
+            return result;
+        }
+    }
+
+    soft_trash_current_item(api, db, path, &relative, &remote_id, &item_type).await
+}
+
+/// Soft-trash one file/folder row (no coalesce).
+async fn soft_trash_current_item(
+    api: &ApiClient,
+    db: &DbHandle,
+    path: &Path,
+    relative: &str,
+    remote_id: &str,
+    item_type: &str,
+) -> AppResult<()> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -2439,21 +2918,94 @@ pub async fn delete_my_drive_path(api: &ApiClient, db: &DbHandle, path: &Path) -
         .to_string();
 
     if item_type == "folder" {
-        let Some(_claim) = try_claim_folder_delete(&remote_id) else {
+        let Some(_claim) = try_claim_folder_delete(remote_id) else {
             return Ok(());
         };
-        return soft_trash_my_drive_folder(api, db, &relative, &remote_id, &name).await;
+        return soft_trash_my_drive_folder(api, db, relative, remote_id, &name).await;
     }
 
     if item_type == "file" {
         if !remote_id.is_empty() {
-            api.delete_file(&remote_id).await?;
+            api.delete_file(remote_id).await?;
         }
         let conn = db.lock().map_err(|e| AppError::msg(e.to_string()))?;
-        my_drive_delete_placeholder(&conn, &relative)?;
+        my_drive_delete_placeholder(&conn, relative)?;
         sync_log(format!("My Drive deleted — {name}"));
     }
     Ok(())
+}
+
+/// True when most tracked children under `folder` are also marked delete-in-flight
+/// (mass Explorer delete in progress — soft-trash the folder, do not wait).
+fn folder_children_mostly_deleting(
+    folder: &MyDrivePlaceholderRow,
+    all_rows: &[MyDrivePlaceholderRow],
+) -> bool {
+    let prefix = format!(
+        "{}\\",
+        folder.relative_path.trim_end_matches(['\\', '/'])
+    );
+    let prefix_l = prefix.to_ascii_lowercase();
+    let mut total = 0u32;
+    let mut deleting = 0u32;
+    let Ok(sync_root) = sync_root_dir(false) else {
+        return false;
+    };
+    for row in all_rows {
+        if row.remote_id.is_empty() || row.remote_id == folder.remote_id {
+            continue;
+        }
+        let under = row
+            .relative_path
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+            .starts_with(&prefix_l);
+        let by_parent = row.parent_remote_id.as_deref() == Some(folder.remote_id.as_str());
+        if !under && !by_parent {
+            continue;
+        }
+        total += 1;
+        let child_path = local_dir_for_relative(&sync_root, &row.relative_path);
+        if is_path_under_active_delete(&child_path) || !path_exists_for_placeholder(
+            &sync_root,
+            &row.relative_path,
+            &row.item_type,
+        ) {
+            deleting += 1;
+        }
+    }
+    total > 0 && deleting * 2 >= total
+}
+
+fn is_rate_limit_error(err: &AppError) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("rate limit") || msg.contains("http 429") || msg.contains("too many requests")
+}
+
+/// High-priority soft-trash with outer retry so free-up 429 storms do not drop user deletes.
+pub async fn delete_my_drive_path_with_retry(
+    api: &ApiClient,
+    db: &DbHandle,
+    path: &Path,
+) -> AppResult<()> {
+    const BACKOFFS_MS: &[u64] = &[1_000, 2_000, 5_000, 10_000, 20_000];
+    let mut attempt = 0usize;
+    loop {
+        match delete_my_drive_path(api, db, path).await {
+            Ok(()) => return Ok(()),
+            Err(e) if is_rate_limit_error(&e) && attempt < BACKOFFS_MS.len() => {
+                let delay = BACKOFFS_MS[attempt];
+                sync_log(format!(
+                    "My Drive delete rate-limited, retry in {delay}ms (attempt {}) — {}",
+                    attempt + 1,
+                    path.display()
+                ));
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 async fn soft_trash_my_drive_folder(
@@ -2869,6 +3421,13 @@ async fn free_up_my_drive_file(
     path: &Path,
     relative: &str,
 ) -> AppResult<()> {
+    if is_path_under_active_delete(path) || is_path_under_active_rename(path) {
+        sync_log(format!(
+            "My Drive free-up file skip (user mutation) — {}",
+            path.display()
+        ));
+        return Ok(());
+    }
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -2950,6 +3509,17 @@ async fn free_up_my_drive_file(
                         path.display(),
                         e
                     ));
+                    refresh_placeholder_status(path);
+                    return Ok(());
+                }
+                let rate_limited = msg.to_ascii_lowercase().contains("rate limit")
+                    || msg.to_ascii_lowercase().contains("http 429");
+                if rate_limited {
+                    sync_log(format!(
+                        "My Drive free-up yielding (rate limit) 45s, keep local — {}",
+                        path.display()
+                    ));
+                    tokio::time::sleep(Duration::from_secs(45)).await;
                     refresh_placeholder_status(path);
                     return Ok(());
                 }
@@ -3045,6 +3615,13 @@ async fn free_up_my_drive_folder(
             .unwrap_or("file")
             .to_string();
         if crate::sync::should_skip_file(&name) {
+            continue;
+        }
+        if is_path_under_active_delete(child) || is_path_under_active_rename(child) {
+            sync_log(format!(
+                "My Drive free-up skip (user mutation) — {}",
+                child.display()
+            ));
             continue;
         }
         if is_dehydrated_placeholder(child) {
@@ -3202,6 +3779,13 @@ async fn free_up_sweep_stuck_unpinned(
     let files = collect_free_up_files_under(root);
     let mut retried = 0u32;
     for path in files {
+        if is_path_under_active_delete(&path) || is_path_under_active_rename(&path) {
+            sync_log(format!(
+                "My Drive free-up sweep skip (user mutation) — {}",
+                path.display()
+            ));
+            continue;
+        }
         if is_dehydrated_placeholder(&path) {
             if is_unpinned(&path) {
                 refresh_placeholder_status(&path);
@@ -3300,6 +3884,13 @@ async fn free_up_tree_pass_recursive(
         if crate::sync::should_skip_file(&name) {
             continue;
         }
+        if is_path_under_active_delete(&path) || is_path_under_active_rename(&path) {
+            sync_log(format!(
+                "My Drive free-up tree_pass skip (user mutation) — {}",
+                path.display()
+            ));
+            continue;
+        }
         if is_dehydrated_placeholder(&path) {
             continue;
         }
@@ -3338,11 +3929,22 @@ async fn free_up_tree_pass_recursive(
                     refresh_placeholder_status(&path);
                     continue;
                 }
-                sync_log(format!(
-                    "My Drive free-up tree_pass probe failed {}, skipping dehydrate: {}",
-                    path.display(),
-                    e
-                ));
+                let rate_limited = msg.to_ascii_lowercase().contains("rate limit")
+                    || msg.to_ascii_lowercase().contains("http 429");
+                if rate_limited {
+                    // Yield API quota to high-priority user mutations (delete/rename).
+                    sync_log(format!(
+                        "My Drive free-up yielding (rate limit) 45s — {}",
+                        path.display()
+                    ));
+                    tokio::time::sleep(Duration::from_secs(45)).await;
+                } else {
+                    sync_log(format!(
+                        "My Drive free-up tree_pass probe failed {}, skipping dehydrate: {}",
+                        path.display(),
+                        e
+                    ));
+                }
                 continue;
             }
         }
@@ -3416,16 +4018,23 @@ async fn refresh_files_when_remote_newer(
     stats: &mut MyDrivePollStats,
 ) {
     for file in files {
+        let local_path = local_dir.join(sanitize_name(&file.name));
+        if is_path_under_active_delete(&local_path) {
+            continue;
+        }
         let known = {
             let Ok(conn) = db.lock() else {
                 continue;
             };
             crate::db::my_drive_known_remote_version(&conn, &file.id).unwrap_or(0)
         };
-        let local_path = local_dir.join(sanitize_name(&file.name));
         let expected = file.size.max(0) as u64;
         let size_mismatch = match std::fs::metadata(&local_path) {
-            Ok(meta) if !is_dehydrated_placeholder(&local_path) => meta.len() != expected,
+            Ok(meta) if !is_dehydrated_placeholder(&local_path) => {
+                let len = meta.len();
+                // Historical empty uploads may report size=16 (AES-GCM tag) while plaintext is 0.
+                len != expected && !(len == 0 && expected == 16)
+            }
             Ok(_) => false, // dehydrated placeholder — size on disk is not content
             Err(_) => false,
         };
@@ -3466,6 +4075,15 @@ async fn refresh_files_when_remote_newer(
                     "My Drive refresh remote-newer failed {}: {}",
                     relative, e
                 ));
+                if let Ok(conn) = db.lock() {
+                    let _ = insert_activity(
+                        &conn,
+                        &file.name,
+                        &format!("My Drive refresh failed: {e}"),
+                        file.size.max(0),
+                        "error",
+                    );
+                }
             }
         }
     }

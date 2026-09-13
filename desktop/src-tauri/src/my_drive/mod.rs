@@ -16,12 +16,15 @@ pub use provider::{
 
 #[cfg(windows)]
 pub use sync::{
-    clear_delete_in_flight, delete_my_drive_path, ensure_my_drive_folder_path,
+    clear_delete_in_flight, clear_rename_in_flight, delete_my_drive_path,
+    delete_my_drive_path_with_retry, drain_my_drive_upload_retries, ensure_my_drive_folder_path,
     forget_my_drive_placeholder, free_up_my_drive_path, hydrate_my_drive_path,
-    is_free_up_in_progress, is_path_under_active_delete, is_path_under_active_delete_ancestor,
-    is_path_under_active_free_up, mark_delete_in_flight, poll_my_drive, register_free_up_auto_resume,
-    rename_my_drive_path, take_pending_free_up_resume, try_claim_my_drive_upload,
-    upload_my_drive_path, MyDriveBusyCb, MyDrivePollStats,
+    is_free_up_in_progress, is_my_drive_upload_cancelled, is_path_under_active_delete,
+    is_path_under_active_delete_ancestor, is_path_under_active_free_up, is_path_under_active_rename,
+    is_remote_id_rename_in_flight, mark_delete_in_flight, mark_rename_in_flight, poll_my_drive,
+    poll_my_drive_offline_only, register_free_up_auto_resume, rename_my_drive_path,
+    take_pending_free_up_resume, try_claim_my_drive_upload, upload_my_drive_path, MyDriveBusyCb,
+    MyDrivePollStats,
 };
 
 #[cfg(not(windows))]
@@ -130,6 +133,27 @@ pub fn is_path_under_active_delete(_path: &std::path::Path) -> bool {
 
 #[cfg(not(windows))]
 pub fn is_path_under_active_delete_ancestor(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn mark_rename_in_flight(
+    _from: &std::path::Path,
+    _to: &std::path::Path,
+    _remote_id: &str,
+) {
+}
+
+#[cfg(not(windows))]
+pub fn clear_rename_in_flight(_from: &std::path::Path, _to: &std::path::Path) {}
+
+#[cfg(not(windows))]
+pub fn is_path_under_active_rename(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn is_remote_id_rename_in_flight(_remote_id: &str) -> bool {
     false
 }
 
