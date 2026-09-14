@@ -166,10 +166,10 @@ const App = (() => {
 
     function setAccountsExpanded(expanded) {
         const card = document.getElementById('profile-account-card');
-        const list = document.getElementById('profile-accounts');
+        const panel = document.getElementById('profile-accounts-panel');
         const toggle = document.getElementById('profile-accounts-toggle');
         card?.classList.toggle('is-expanded', expanded);
-        if (list) list.hidden = !expanded;
+        if (panel) panel.hidden = !expanded;
         if (toggle) {
             toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
             toggle.setAttribute('aria-label', expanded ? 'Hide other accounts' : 'Show other accounts');
@@ -179,15 +179,12 @@ const App = (() => {
     function renderAccountSwitcher() {
         const list = document.getElementById('profile-accounts');
         const signOutAll = document.getElementById('signout-all-btn');
-        const toggle = document.getElementById('profile-accounts-toggle');
         const accounts = API.listAccounts?.() || [];
         const others = accounts.filter((account) => !account.active);
         if (signOutAll) signOutAll.classList.toggle('hidden', accounts.length < 2);
-        if (toggle) toggle.classList.toggle('hidden', others.length < 1);
         if (!list) return;
         if (!others.length) {
             list.innerHTML = '';
-            setAccountsExpanded(false);
             return;
         }
         list.innerHTML = others.map((account) => {

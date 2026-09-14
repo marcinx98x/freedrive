@@ -433,19 +433,26 @@ body {
   flex-shrink: 0;
 }
 
+.profile-accounts-panel {
+  padding: 0 8px 8px;
+}
+
+.profile-accounts-panel[hidden] {
+  display: none !important;
+}
+
 .profile-accounts {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 8px 8px;
-}
-
-.profile-accounts[hidden] {
-  display: none !important;
 }
 
 .profile-accounts:empty {
   display: none;
+}
+
+.profile-accounts:empty + .profile-add-account {
+  margin-top: 0;
 }
 
 .profile-account-row {
@@ -524,12 +531,14 @@ body {
 .profile-add-account {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   width: 100%;
-  min-height: 56px;
-  padding: 12px 16px;
+  min-height: 48px;
+  margin-top: 4px;
+  padding: 8px;
   border: none;
-  background: #fff;
+  border-radius: 8px;
+  background: transparent;
   cursor: pointer;
   text-align: left;
   font-family: "Roboto", Arial, sans-serif;
@@ -538,7 +547,7 @@ body {
 }
 
 .profile-add-account:hover {
-  background: #f8f9fa;
+  background: #f1f3f4;
 }
 
 .profile-add-account-icon {
