@@ -135,7 +135,7 @@ FreeDrive is ideal for:
 
 ### 6. User Profile & Security
 
-- Profile settings modal (name, avatar photo)
+- Profile settings on the web **Account** tab (name, avatar photo, email change)
 - Forgot-password flow with SQLite-persisted reset tokens (survives server restart; single-use)
 - **Cross-device encryption** — account key (UEK) and per-file keys sync via server; unlocks automatically when you sign in with your password
 - **Device unlock cache** — web UI wraps the UEK with a per-browser device key (IndexedDB) so encryption stays active across page refreshes; cleared on logout
@@ -143,7 +143,8 @@ FreeDrive is ideal for:
 - **Key rotation** — re-wrap account and file keys with a new password-derived key under Advanced (web: Security center → Encryption; desktop: Settings)
 - Password reset can re-wrap the account key when crypto metadata is supplied
 - Secure email change with confirmation link sent to the new address
-- **Security center** (web profile menu) is the place to enroll an authenticator app: scan the QR (or enter the secret), confirm a code, then save the one-time backup codes. Email 2FA remains a separate toggle for codes sent by SMTP. The Settings modal keeps only profile fields (name, avatar, email)
+- **Web settings** — the gear opens a menu (**Settings**, **Security**, **Keyboard shortcuts**) and a full page with left nav: Account, General, Privacy, Notifications, Security, Keyboard shortcuts. Account keeps profile fields (name, avatar, email). General saves start page, density, and how PDFs open. Privacy stores search history only in this browser (opt out or clear). Unfinished controls stay visible, disabled, and labeled **Soon**. Dark mode (Appearance → Dark / Device default) is **not finished**: the Drive chrome and settings page are only partly themed, and some surfaces or text can still look wrong. Desktop and mobile keep their own settings screens
+- **Security center** (web settings → Security, or the gear menu) is the place to enroll an authenticator app: scan the QR (or enter the secret), confirm a code, then save the one-time backup codes. Email 2FA remains a separate toggle for codes sent by SMTP. The top-bar Security shield was removed; admin still uses its own shield to open the admin panel
 - When admin enables global `require_2fa`, all users must complete a second factor at sign-in (authenticator app **or** email). If both are enabled, authenticator is preferred with **Send code by email** as fallback
 - Desktop **0.1.8+** and current mobile builds verify TOTP / backup codes at login; authenticator enrollment stays web-only in v1
 - **Logged-in devices** — the web Security center and desktop app list active web and desktop sessions with device name, IP address, and last activity; re-login from the same browser/app overwrites that device's session instead of creating a duplicate

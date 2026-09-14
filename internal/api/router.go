@@ -125,6 +125,10 @@ func NewRouter(
 			r.Route("/shares", func(r chi.Router) {
 				r.Get("/with-me", shareHandler.SharedWithMe)
 				r.Get("/by-me", shareHandler.SharedByMe)
+				r.Post("/send", shareHandler.SendShares)
+				r.Get("/settings", shareHandler.GetItemSettings)
+				r.Put("/settings", shareHandler.SaveItemSettings)
+				r.Get("/access", shareHandler.WebAccess)
 				r.Post("/users", shareHandler.CreateUserShare)
 				r.Patch("/users/{id}", shareHandler.UpdateUserShare)
 				r.Delete("/users/{id}", shareHandler.DeleteUserShare)

@@ -1536,9 +1536,6 @@ const App = (() => {
         document.getElementById('share-copy-link')?.addEventListener('click', async () => {
             try { await FileManager.copyCurrentShareLink(); } catch { Components.toast('Failed to copy link', 'error'); }
         });
-        document.getElementById('share-copy-link-footer')?.addEventListener('click', async () => {
-            try { await FileManager.copyCurrentShareLink(); } catch { Components.toast('Failed to copy link', 'error'); }
-        });
 
         [
             'new-folder-action',

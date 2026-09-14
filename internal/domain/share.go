@@ -28,6 +28,36 @@ type ShareLink struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
+// ShareInvite is a pending share for an email that has no account yet.
+type ShareInvite struct {
+	ID         string     `json:"id"`
+	Email      string     `json:"email"`
+	FileID     *string    `json:"file_id,omitempty"`
+	FolderID   *string    `json:"folder_id,omitempty"`
+	SharedBy   string     `json:"shared_by"`
+	Permission Permission `json:"permission"`
+	Token      string     `json:"token"`
+	Message    string     `json:"message,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ClaimedAt  *time.Time `json:"claimed_at,omitempty"`
+}
+
+// ShareItemSettings stores per-item sharing restrictions shown in the web dialog.
+type ShareItemSettings struct {
+	EditorsCanShare    bool `json:"editors_can_share"`
+	EditorsCanDownload bool `json:"editors_can_download"`
+	ViewersCanDownload bool `json:"viewers_can_download"`
+}
+
+// DefaultShareItemSettings matches the Google dialog: all access allowed.
+func DefaultShareItemSettings() ShareItemSettings {
+	return ShareItemSettings{
+		EditorsCanShare:    true,
+		EditorsCanDownload: true,
+		ViewersCanDownload: true,
+	}
+}
+
 // UserShare represents a direct share with a specific user.
 type UserShare struct {
 	ID         string     `json:"id"`

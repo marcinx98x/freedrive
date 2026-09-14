@@ -74,6 +74,7 @@ func main() {
 	syncFeedService := service.NewSyncFeedService(syncChangeRepo, computerRepo, folderRepo, fileRepo)
 
 	authService := service.NewAuthService(userRepo, email2faRepo, totpBackupRepo, sessionRepo, cfg.JWTSecret)
+	authService.SetInviteClaimer(shareService)
 	expoPush := service.NewExpoPushService(pushTokenRepo)
 	loginApprovalService := service.NewLoginApprovalService(loginApprovalRepo, pushTokenRepo, expoPush, authService, userRepo)
 	fileService := service.NewFileService(fileRepo, userRepo, diskStorage, activityRepo, accessService, folderRepo, syncChangeService)

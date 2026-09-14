@@ -2,12 +2,17 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/abdullaabdullazade/freedrive/internal/adminsettings"
+	"github.com/abdullaabdullazade/freedrive/internal/email"
 
 	"github.com/abdullaabdullazade/freedrive/internal/api/middleware"
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
@@ -85,6 +90,131 @@ func (h *ShareHandler) CreateUserShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// SendShares handles POST /api/v1/shares/send
+func (h *ShareHandler) SendShares(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	var req struct {
+		FileID     *string `json:"file_id"`
+		FolderID   *string `json:"folder_id"`
+		ItemName   string  `json:"item_name"`
+		Notify     bool    `json:"notify"`
+		Message    string  `json:"message"`
+		Recipients []struct {
+			Email      string `json:"email"`
+			Permission string `json:"permission"`
+		} `json:"recipients"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	recipients := make([]service.ShareRecipient, 0, len(req.Recipients))
+	for _, rec := range req.Recipients {
+		recipients = append(recipients, service.ShareRecipient{Email: rec.Email, Permission: rec.Permission})
+	}
+	shared, invited, deliveries, err := h.shareService.DeliverShares(r.Context(), userID, strings.TrimSpace(req.Message), req.FileID, req.FolderID, recipients)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	emailError := ""
+	if req.Notify && len(deliveries) > 0 {
+		actorName := "Someone"
+		if actor, aerr := h.userRepo.GetByID(r.Context(), userID); aerr == nil && actor != nil {
+			if strings.TrimSpace(actor.Username) != "" {
+				actorName = actor.Username
+			} else if actor.Email != "" {
+				actorName = actor.Email
+			}
+		}
+		itemName := strings.TrimSpace(req.ItemName)
+		if itemName == "" {
+			itemName = "an item"
+		}
+		base := siteBaseURL(adminsettings.SiteURL(), r)
+		openID := ""
+		if req.FileID != nil && *req.FileID != "" {
+			openID = *req.FileID
+		} else if req.FolderID != nil && *req.FolderID != "" {
+			openID = *req.FolderID
+		}
+		for _, delivery := range deliveries {
+			body := fmt.Sprintf("%s shared \"%s\" with you on FreeDrive.\n", actorName, itemName)
+			if msg := strings.TrimSpace(req.Message); msg != "" {
+				body += "\n" + msg + "\n"
+			}
+			body += fmt.Sprintf("\nSign in to open it:\n%s/#/open/%s\n", base, url.PathEscape(openID))
+			if !delivery.Existing {
+				body += fmt.Sprintf("\nDon't have an account? Register with this email and the item will be waiting:\n%s/#/register?email=%s\n", base, url.QueryEscape(delivery.Email))
+			}
+			if err := email.SendFromSettings(delivery.Email, fmt.Sprintf("%s shared \"%s\" with you", actorName, itemName), body); err != nil && emailError == "" {
+				emailError = err.Error()
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"shared":      shared,
+		"invited":     invited,
+		"email_error": emailError,
+	})
+}
+
+// GetItemSettings handles GET /api/v1/shares/settings
+func (h *ShareHandler) GetItemSettings(w http.ResponseWriter, r *http.Request) {
+	fileID := strings.TrimSpace(r.URL.Query().Get("file_id"))
+	folderID := strings.TrimSpace(r.URL.Query().Get("folder_id"))
+	settings, err := h.shareService.ItemSettings(r.Context(), fileID, folderID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// SaveItemSettings handles PUT /api/v1/shares/settings
+func (h *ShareHandler) SaveItemSettings(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	var req struct {
+		FileID             string `json:"file_id"`
+		FolderID           string `json:"folder_id"`
+		EditorsCanShare    bool   `json:"editors_can_share"`
+		EditorsCanDownload bool   `json:"editors_can_download"`
+		ViewersCanDownload bool   `json:"viewers_can_download"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	settings := domain.ShareItemSettings{
+		EditorsCanShare:    req.EditorsCanShare,
+		EditorsCanDownload: req.EditorsCanDownload,
+		ViewersCanDownload: req.ViewersCanDownload,
+	}
+	if err := h.shareService.SaveItemSettings(r.Context(), userID, req.FileID, req.FolderID, settings); err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// WebAccess handles GET /api/v1/shares/access
+func (h *ShareHandler) WebAccess(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	fileID := strings.TrimSpace(r.URL.Query().Get("file_id"))
+	folderID := strings.TrimSpace(r.URL.Query().Get("folder_id"))
+	canShare, canDownload, err := h.shareService.WebAccess(r.Context(), userID, fileID, folderID)
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"can_share":    canShare,
+		"can_download": canDownload,
+	})
 }
 
 // DeleteUserShare handles DELETE /api/v1/shares/users/{id}

@@ -168,6 +168,13 @@ type ShareRepository interface {
 	DeleteUserShare(ctx context.Context, id string) error
 	ListSharedByUser(ctx context.Context, userID string) ([]domain.UserShare, error)
 	ListSharedWithUser(ctx context.Context, userID string) ([]domain.UserShare, error)
+
+	UpsertShareInvite(ctx context.Context, invite *domain.ShareInvite) error
+	ListUnclaimedInvitesByEmail(ctx context.Context, email string) ([]domain.ShareInvite, error)
+	MarkInviteClaimed(ctx context.Context, id string) error
+
+	GetShareItemSettings(ctx context.Context, fileID, folderID string) (*domain.ShareItemSettings, error)
+	SaveShareItemSettings(ctx context.Context, fileID, folderID string, settings domain.ShareItemSettings) error
 }
 
 // CommentRepository defines data access for comments.

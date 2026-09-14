@@ -29,12 +29,18 @@ var (
 )
 
 // AuthService handles authentication and authorization.
+// InviteClaimer attaches pending share invites after register or sign-in.
+type InviteClaimer interface {
+	ClaimPendingShares(ctx context.Context, userID, email string) error
+}
+
 type AuthService struct {
 	userRepo       repository.UserRepository
 	email2faRepo   repository.Email2FARepository
 	totpBackupRepo repository.TotpBackupRepository
 	sessionRepo    repository.SessionRepository
 	jwtSecret      []byte
+	inviteClaimer  InviteClaimer
 }
 
 // NewAuthService creates a new auth service.
@@ -143,7 +149,20 @@ func (s *AuthService) Register(ctx context.Context, email, username, password, i
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
+	s.claimInvites(ctx, user)
 	return user, nil
+}
+
+// SetInviteClaimer attaches pending-share claiming. Optional.
+func (s *AuthService) SetInviteClaimer(claimer InviteClaimer) {
+	s.inviteClaimer = claimer
+}
+
+func (s *AuthService) claimInvites(ctx context.Context, user *domain.User) {
+	if s.inviteClaimer == nil || user == nil {
+		return
+	}
+	_ = s.inviteClaimer.ClaimPendingShares(ctx, user.ID, user.Email)
 }
 
 // Login authenticates a user and returns JWT tokens (legacy helper).
@@ -455,6 +474,7 @@ func (s *AuthService) IssueTokens(ctx context.Context, user *domain.User, device
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return nil, err
 	}
+	s.claimInvites(ctx, user)
 	return s.generateTokenPair(ctx, user, device)
 }
 

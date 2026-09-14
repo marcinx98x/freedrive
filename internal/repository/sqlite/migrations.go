@@ -44,6 +44,7 @@ func runMigrations(db *sql.DB) error {
 		{20, migrationV20, nil},
 		{21, migrationV21, nil},
 		{22, "", migrationV22},
+		{23, migrationV23, nil},
 	}
 
 	for _, m := range migrations {
@@ -652,4 +653,31 @@ const migrationV21 = `
 ALTER TABLE files ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE upload_sessions ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE upload_sessions ADD COLUMN force_version INTEGER NOT NULL DEFAULT 0;
+`
+
+const migrationV23 = `
+CREATE TABLE IF NOT EXISTS share_invites (
+    id          TEXT PRIMARY KEY,
+    email       TEXT NOT NULL,
+    file_id     TEXT REFERENCES files(id) ON DELETE CASCADE,
+    folder_id   TEXT REFERENCES folders(id) ON DELETE CASCADE,
+    shared_by   TEXT NOT NULL REFERENCES users(id),
+    permission  TEXT NOT NULL DEFAULT 'read',
+    token       TEXT NOT NULL UNIQUE,
+    message     TEXT NOT NULL DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    claimed_at  DATETIME,
+    CHECK (file_id IS NOT NULL OR folder_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_share_invites_email ON share_invites(email);
+
+CREATE TABLE IF NOT EXISTS share_item_settings (
+    id                     TEXT PRIMARY KEY,
+    file_id                TEXT UNIQUE REFERENCES files(id) ON DELETE CASCADE,
+    folder_id              TEXT UNIQUE REFERENCES folders(id) ON DELETE CASCADE,
+    editors_can_share      INTEGER NOT NULL DEFAULT 1,
+    editors_can_download   INTEGER NOT NULL DEFAULT 1,
+    viewers_can_download   INTEGER NOT NULL DEFAULT 1,
+    CHECK (file_id IS NOT NULL OR folder_id IS NOT NULL)
+);
 `

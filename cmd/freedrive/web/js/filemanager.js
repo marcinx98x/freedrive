@@ -258,23 +258,45 @@ const FileManager = (() => {
         });
     }
 
+    let shareBatchRole = 'editor';
+
     function bindShareControls() {
         document.getElementById('share-people-input')?.addEventListener('input', (e) => {
             renderShareSuggestions(e.target.value.trim());
         });
 
         document.getElementById('share-people-input')?.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
+            if (e.key !== 'Enter' && e.key !== ',') return;
             e.preventDefault();
-            const value = e.currentTarget.value.trim();
-            if (!value) return;
-            addShareDraft(value, value, 'viewer');
-            e.currentTarget.value = '';
-            renderShareSuggestions('');
+            commitShareInput();
         });
 
-        document.getElementById('share-general-access')?.addEventListener('change', renderShareModalState);
-        document.getElementById('share-link-role')?.addEventListener('change', renderShareModalState);
+        document.getElementById('share-role-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.getElementById('share-role-menu')?.classList.toggle('hidden');
+            const open = !document.getElementById('share-role-menu')?.classList.contains('hidden');
+            document.getElementById('share-role-btn')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        document.getElementById('share-role-menu')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-role]');
+            if (!btn) return;
+            setShareBatchRole(btn.getAttribute('data-role') || 'editor');
+            document.getElementById('share-role-menu')?.classList.add('hidden');
+        });
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.gd-share-role')) {
+                document.getElementById('share-role-menu')?.classList.add('hidden');
+            }
+        });
+
+        document.getElementById('share-settings-btn')?.addEventListener('click', () => showShareSettings(true));
+        document.getElementById('share-back')?.addEventListener('click', () => showShareSettings(false));
+        document.getElementById('share-cancel')?.addEventListener('click', () => closeShareModal());
+        ['share-editors-can-share', 'share-editors-can-download', 'share-viewers-can-download'].forEach((id) => {
+            document.getElementById(id)?.addEventListener('change', () => saveShareSettings().catch((err) => {
+                Components.toast(err?.message || 'Failed to save share settings', 'error');
+            }));
+        });
     }
 
     let contextSubmenuHideTimer = null;
@@ -3333,28 +3355,107 @@ const FileManager = (() => {
         return 'viewer';
     }
 
+    function shareItemName() {
+        return shareTarget?.data?.name || 'item';
+    }
+
+    function setShareBatchRole(role) {
+        shareBatchRole = role === 'viewer' || role === 'commenter' || role === 'editor' ? role : 'editor';
+        const label = shareBatchRole.charAt(0).toUpperCase() + shareBatchRole.slice(1);
+        const btn = document.getElementById('share-role-btn');
+        if (btn) btn.textContent = label;
+        document.querySelectorAll('#share-role-menu [data-role]').forEach((el) => {
+            el.setAttribute('aria-selected', el.getAttribute('data-role') === shareBatchRole ? 'true' : 'false');
+        });
+        shareDraft.forEach((d) => { d.role = shareBatchRole; });
+    }
+
+    function syncShareSendState() {
+        const btn = document.getElementById('share-done');
+        if (btn) btn.disabled = shareDraft.length === 0;
+    }
+
+    function showShareSettings(open) {
+        document.getElementById('share-compose')?.classList.toggle('hidden', open);
+        document.getElementById('share-settings')?.classList.toggle('hidden', !open);
+        document.getElementById('share-back')?.classList.toggle('hidden', !open);
+        document.getElementById('share-settings-btn')?.classList.toggle('hidden', open);
+        const foot = document.querySelector('.gd-share-actions');
+        if (foot) foot.classList.toggle('hidden', open);
+        const title = document.getElementById('share-modal-title');
+        if (title) {
+            const name = shareItemName().replace(/'/g, '’');
+            title.textContent = open ? `Settings for '${name}'` : `Share '${name}'`;
+        }
+    }
+
+    async function loadShareSettings() {
+        if (!shareTarget) return;
+        const query = shareTarget.type === 'folder'
+            ? { folder_id: shareTarget.data.id }
+            : { file_id: shareTarget.data.id };
+        try {
+            const settings = await API.shares.getSettings(query);
+            const shareBox = document.getElementById('share-editors-can-share');
+            const editorsBox = document.getElementById('share-editors-can-download');
+            const viewersBox = document.getElementById('share-viewers-can-download');
+            if (shareBox) shareBox.checked = settings?.editors_can_share !== false;
+            if (editorsBox) editorsBox.checked = settings?.editors_can_download !== false;
+            if (viewersBox) viewersBox.checked = settings?.viewers_can_download !== false;
+        } catch { /* defaults stay checked */ }
+    }
+
+    async function saveShareSettings() {
+        if (!shareTarget) return;
+        const payload = {
+            editors_can_share: Boolean(document.getElementById('share-editors-can-share')?.checked),
+            editors_can_download: Boolean(document.getElementById('share-editors-can-download')?.checked),
+            viewers_can_download: Boolean(document.getElementById('share-viewers-can-download')?.checked),
+        };
+        if (shareTarget.type === 'folder') payload.folder_id = shareTarget.data.id;
+        else payload.file_id = shareTarget.data.id;
+        await API.shares.saveSettings(payload);
+    }
+
     function openShareModal(payload) {
         shareTarget = payload;
         shareDraft = [];
-        document.getElementById('share-modal-title').textContent = `Share ${payload.data.name}`;
+        setShareBatchRole('editor');
+        showShareSettings(false);
+        const message = document.getElementById('share-message');
+        if (message) message.value = '';
+        const notify = document.getElementById('share-notify');
+        if (notify) notify.checked = true;
+        const chips = document.getElementById('share-chips');
+        if (chips) chips.innerHTML = '';
 
         const key = shareKey(payload.data.id, payload.type);
         const currentAccess = meta.general_access[key] || { access: 'restricted', role: 'viewer' };
-        document.getElementById('share-general-access').value = currentAccess.access;
-        document.getElementById('share-link-role').value = currentAccess.role;
+        const accessEl = document.getElementById('share-general-access');
+        const roleEl = document.getElementById('share-link-role');
+        if (accessEl) accessEl.value = currentAccess.access;
+        if (roleEl) roleEl.value = currentAccess.role;
 
         renderShareModalState();
         renderShareExisting();
+        loadShareSettings();
+        syncShareSendState();
         document.getElementById('share-modal-overlay').classList.remove('hidden');
-        document.getElementById('share-people-input').focus();
+        document.getElementById('share-people-input')?.focus();
     }
 
     function closeShareModal() {
         shareTarget = null;
         shareDraft = [];
-        document.getElementById('share-modal-overlay').classList.add('hidden');
-        document.getElementById('share-people-input').value = '';
-        document.getElementById('share-suggestions').classList.add('hidden');
+        showShareSettings(false);
+        document.getElementById('share-modal-overlay')?.classList.add('hidden');
+        const input = document.getElementById('share-people-input');
+        if (input) input.value = '';
+        document.getElementById('share-suggestions')?.classList.add('hidden');
+        document.getElementById('share-role-menu')?.classList.add('hidden');
+        const chips = document.getElementById('share-chips');
+        if (chips) chips.innerHTML = '';
+        syncShareSendState();
     }
 
     async function buildShareLink(itemId) {
@@ -3431,7 +3532,7 @@ const FileManager = (() => {
             el.textContent = u.label;
             el.type = 'button';
             el.addEventListener('click', () => {
-                addShareDraft(u.email || u.label, u.username || u.email, 'viewer', u.id);
+                addShareDraft(u.email || u.label, u.username || u.email, shareBatchRole, u.id, u.avatar_url || '');
                 document.getElementById('share-people-input').value = '';
                 renderShareSuggestions('');
             });
@@ -3441,35 +3542,60 @@ const FileManager = (() => {
         box.classList.remove('hidden');
     }
 
-    function addShareDraft(email, name, role, userId = '') {
-        if (!email) return;
-        const exists = shareDraft.some((s) => s.email === email);
-        if (exists) return;
-        shareDraft.push({ email, name, role, userId });
+    function isShareEmail(value) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim().toLowerCase());
+    }
 
-        const wrap = document.getElementById('share-added');
-        const chip = document.createElement('div');
-        chip.className = 'share-chip';
-        chip.dataset.email = email;
-        chip.innerHTML = `
-            <span>${esc(name)}</span>
-            <select>
-                <option value="viewer">Viewer</option>
-                <option value="commenter">Commenter</option>
-                <option value="editor">Editor</option>
-            </select>
-            <button type="button" class="link-btn" style="font-size:11px;">Remove</button>
-        `;
-        chip.querySelector('select').value = role;
-        chip.querySelector('select').addEventListener('change', (e) => {
-            const found = shareDraft.find((s) => s.email === email);
-            if (found) found.role = e.target.value;
+    function commitShareInput() {
+        const input = document.getElementById('share-people-input');
+        const value = String(input?.value || '').trim().replace(/,+$/, '');
+        if (!value) return;
+        if (!isShareEmail(value)) {
+            Components.toast('Enter an email address', 'error');
+            return;
+        }
+        const known = usersCache.find((u) => String(u.email || '').toLowerCase() === value.toLowerCase());
+        addShareDraft(value, known?.username || known?.label || value, shareBatchRole, known?.id || '', known?.avatar_url || '');
+        if (input) input.value = '';
+        renderShareSuggestions('');
+    }
+
+    function addShareDraft(email, name, role, userId = '', avatarUrl = '') {
+        email = String(email || '').trim().toLowerCase();
+        if (!isShareEmail(email)) return;
+        const me = getCurrentUser();
+        if (me?.email && email === String(me.email).toLowerCase()) {
+            Components.toast('You already own this item', 'info');
+            return;
+        }
+        if (shareDraft.some((s) => s.email === email)) return;
+        shareDraft.push({ email, name: name || email, role: role || shareBatchRole, userId, avatarUrl });
+        renderShareChips();
+        syncShareSendState();
+    }
+
+    function renderShareChips() {
+        const wrap = document.getElementById('share-chips');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        shareDraft.forEach((d) => {
+            const chip = document.createElement('div');
+            chip.className = 'gd-share-chip';
+            const avatar = d.avatarUrl
+                ? `<img src="${esc(d.avatarUrl)}" alt="">`
+                : esc(Components.initials(d.name || d.email));
+            chip.innerHTML = `
+                <span class="gd-share-chip-avatar">${avatar}</span>
+                <span class="gd-share-chip-name">${esc(d.name || d.email)}</span>
+                <button type="button" aria-label="Remove ${esc(d.email)}">×</button>
+            `;
+            chip.querySelector('button')?.addEventListener('click', () => {
+                shareDraft = shareDraft.filter((s) => s.email !== d.email);
+                renderShareChips();
+                syncShareSendState();
+            });
+            wrap.appendChild(chip);
         });
-        chip.querySelector('button').addEventListener('click', () => {
-            shareDraft = shareDraft.filter((s) => s.email !== email);
-            chip.remove();
-        });
-        wrap.appendChild(chip);
     }
 
     async function renderShareExisting() {
@@ -3581,29 +3707,36 @@ const FileManager = (() => {
 
     async function saveShareModal() {
         if (!shareTarget) return;
+        if (!shareDraft.length) {
+            Components.toast('Add an email and press Enter', 'info');
+            return;
+        }
 
-        const now = new Date().toISOString();
+        const payload = {
+            item_name: shareTarget.data.name || '',
+            notify: Boolean(document.getElementById('share-notify')?.checked),
+            message: String(document.getElementById('share-message')?.value || '').trim(),
+            recipients: shareDraft.map((d) => ({ email: d.email, permission: d.role || shareBatchRole })),
+        };
+        if (shareTarget.type === 'folder') payload.folder_id = shareTarget.data.id;
+        else payload.file_id = shareTarget.data.id;
+
         try {
-            for (const d of shareDraft) {
-                const payload = {
-                    permission: d.role || 'viewer',
-                };
-                if (d.userId) payload.shared_with = d.userId;
-                if (d.email) payload.shared_email = d.email;
-                if (shareTarget.type === 'folder') payload.folder_id = shareTarget.data.id;
-                else payload.file_id = shareTarget.data.id;
-                await API.shares.createUserShare(payload);
-                createNotification(`${currentUserLabel()} shared a file with you: ${shareTarget.data.name}`, now, false, d.name || d.email);
-            }
-
+            const result = await API.shares.send(payload);
+            const now = new Date().toISOString();
             addFileActivity(shareTarget.data.id, 'shared', shareTarget.data.name, now);
             await refreshSharedByMeCache();
             if (isMyDrivePage()) {
                 renderItems(filteredFolders, filteredFiles);
             }
-            Components.toast('Sharing updated', 'success');
+            if (result?.email_error) {
+                Components.toast('Shared, but the email could not be sent. Check SMTP in admin settings.', 'error');
+            } else if (payload.notify) {
+                Components.toast('Invitation sent', 'success');
+            } else {
+                Components.toast('Sharing updated', 'success');
+            }
             closeShareModal();
-            await copyCurrentShareLink();
         } catch (err) {
             Components.toast(err?.message || 'Failed to save sharing', 'error');
         }
@@ -4950,6 +5083,13 @@ const FileManager = (() => {
 
     async function downloadFile(file) {
         try {
+            if (file?.id && file.owner_id && file.owner_id !== getCurrentUser()?.id) {
+                const access = await API.shares.access({ file_id: file.id });
+                if (access && access.can_download === false) {
+                    Components.toast('The owner has turned off downloading for your access level', 'info');
+                    return;
+                }
+            }
             const blob = await decryptFileBlob(file);
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');

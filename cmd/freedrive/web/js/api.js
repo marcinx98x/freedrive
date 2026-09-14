@@ -735,6 +735,20 @@ const API = (() => {
         sharedWithMe: () => request('GET', '/shares/with-me'),
         sharedByMe: () => request('GET', '/shares/by-me'),
         createUserShare: (data) => request('POST', '/shares/users', data),
+        send: (data) => request('POST', '/shares/send', data),
+        getSettings: (query) => {
+            const params = new URLSearchParams();
+            if (query?.file_id) params.set('file_id', query.file_id);
+            if (query?.folder_id) params.set('folder_id', query.folder_id);
+            return request('GET', `/shares/settings?${params.toString()}`);
+        },
+        saveSettings: (data) => request('PUT', '/shares/settings', data),
+        access: (query) => {
+            const params = new URLSearchParams();
+            if (query?.file_id) params.set('file_id', query.file_id);
+            if (query?.folder_id) params.set('folder_id', query.folder_id);
+            return request('GET', `/shares/access?${params.toString()}`);
+        },
         updateUserShare: (id, data) => request('PATCH', `/shares/users/${id}`, data),
         deleteUserShare: (id) => request('DELETE', `/shares/users/${id}`),
         listLinks: () => request('GET', '/shares/links'),

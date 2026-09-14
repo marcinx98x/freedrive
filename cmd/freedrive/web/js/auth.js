@@ -360,6 +360,12 @@ const Auth = (() => {
     }
 
     function init() {
+        const shareEmail = new URLSearchParams(String(window.location.hash.split('?')[1] || '')).get('email');
+        if (shareEmail && window.location.hash.startsWith('#/register')) {
+            document.getElementById('register-tab')?.click();
+            const emailInput = document.getElementById('reg-email');
+            if (emailInput) emailInput.value = shareEmail;
+        }
         // Tab switching
         document.querySelectorAll('.auth-tab').forEach(tab => {
             tab.addEventListener('click', () => {

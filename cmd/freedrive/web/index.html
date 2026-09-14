@@ -579,28 +579,58 @@
     </div>
 
     <div class="modal-overlay hidden" id="share-modal-overlay">
-        <div class="modal share-modal">
-            <div class="modal-header"><h3 id="share-modal-title">Share</h3><button class="btn-icon" id="share-modal-close">✕</button></div>
-            <div class="modal-body">
-                <label class="modal-label">Add people or groups</label>
-                <input type="text" id="share-people-input" placeholder="name@example.com">
-                <div class="share-suggestions hidden" id="share-suggestions"></div>
-                <div class="share-added" id="share-added"></div>
-                <div class="context-divider"></div>
-                <div class="share-existing" id="share-existing"></div>
-                <div class="context-divider"></div>
-                <div class="share-general">
-                    <label class="modal-label">General access</label>
-                    <div class="row-inline">
-                        <select id="share-general-access"><option value="restricted">Restricted</option><option value="link">Anyone with the link</option></select>
-                        <button class="btn btn-secondary btn-sm" id="share-copy-link">Copy link</button>
+        <div class="modal share-modal gd-share" role="dialog" aria-labelledby="share-modal-title">
+            <div class="gd-share-head">
+                <button type="button" class="btn-icon hidden" id="share-back" aria-label="Back">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                </button>
+                <h3 id="share-modal-title">Share</h3>
+                <button type="button" class="btn-icon" id="share-settings-btn" aria-label="Share settings" title="Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.3-.06.62-.06.94s.02.64.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.49-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+                </button>
+                <button type="button" class="btn-icon" id="share-modal-close" aria-label="Close">✕</button>
+            </div>
+            <div id="share-compose">
+                <div class="gd-share-compose">
+                    <div class="gd-share-people" id="share-people-box">
+                        <div class="gd-share-chips" id="share-chips"></div>
+                        <input type="text" id="share-people-input" placeholder="Add people" autocomplete="off">
+                        <div class="share-suggestions hidden" id="share-suggestions"></div>
                     </div>
-                    <select id="share-link-role"><option value="viewer">Can view</option><option value="commenter">Can comment</option><option value="editor">Can edit</option></select>
+                    <div class="gd-share-role">
+                        <button type="button" id="share-role-btn" aria-haspopup="listbox" aria-expanded="false">Editor</button>
+                        <div class="gd-share-role-menu hidden" id="share-role-menu" role="listbox">
+                            <button type="button" data-role="viewer" role="option">Viewer</button>
+                            <button type="button" data-role="commenter" role="option">Commenter</button>
+                            <button type="button" data-role="editor" role="option">Editor</button>
+                        </div>
+                    </div>
+                </div>
+                <label class="gd-share-notify"><input type="checkbox" id="share-notify" checked> Notify people</label>
+                <textarea id="share-message" placeholder="Message" rows="4"></textarea>
+                <div class="share-existing" id="share-existing"></div>
+                <select id="share-general-access" class="hidden" aria-hidden="true"><option value="restricted">Restricted</option><option value="link">Anyone with the link</option></select>
+                <select id="share-link-role" class="hidden" aria-hidden="true"><option value="viewer">Can view</option><option value="commenter">Can comment</option><option value="editor" selected>Can edit</option></select>
+            </div>
+            <div id="share-settings" class="hidden">
+                <div class="gd-share-settings-block">
+                    <div class="gd-share-settings-label">Access</div>
+                    <label><input type="checkbox" id="share-editors-can-share" checked> Allow editors to change permissions and share</label>
+                </div>
+                <div class="gd-share-settings-block">
+                    <div class="gd-share-settings-label">People who can download, copy and print</div>
+                    <label><input type="checkbox" id="share-editors-can-download" checked> Editors</label>
+                    <label><input type="checkbox" id="share-viewers-can-download" checked> Commenters and viewers</label>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" id="share-copy-link-footer">Copy link</button>
-                <button class="btn btn-primary" id="share-done">Done</button>
+            <div class="gd-share-foot">
+                <button type="button" class="btn-icon" id="share-copy-link" aria-label="Copy link" title="Copy link">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                </button>
+                <div class="gd-share-actions">
+                    <button type="button" class="gd-share-cancel" id="share-cancel">Cancel</button>
+                    <button type="button" class="gd-share-send" id="share-done" disabled>Send</button>
+                </div>
             </div>
         </div>
     </div>

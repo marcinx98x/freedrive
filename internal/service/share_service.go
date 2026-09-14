@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/abdullaabdullazade/freedrive/internal/domain"
@@ -67,17 +68,8 @@ func (s *ShareService) CreateUserShare(ctx context.Context, actorID string, shar
 	share.Permission = ParsePermission(string(share.Permission))
 	share.SharedBy = actorID
 
-	if share.FileID != nil {
-		file, err := s.fileRepo.GetByID(ctx, *share.FileID)
-		if err != nil || file == nil || file.OwnerID != actorID {
-			return nil, fmt.Errorf("access denied")
-		}
-	}
-	if share.FolderID != nil {
-		folder, err := s.folderRepo.GetByID(ctx, *share.FolderID)
-		if err != nil || folder == nil || folder.OwnerID != actorID {
-			return nil, fmt.Errorf("access denied")
-		}
+	if err := s.canManageShares(ctx, actorID, share.FileID, share.FolderID); err != nil {
+		return nil, err
 	}
 
 	target, err := s.userRepo.GetByID(ctx, share.SharedWith)
@@ -97,19 +89,8 @@ func (s *ShareService) DeleteUserShare(ctx context.Context, actorID, shareID str
 	if err != nil || share == nil {
 		return ErrShareNotFound
 	}
-	if share.SharedBy != actorID {
-		if share.FileID != nil {
-			file, _ := s.fileRepo.GetByID(ctx, *share.FileID)
-			if file == nil || file.OwnerID != actorID {
-				return fmt.Errorf("access denied")
-			}
-		}
-		if share.FolderID != nil {
-			folder, _ := s.folderRepo.GetByID(ctx, *share.FolderID)
-			if folder == nil || folder.OwnerID != actorID {
-				return fmt.Errorf("access denied")
-			}
-		}
+	if err := s.canManageShares(ctx, actorID, share.FileID, share.FolderID); err != nil {
+		return err
 	}
 	return s.shareRepo.DeleteUserShare(ctx, shareID)
 }
@@ -120,19 +101,8 @@ func (s *ShareService) UpdateUserShare(ctx context.Context, actorID, shareID str
 	if err != nil || share == nil {
 		return nil, ErrShareNotFound
 	}
-	if share.SharedBy != actorID {
-		if share.FileID != nil {
-			file, _ := s.fileRepo.GetByID(ctx, *share.FileID)
-			if file == nil || file.OwnerID != actorID {
-				return nil, fmt.Errorf("access denied")
-			}
-		}
-		if share.FolderID != nil {
-			folder, _ := s.folderRepo.GetByID(ctx, *share.FolderID)
-			if folder == nil || folder.OwnerID != actorID {
-				return nil, fmt.Errorf("access denied")
-			}
-		}
+	if err := s.canManageShares(ctx, actorID, share.FileID, share.FolderID); err != nil {
+		return nil, err
 	}
 	share.Permission = ParsePermission(string(permission))
 	if err := s.shareRepo.UpdateUserShare(ctx, share); err != nil {
@@ -281,6 +251,241 @@ func (s *ShareService) ResolveLink(ctx context.Context, token, password string) 
 // RecordLinkDownload increments the download counter for a share link.
 func (s *ShareService) RecordLinkDownload(ctx context.Context, linkID string) error {
 	return s.shareRepo.IncrementDownloadCount(ctx, linkID)
+}
+
+// ShareRecipient is one email added in the share dialog.
+type ShareRecipient struct {
+	Email      string
+	Permission string
+}
+
+// ShareDelivery is enough for the handler to email a sign-in link.
+type ShareDelivery struct {
+	Email    string
+	Existing bool
+	FileID   string
+	FolderID string
+}
+
+// DeliverShares creates a user share or a pending invite for each email.
+func (s *ShareService) DeliverShares(ctx context.Context, actorID, message string, fileID, folderID *string, recipients []ShareRecipient) (shared, invited int, deliveries []ShareDelivery, err error) {
+	if err := s.canManageShares(ctx, actorID, fileID, folderID); err != nil {
+		return 0, 0, nil, err
+	}
+	actor, _ := s.userRepo.GetByID(ctx, actorID)
+	actorEmail := ""
+	if actor != nil {
+		actorEmail = strings.ToLower(strings.TrimSpace(actor.Email))
+	}
+	for _, rec := range recipients {
+		email := strings.ToLower(strings.TrimSpace(rec.Email))
+		if email == "" || !strings.Contains(email, "@") {
+			continue
+		}
+		if actorEmail != "" && email == actorEmail {
+			continue
+		}
+		perm := ParsePermission(rec.Permission)
+		user, uerr := s.userRepo.GetByEmail(ctx, email)
+		if uerr == nil && user != nil {
+			existing, _ := s.shareRepo.ListSharedWithUser(ctx, user.ID)
+			if current := matchingShare(existing, fileID, folderID); current != nil {
+				current.Permission = perm
+				if err := s.shareRepo.UpdateUserShare(ctx, current); err != nil {
+					return shared, invited, deliveries, err
+				}
+			} else {
+				share := &domain.UserShare{
+					FileID:     fileID,
+					FolderID:   folderID,
+					SharedWith: user.ID,
+					Permission: perm,
+					SharedBy:   actorID,
+				}
+				if err := s.shareRepo.CreateUserShare(ctx, share); err != nil {
+					return shared, invited, deliveries, err
+				}
+			}
+			shared++
+			deliveries = append(deliveries, ShareDelivery{Email: email, Existing: true, FileID: idOrEmpty(fileID), FolderID: idOrEmpty(folderID)})
+			continue
+		}
+		invite := &domain.ShareInvite{
+			Email:      email,
+			FileID:     fileID,
+			FolderID:   folderID,
+			SharedBy:   actorID,
+			Permission: perm,
+			Token:      randomShareToken(16),
+			Message:    message,
+		}
+		if err := s.shareRepo.UpsertShareInvite(ctx, invite); err != nil {
+			return shared, invited, deliveries, err
+		}
+		invited++
+		deliveries = append(deliveries, ShareDelivery{Email: email, Existing: false, FileID: idOrEmpty(fileID), FolderID: idOrEmpty(folderID)})
+	}
+	return shared, invited, deliveries, nil
+}
+
+// ClaimPendingShares attaches invites for this email to the user account.
+func (s *ShareService) ClaimPendingShares(ctx context.Context, userID, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if userID == "" || email == "" {
+		return nil
+	}
+	invites, err := s.shareRepo.ListUnclaimedInvitesByEmail(ctx, email)
+	if err != nil {
+		return err
+	}
+	existing, _ := s.shareRepo.ListSharedWithUser(ctx, userID)
+	for _, inv := range invites {
+		if inv.SharedBy == userID {
+			_ = s.shareRepo.MarkInviteClaimed(ctx, inv.ID)
+			continue
+		}
+		if !alreadyShared(existing, inv.FileID, inv.FolderID) {
+			share := &domain.UserShare{
+				FileID:     inv.FileID,
+				FolderID:   inv.FolderID,
+				SharedBy:   inv.SharedBy,
+				SharedWith: userID,
+				Permission: inv.Permission,
+			}
+			if err := s.shareRepo.CreateUserShare(ctx, share); err != nil {
+				return err
+			}
+		}
+		if err := s.shareRepo.MarkInviteClaimed(ctx, inv.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ItemSettings returns stored share dialog flags, or defaults.
+func (s *ShareService) ItemSettings(ctx context.Context, fileID, folderID string) (*domain.ShareItemSettings, error) {
+	return s.shareRepo.GetShareItemSettings(ctx, fileID, folderID)
+}
+
+// SaveItemSettings persists share dialog flags. Owner or allowed editor.
+func (s *ShareService) SaveItemSettings(ctx context.Context, actorID, fileID, folderID string, settings domain.ShareItemSettings) error {
+	var filePtr, folderPtr *string
+	if fileID != "" {
+		filePtr = &fileID
+	}
+	if folderID != "" {
+		folderPtr = &folderID
+	}
+	if err := s.canManageShares(ctx, actorID, filePtr, folderPtr); err != nil {
+		return err
+	}
+	return s.shareRepo.SaveShareItemSettings(ctx, fileID, folderID, settings)
+}
+
+// WebAccess reports whether this user may share or download the item in the web panel.
+func (s *ShareService) WebAccess(ctx context.Context, userID, fileID, folderID string) (canShare, canDownload bool, err error) {
+	settings, err := s.shareRepo.GetShareItemSettings(ctx, fileID, folderID)
+	if err != nil {
+		return false, false, err
+	}
+	ownerID := ""
+	var perm domain.Permission
+	if fileID != "" {
+		file, ferr := s.fileRepo.GetByID(ctx, fileID)
+		if ferr != nil || file == nil {
+			return false, false, fmt.Errorf("not found")
+		}
+		ownerID = file.OwnerID
+		p, perr := s.access.FilePermission(ctx, fileID, userID)
+		if perr != nil {
+			return false, false, perr
+		}
+		perm = p
+	} else if folderID != "" {
+		folder, ferr := s.folderRepo.GetByID(ctx, folderID)
+		if ferr != nil || folder == nil {
+			return false, false, fmt.Errorf("not found")
+		}
+		ownerID = folder.OwnerID
+		p, perr := s.access.FolderPermission(ctx, folderID, userID)
+		if perr != nil {
+			return false, false, perr
+		}
+		perm = p
+	}
+	if userID == ownerID {
+		return true, true, nil
+	}
+	isEditor := permissionRank(perm) >= permissionRank(domain.PermWrite)
+	if isEditor {
+		return settings.EditorsCanShare, settings.EditorsCanDownload, nil
+	}
+	return false, settings.ViewersCanDownload, nil
+}
+
+func (s *ShareService) canManageShares(ctx context.Context, actorID string, fileID, folderID *string) error {
+	if fileID != nil && *fileID != "" {
+		file, err := s.fileRepo.GetByID(ctx, *fileID)
+		if err != nil || file == nil {
+			return fmt.Errorf("access denied")
+		}
+		if file.OwnerID == actorID {
+			return nil
+		}
+		settings, _ := s.shareRepo.GetShareItemSettings(ctx, *fileID, "")
+		if settings != nil && settings.EditorsCanShare && s.access.CanWriteFile(ctx, *fileID, actorID) == nil {
+			return nil
+		}
+		return fmt.Errorf("access denied")
+	}
+	if folderID != nil && *folderID != "" {
+		folder, err := s.folderRepo.GetByID(ctx, *folderID)
+		if err != nil || folder == nil {
+			return fmt.Errorf("access denied")
+		}
+		if folder.OwnerID == actorID {
+			return nil
+		}
+		settings, _ := s.shareRepo.GetShareItemSettings(ctx, "", *folderID)
+		if settings != nil && settings.EditorsCanShare && s.access.CanWriteFolder(ctx, *folderID, actorID) == nil {
+			return nil
+		}
+		return fmt.Errorf("access denied")
+	}
+	return ErrShareTargetMissing
+}
+
+func matchingShare(existing []domain.UserShare, fileID, folderID *string) *domain.UserShare {
+	for i := range existing {
+		share := &existing[i]
+		if fileID != nil && share.FileID != nil && *share.FileID == *fileID {
+			return share
+		}
+		if folderID != nil && share.FolderID != nil && *share.FolderID == *folderID {
+			return share
+		}
+	}
+	return nil
+}
+
+func alreadyShared(existing []domain.UserShare, fileID, folderID *string) bool {
+	for _, share := range existing {
+		if fileID != nil && share.FileID != nil && *share.FileID == *fileID {
+			return true
+		}
+		if folderID != nil && share.FolderID != nil && *share.FolderID == *folderID {
+			return true
+		}
+	}
+	return false
+}
+
+func idOrEmpty(id *string) string {
+	if id == nil {
+		return ""
+	}
+	return *id
 }
 
 func randomShareToken(n int) string {
