@@ -1923,7 +1923,21 @@ const FileManager = (() => {
         resolveUnknownLocations(top, dropdown);
     }
 
+    function recordSearchQuery(query) {
+        const q = String(query || '').trim();
+        if (!q) return;
+        try {
+            const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}');
+            if (prefs.keepSearchHistory === false) return;
+            let list = JSON.parse(localStorage.getItem('fd_search_history') || '[]');
+            if (!Array.isArray(list)) list = [];
+            list = [q, ...list.filter((item) => item !== q)].slice(0, 20);
+            localStorage.setItem('fd_search_history', JSON.stringify(list));
+        } catch { /* ignore */ }
+    }
+
     function searchAllResults(query) {
+        recordSearchQuery(query);
         hideSearchDropdown();
         const topInput = document.getElementById('search-input');
         if (topInput) topInput.value = query;
@@ -6440,9 +6454,22 @@ const FileManager = (() => {
         });
     }
 
+    function pdfOpensInNewTab() {
+        try {
+            return JSON.parse(localStorage.getItem('fd_user_prefs') || '{}').pdfOpen === 'tab';
+        } catch {
+            return false;
+        }
+    }
+
     async function openPdfViewer(file) {
         const blob = await decryptFileBlob(file);
         const url = URL.createObjectURL(blob);
+        if (pdfOpensInNewTab()) {
+            const opened = window.open(url, '_blank', 'noopener');
+            if (opened) return;
+            Components.toast('Pop-up blocked. Opening preview instead.', 'info');
+        }
         const shell = openEditorShell(file);
 
         const wrap = document.createElement('div');
@@ -7654,7 +7681,7 @@ const FileManager = (() => {
         openFile(selectedPrimary.data);
     }
 
-    function showShortcuts() {
+    function shortcutsMarkup() {
         const data = [
             {
                 title: 'Navigation',
@@ -7735,8 +7762,7 @@ const FileManager = (() => {
             },
         ];
 
-        const container = document.getElementById('shortcuts-content');
-        container.innerHTML = data.map((g) => `
+        const markup = data.map((g) => `
             <div class="shortcut-group">
                 <h4>${g.title}</h4>
                 ${g.items.map((it) => {
@@ -7746,8 +7772,18 @@ const FileManager = (() => {
                 }).join('')}
             </div>
         `).join('');
+        return markup;
+    }
 
-        document.getElementById('shortcuts-modal-overlay').classList.remove('hidden');
+    function showShortcuts() {
+        const container = document.getElementById('shortcuts-content');
+        if (container) container.innerHTML = shortcutsMarkup();
+        document.getElementById('shortcuts-modal-overlay')?.classList.remove('hidden');
+    }
+
+    function renderShortcutsInto(container) {
+        if (!container) return;
+        container.innerHTML = shortcutsMarkup();
     }
 
     let _gKeyPending = false;
@@ -7830,6 +7866,12 @@ const FileManager = (() => {
         }
 
         if (key === 'Escape') {
+            const settingsPage = document.getElementById('settings-page');
+            if (settingsPage && !settingsPage.classList.contains('hidden')) {
+                e.preventDefault();
+                App.closeSettingsPage?.();
+                return;
+            }
             const ctxMenu = document.getElementById('context-menu');
             if (ctxMenu && !ctxMenu.classList.contains('hidden')) {
                 hideContextMenu();
@@ -8249,6 +8291,7 @@ const FileManager = (() => {
         toggleNotificationsPanel,
         markAllNotificationsRead,
         showShortcuts,
+        renderShortcutsInto,
         handleShortcut,
         hasSelection,
         canAcceptUploads,

@@ -278,6 +278,197 @@ const App = (() => {
         document.body.dataset.fdTheme = t;
     }
 
+    function applyUserPrefs(prefs) {
+        const p = prefs || getUserPrefs();
+        applyTheme(p.theme || 'system');
+        document.body.classList.remove('fd-density-cosy', 'fd-density-compact');
+        if (p.density === 'cosy') document.body.classList.add('fd-density-cosy');
+        if (p.density === 'compact') document.body.classList.add('fd-density-compact');
+    }
+
+    let settingsRenderGen = 0;
+
+    function showSettingsShell(section) {
+        const page = document.getElementById('settings-page');
+        if (!page) return 0;
+        document.getElementById('settings-menu')?.classList.add('hidden');
+        document.getElementById('topbar-settings')?.setAttribute('aria-expanded', 'false');
+        document.getElementById('profile-dropdown')?.classList.add('hidden');
+        page.classList.remove('hidden');
+        page.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('settings-open');
+        const title = document.getElementById('settings-title');
+        if (title) title.textContent = 'Settings';
+        document.querySelectorAll('#settings-nav [data-section]').forEach((btn) => {
+            const active = btn.getAttribute('data-section') === section;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-current', active ? 'page' : 'false');
+        });
+        return ++settingsRenderGen;
+    }
+
+    function closeSettingsPage() {
+        settingsRenderGen += 1;
+        const page = document.getElementById('settings-page');
+        page?.classList.add('hidden');
+        page?.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('settings-open');
+    }
+
+    function openSettingsPage(section) {
+        if (section === 'security') {
+            openSecurityCenter();
+            return;
+        }
+        if (section === 'account') {
+            openDriveSettings();
+            return;
+        }
+        if (section === 'shortcuts') {
+            renderShortcutsSection();
+            return;
+        }
+        if (section === 'privacy') {
+            renderPrivacySection();
+            return;
+        }
+        if (section === 'notifications') {
+            renderNotificationsSection();
+            return;
+        }
+        renderGeneralSection();
+    }
+
+    function soonBadge() {
+        return '<span class="settings-soon">Soon</span>';
+    }
+
+    function settingsRow(title, desc, controlHtml, soon) {
+        return `<div class="settings-row${soon ? ' settings-row--soon' : ''}">
+            <div class="settings-row-copy">
+                <div class="settings-row-title">${title}${soon ? soonBadge() : ''}</div>
+                ${desc ? `<div class="settings-row-desc">${desc}</div>` : ''}
+            </div>
+            <div class="settings-row-control">${controlHtml}</div>
+        </div>`;
+    }
+
+    function radioChoices(pref, current, options) {
+        return options.map(([value, label]) => `
+            <label class="settings-choice">
+                <input type="radio" name="pref-${pref}" data-pref="${pref}" value="${value}" ${current === value ? 'checked' : ''}>
+                <span>${label}</span>
+            </label>`).join('');
+    }
+
+    function bindPrefRadios(root) {
+        root.querySelectorAll('input[type="radio"][data-pref]').forEach((input) => {
+            input.addEventListener('change', () => {
+                if (!input.checked) return;
+                const next = { ...getUserPrefs(), [input.dataset.pref]: input.value };
+                setUserPrefs(next);
+                applyUserPrefs(next);
+            });
+        });
+    }
+
+    function readSearchHistory() {
+        try {
+            const list = JSON.parse(localStorage.getItem('fd_search_history') || '[]');
+            return Array.isArray(list) ? list.map((item) => String(item || '').trim()).filter(Boolean) : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function clearSearchHistory() {
+        localStorage.removeItem('fd_search_history');
+    }
+
+    function renderGeneralSection() {
+        const gen = showSettingsShell('general');
+        const pane = document.getElementById('settings-pane');
+        if (!pane || gen !== settingsRenderGen) return;
+        const prefs = getUserPrefs();
+        const start = prefs.startPage === '#/files' ? '#/files' : '#/home';
+        const theme = prefs.theme === 'light' || prefs.theme === 'dark' ? prefs.theme : 'system';
+        const density = prefs.density === 'cosy' || prefs.density === 'compact' ? prefs.density : 'comfortable';
+        const pdfOpen = prefs.pdfOpen === 'tab' ? 'tab' : 'preview';
+        pane.innerHTML = `<div class="settings-pane-pad">
+            ${settingsRow('Start page', 'Open this page when you sign in', radioChoices('startPage', start, [['#/home', 'Home'], ['#/files', 'My Drive']]))}
+            ${settingsRow('Appearance', '', radioChoices('theme', theme, [['light', 'Light'], ['dark', 'Dark'], ['system', 'Device default']]))}
+            ${settingsRow('Density', 'Spacing of files and folders', radioChoices('density', density, [['comfortable', 'Comfortable'], ['cosy', 'Cosy'], ['compact', 'Compact']]))}
+            ${settingsRow('Open PDFs', 'Preview opens the in-app viewer. New tab opens the file in a browser tab.', radioChoices('pdfOpen', pdfOpen, [['preview', 'Preview'], ['tab', 'New tab']]))}
+            ${settingsRow('Convert uploads', 'Convert uploaded files to FreeDrive editor format', '<label class="settings-choice"><input type="checkbox" disabled><span>Convert uploads</span></label>', true)}
+            ${settingsRow('Offline', 'Edit files without a connection', '<label class="settings-choice"><input type="checkbox" disabled><span>Offline editing</span></label>', true)}
+            ${settingsRow('Preview cards', 'Show a preview card when hovering a file', '<label class="settings-choice"><input type="checkbox" disabled><span>Preview cards on hover</span></label>', true)}
+            ${settingsRow('Sounds', 'Play sounds for uploads and shares', '<label class="settings-choice"><input type="checkbox" disabled><span>Sounds</span></label>', true)}
+            ${settingsRow('Language', 'Display language', '<select disabled><option>English</option></select>', true)}
+        </div>`;
+        bindPrefRadios(pane);
+    }
+
+    function renderPrivacySection() {
+        const gen = showSettingsShell('privacy');
+        const pane = document.getElementById('settings-pane');
+        if (!pane || gen !== settingsRenderGen) return;
+        const keep = getUserPrefs().keepSearchHistory !== false;
+        const history = readSearchHistory();
+        const esc = Components.escapeHtml;
+        const list = history.length
+            ? `<ul class="settings-history-list">${history.map((q) => `<li>${esc(q)}</li>`).join('')}</ul>`
+            : '<div class="settings-row-desc">No search history on this device.</div>';
+        pane.innerHTML = `<div class="settings-pane-pad">
+            ${settingsRow('Search history', 'Queries you submit from the search box, stored only in this browser.', `
+                <label class="settings-choice">
+                    <input type="checkbox" id="settings-no-search-history" ${keep ? '' : 'checked'}>
+                    <span>Don&apos;t keep search history</span>
+                </label>
+                ${list}
+                <button type="button" class="btn btn-secondary" id="settings-clear-search-history">Clear search history</button>
+            `)}
+            ${settingsRow('Workspace smart features', 'Manage how Workspace uses your data', '<button type="button" class="btn btn-secondary" disabled>Manage</button>', true)}
+        </div>`;
+        pane.querySelector('#settings-no-search-history')?.addEventListener('change', (e) => {
+            const dontKeep = Boolean(e.target.checked);
+            const next = { ...getUserPrefs(), keepSearchHistory: !dontKeep };
+            setUserPrefs(next);
+            if (dontKeep) clearSearchHistory();
+            renderPrivacySection();
+        });
+        pane.querySelector('#settings-clear-search-history')?.addEventListener('click', () => {
+            clearSearchHistory();
+            Components.toast('Search history cleared', 'success');
+            renderPrivacySection();
+        });
+    }
+
+    function renderNotificationsSection() {
+        const gen = showSettingsShell('notifications');
+        const pane = document.getElementById('settings-pane');
+        if (!pane || gen !== settingsRenderGen) return;
+        const box = (label) => `<label class="settings-choice"><input type="checkbox" disabled><span>${label}</span></label>`;
+        pane.innerHTML = `<div class="settings-pane-pad">
+            <div class="settings-group-label">Browser</div>
+            ${settingsRow('Browser notifications', 'Alerts in this browser', `${box('Comments and mentions')}${box('Items shared with me')}`, true)}
+            <div class="settings-group-label">Email</div>
+            ${settingsRow('Email notifications', 'Messages sent to your account email', `${box('Comments and suggestions')}${box('Requests for access')}${box('Items shared with me')}`, true)}
+        </div>`;
+    }
+
+    function renderShortcutsSection() {
+        showSettingsShell('shortcuts');
+        const pane = document.getElementById('settings-pane');
+        if (!pane) return;
+        pane.innerHTML = '<div id="settings-shortcuts" class="shortcuts-grid settings-shortcuts settings-pane-pad"></div>';
+        const target = document.getElementById('settings-shortcuts');
+        if (window.FileManager?.renderShortcutsInto && target) {
+            FileManager.renderShortcutsInto(target);
+            return;
+        }
+        target.innerHTML = '<p style="margin:0;color:#5f6368;">Keyboard shortcuts are unavailable.</p>';
+    }
+
     function formatEmailExpiry(iso) {
         if (!iso) return 'soon';
         try {
@@ -290,6 +481,7 @@ const App = (() => {
     }
 
     async function openDriveSettings() {
+        const gen = showSettingsShell('account');
         const user = API.getUser() || {};
         const prefs = getUserPrefs();
         const esc = Components.escapeHtml;
@@ -305,6 +497,8 @@ const App = (() => {
             pendingStatus = await API.emailChangeStatus();
         } catch { /* ignore */ }
 
+        if (gen !== settingsRenderGen) return;
+
         const pendingBanner = pendingStatus.pending
             ? `<div id="settings-email-pending" style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#e8f0fe;color:#174ea6;font-size:13px;line-height:1.45;">
                 Check your inbox at <strong>${esc(pendingStatus.new_email_masked || 'your new address')}</strong>.
@@ -312,7 +506,9 @@ const App = (() => {
             </div>`
             : '';
 
-        Components.showModal('Settings', `
+        const pane = document.getElementById('settings-pane');
+        if (!pane) return;
+        pane.innerHTML = `
             <div class="drive-settings-modal" style="padding: 8px 0;">
                 <div class="drive-settings-profile" style="margin-bottom: 24px;">
                     <div class="drive-settings-avatar ${previewAvatar ? 'has-photo' : ''}" id="settings-avatar-preview" style="${previewAvatar ? `background-image:url(${previewAvatar});` : ''}">${previewAvatar ? '' : esc(Components.initials(user.username || user.email || 'U'))}</div>
@@ -345,57 +541,13 @@ const App = (() => {
                     </label>
                     <button type="button" class="btn btn-secondary drive-settings-confirm-btn" id="settings-send-email-confirm">Confirm</button>
                     ${pendingBanner}
-                    <div style="margin-top:8px;padding-top:20px;border-top:1px solid #e8eaed;">
-                        <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:8px;">Keyboard shortcuts</div>
-                        <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
-                            View keyboard shortcuts for navigating and managing files.
-                        </p>
-                        <button type="button" class="btn btn-secondary" id="settings-keyboard-shortcuts-btn">
-                            Keyboard shortcuts
-                        </button>
-                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button type="button" class="btn btn-primary" id="settings-save-profile">Save</button>
                 </div>
                 <input id="settings-avatar-input" type="file" accept="image/*" hidden>
             </div>
-        `, [
-            { text: 'Cancel' },
-            {
-                text: 'Save',
-                class: 'btn-primary',
-                close: false,
-                action: async () => {
-                    const first = String(document.getElementById('settings-first-name')?.value || '').trim();
-                    const last = String(document.getElementById('settings-last-name')?.value || '').trim();
-                    const fullName = [first, last].filter(Boolean).join(' ');
-                    if (!fullName) {
-                        Components.toast('First or last name is required', 'error');
-                        return;
-                    }
-
-                    const preview = document.getElementById('settings-avatar-preview');
-                    const avatarRaw = preview && Object.prototype.hasOwnProperty.call(preview.dataset, 'avatar')
-                        ? String(preview.dataset.avatar || '')
-                        : resolveAvatar(user, prefs);
-
-                    try {
-                        const avatar = avatarRaw
-                            ? await resizeAvatarDataURL(avatarRaw)
-                            : '';
-                        const updated = await API.updateMe({
-                            username: fullName,
-                            avatar_url: avatar,
-                        });
-                        API.setUser(updated);
-                        syncAvatarCache(updated.avatar_url || '');
-                        refreshUserUI();
-                        Components.toast('Profile updated', 'success');
-                        Components.hideModal();
-                    } catch (err) {
-                        Components.toast(err?.message || 'Failed to save profile', 'error');
-                    }
-                },
-            },
-        ]);
+        `;
 
         const fileInput = document.getElementById('settings-avatar-input');
         const avatarPreview = document.getElementById('settings-avatar-preview');
@@ -465,7 +617,6 @@ const App = (() => {
                 const result = await API.requestEmailChange(newEmail, password);
                 Components.toast(`Confirmation link sent to ${result.new_email_masked || newEmail}`, 'success', { duration: 7000 });
                 if (passwordInput) passwordInput.value = '';
-                Components.hideModal();
                 openDriveSettings();
             } catch (err) {
                 Components.toast(err?.message || 'Failed to request email change', 'error');
@@ -475,13 +626,44 @@ const App = (() => {
             }
         });
 
-        document.getElementById('settings-keyboard-shortcuts-btn')?.addEventListener('click', () => {
-            Components.hideModal();
-            FileManager.showShortcuts?.();
+        document.getElementById('settings-save-profile')?.addEventListener('click', async () => {
+            const first = String(document.getElementById('settings-first-name')?.value || '').trim();
+            const last = String(document.getElementById('settings-last-name')?.value || '').trim();
+            const fullName = [first, last].filter(Boolean).join(' ');
+            if (!fullName) {
+                Components.toast('First or last name is required', 'error');
+                return;
+            }
+
+            const preview = document.getElementById('settings-avatar-preview');
+            const avatarRaw = preview && Object.prototype.hasOwnProperty.call(preview.dataset, 'avatar')
+                ? String(preview.dataset.avatar || '')
+                : resolveAvatar(user, prefs);
+
+            const saveBtn = document.getElementById('settings-save-profile');
+            if (saveBtn) saveBtn.disabled = true;
+            try {
+                const avatar = avatarRaw
+                    ? await resizeAvatarDataURL(avatarRaw)
+                    : '';
+                const updated = await API.updateMe({
+                    username: fullName,
+                    avatar_url: avatar,
+                });
+                API.setUser(updated);
+                syncAvatarCache(updated.avatar_url || '');
+                refreshUserUI();
+                Components.toast('Profile updated', 'success');
+            } catch (err) {
+                Components.toast(err?.message || 'Failed to save profile', 'error');
+            } finally {
+                if (saveBtn) saveBtn.disabled = false;
+            }
         });
     }
 
     async function openSecurityCenter() {
+        const gen = showSettingsShell('security');
         const esc = Components.escapeHtml;
         let profile = API.getUser() || {};
         try {
@@ -550,7 +732,10 @@ const App = (() => {
                <button type="button" class="btn btn-primary" id="security-phone-approval-enable-btn">Enable phone prompts</button>
                ${phoneTrustedNote}`;
 
-        Components.showModal('Security', `
+        if (gen !== settingsRenderGen) return;
+        const pane = document.getElementById('settings-pane');
+        if (!pane) return;
+        pane.innerHTML = `
             <div class="drive-settings-modal" style="padding:8px 0;display:flex;flex-direction:column;gap:16px;">
                 <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
                     <div style="font-size:15px;font-weight:600;color:#202124;margin-bottom:4px;">Authenticator app</div>
@@ -606,7 +791,8 @@ const App = (() => {
                     <input type="file" id="security-import-keys-input" accept="application/json,.json" hidden>
                 </div>
             </div>
-        `, [{ text: 'Close' }]);
+        `;
+        if (gen !== settingsRenderGen) return;
 
         const setEmail2FA = async (next) => {
             if (required && !totpEnabled && !next) {
@@ -941,6 +1127,8 @@ const App = (() => {
             helpDropdown?.classList.add('hidden');
             searchFilterPanel?.classList.add('hidden');
             document.getElementById('profile-dropdown')?.classList.add('hidden');
+            document.getElementById('settings-menu')?.classList.add('hidden');
+            document.getElementById('topbar-settings')?.setAttribute('aria-expanded', 'false');
         };
         const closeRightPanels = () => {
             FileManager.hideDetailsPanel();
@@ -1044,8 +1232,28 @@ const App = (() => {
             closeMobileSidebar();
         });
 
-        document.getElementById('topbar-settings')?.addEventListener('click', () => {
-            openDriveSettings();
+        const settingsMenu = document.getElementById('settings-menu');
+        const settingsBtn = document.getElementById('topbar-settings');
+        settingsBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const opening = settingsMenu?.classList.contains('hidden');
+            closeTransientPanels();
+            if (!opening) return;
+            settingsMenu?.classList.remove('hidden');
+            settingsBtn.setAttribute('aria-expanded', 'true');
+        });
+        settingsMenu?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const item = e.target.closest('[data-section]');
+            if (!item) return;
+            closeTransientPanels();
+            openSettingsPage(item.getAttribute('data-section') || 'account');
+        });
+        document.getElementById('settings-back')?.addEventListener('click', () => closeSettingsPage());
+        document.getElementById('settings-nav')?.addEventListener('click', (e) => {
+            const item = e.target.closest('[data-section]');
+            if (!item) return;
+            openSettingsPage(item.getAttribute('data-section') || 'account');
         });
         document.getElementById('topbar-security')?.addEventListener('click', () => {
             openSecurityCenter();
@@ -1381,10 +1589,13 @@ const App = (() => {
         }
 
         const prefs = getUserPrefs();
-        applyTheme(prefs.theme || 'system');
+        applyUserPrefs(prefs);
         if (!window.location.hash && prefs.startPage) {
             window.location.hash = prefs.startPage;
         }
+        window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', () => {
+            if ((getUserPrefs().theme || 'system') === 'system') applyUserPrefs();
+        });
 
         SidebarTree.init();
         if (window.CryptoSync?.ensureUnlockedOnAppLoad) {
@@ -1594,6 +1805,8 @@ const App = (() => {
         showApp,
         handleRoute,
         openDriveSettings,
+        openSettingsPage,
+        closeSettingsPage,
     };
 })();
 

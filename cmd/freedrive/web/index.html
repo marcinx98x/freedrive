@@ -299,9 +299,16 @@
                 </div>
 
                 <div class="topbar-actions">
-                    <button class="btn-icon" id="topbar-settings" title="Settings" aria-label="Settings">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.3-.06.62-.06.94s.02.64.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.49-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-                    </button>
+                    <div class="topbar-menu-wrap" id="settings-menu-wrap">
+                        <button class="btn-icon" id="topbar-settings" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.3-.06.62-.06.94s.02.64.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.49-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+                        </button>
+                        <div id="settings-menu" class="settings-menu hidden" role="menu" aria-label="Settings">
+                            <button type="button" class="settings-menu-item" role="menuitem" data-section="account">Settings</button>
+                            <button type="button" class="settings-menu-item" role="menuitem" data-section="security">Security</button>
+                            <button type="button" class="settings-menu-item" role="menuitem" data-section="shortcuts">Keyboard shortcuts</button>
+                        </div>
+                    </div>
                     <div class="topbar-view-toggle">
                         <button class="btn-icon" id="topbar-view-list" title="List view" aria-label="List view">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
@@ -605,6 +612,28 @@
         <div class="modal shortcuts-modal">
             <div class="modal-header"><h3>Keyboard shortcuts</h3><button class="btn-icon" id="shortcuts-close">✕</button></div>
             <div class="modal-body shortcuts-grid" id="shortcuts-content"></div>
+        </div>
+    </div>
+
+    <div id="settings-page" class="settings-page hidden" aria-hidden="true">
+        <header class="settings-top">
+            <button type="button" class="btn-icon" id="settings-back" aria-label="Back">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            </button>
+            <h1 id="settings-title">Settings</h1>
+        </header>
+        <div class="settings-body">
+            <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
+                <button type="button" data-section="account">Account</button>
+                <button type="button" data-section="general">General</button>
+                <button type="button" data-section="privacy">Privacy</button>
+                <button type="button" data-section="notifications">Notifications</button>
+                <button type="button" data-section="security">Security</button>
+                <button type="button" data-section="shortcuts">Keyboard shortcuts</button>
+            </nav>
+            <div class="settings-card">
+                <div id="settings-pane"></div>
+            </div>
         </div>
     </div>
 

@@ -2886,3 +2886,344 @@ body {
 .app:not(.admin-mode) .file-card .card-more-btn:hover {
   background: transparent;
 }
+
+/* Gear menu + settings page */
+.topbar-menu-wrap {
+  position: relative;
+}
+
+.settings-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  z-index: 900;
+  min-width: 220px;
+  padding: 8px 0;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.3), 0 2px 6px 2px rgba(60, 64, 67, 0.15);
+}
+
+.settings-menu.hidden {
+  display: none;
+}
+
+.settings-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 10px 16px;
+  font-size: 14px;
+  color: #202124;
+  cursor: pointer;
+}
+
+.settings-menu-item:hover,
+.settings-menu-item:focus-visible {
+  background: #f1f3f4;
+  outline: none;
+}
+
+.settings-page {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafd;
+  color: #202124;
+}
+
+.settings-page.hidden {
+  display: none;
+}
+
+.settings-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 64px;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.settings-top h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.settings-body {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 8px 24px 32px;
+  min-height: 0;
+  flex: 1;
+}
+
+.settings-nav {
+  width: 256px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.settings-nav button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 24px;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 14px;
+  color: #202124;
+  cursor: pointer;
+}
+
+.settings-nav button:hover {
+  background: #e8eaed;
+}
+
+.settings-nav button.active {
+  background: #c2e7ff;
+  font-weight: 500;
+}
+
+.settings-card {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border-radius: 28px;
+  min-height: 420px;
+  padding: 8px 8px 24px;
+  overflow: auto;
+}
+
+.settings-pane-pad,
+.settings-card .drive-settings-modal {
+  padding: 16px 20px 8px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 8px;
+  border-bottom: 1px solid #e8eaed;
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-row-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-row-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #202124;
+}
+
+.settings-row-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #5f6368;
+}
+
+.settings-row-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.settings-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #202124;
+  cursor: pointer;
+}
+
+.settings-choice input {
+  accent-color: #1a73e8;
+}
+
+.settings-soon {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e8f0fe;
+  color: #1a73e8;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.settings-row--soon {
+  opacity: 0.72;
+}
+
+.settings-row--soon .settings-choice,
+.settings-row--soon select,
+.settings-row--soon button {
+  cursor: not-allowed;
+}
+
+.settings-group-label {
+  margin: 8px 8px 0;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5f6368;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+}
+
+.settings-history-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.settings-history-list li {
+  padding: 6px 0;
+  font-size: 13px;
+  color: #3c4043;
+  border-bottom: 1px solid #f1f3f4;
+}
+
+.settings-shortcuts .shortcut-group {
+  margin-bottom: 16px;
+}
+
+@media (max-width: 800px) {
+  .settings-body {
+    flex-direction: column;
+    padding: 0 12px 24px;
+  }
+
+  .settings-nav {
+    width: 100%;
+    flex-direction: row;
+    overflow: auto;
+    padding-top: 0;
+  }
+
+  .settings-nav button {
+    white-space: nowrap;
+  }
+
+  .settings-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+body.fd-density-cosy .app:not(.admin-mode) .file-grid.grid-view {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 220px));
+}
+
+body.fd-density-cosy .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row {
+  min-height: 40px !important;
+  height: 40px !important;
+}
+
+body.fd-density-compact .app:not(.admin-mode) .file-grid.grid-view {
+  grid-template-columns: repeat(auto-fill, minmax(148px, 176px));
+}
+
+body.fd-density-compact .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row {
+  min-height: 32px !important;
+  height: 32px !important;
+  padding: 0 10px !important;
+}
+
+body.fd-density-compact .app:not(.admin-mode) .file-card .card-thumb svg {
+  width: 40px !important;
+  height: 40px !important;
+}
+
+body.dark-mode {
+  background: #202124 !important;
+  color: #e8eaed !important;
+  color-scheme: dark;
+}
+
+body.dark-mode .app:not(.admin-mode),
+body.dark-mode .app:not(.admin-mode) .topbar,
+body.dark-mode .app:not(.admin-mode) .sidebar,
+body.dark-mode .app:not(.admin-mode) .content-area,
+body.dark-mode .app:not(.admin-mode) .main-content {
+  background: #202124 !important;
+  color: #e8eaed !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row,
+body.dark-mode .app:not(.admin-mode) .file-grid.grid-view .file-card {
+  background: #292a2d !important;
+  color: #e8eaed !important;
+  border-color: #3c4043 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .nav-item,
+body.dark-mode .app:not(.admin-mode) .file-label,
+body.dark-mode .app:not(.admin-mode) .file-name {
+  color: #e8eaed !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .nav-item:hover,
+body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover {
+  background: #3c4043 !important;
+}
+
+body.dark-mode .settings-page {
+  background: #202124;
+  color: #e8eaed;
+}
+
+body.dark-mode .settings-card,
+body.dark-mode .settings-menu {
+  background: #292a2d;
+  color: #e8eaed;
+}
+
+body.dark-mode .settings-nav button,
+body.dark-mode .settings-menu-item,
+body.dark-mode .settings-row-title,
+body.dark-mode .settings-choice {
+  color: #e8eaed;
+}
+
+body.dark-mode .settings-nav button:hover,
+body.dark-mode .settings-menu-item:hover {
+  background: #3c4043;
+}
+
+body.dark-mode .settings-nav button.active {
+  background: #004a77;
+  color: #e8eaed;
+}
