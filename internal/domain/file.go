@@ -11,6 +11,8 @@ type File struct {
 	EncryptedSize int64      `json:"encrypted_size"`
 	FolderID      *string    `json:"folder_id,omitempty"`
 	OwnerID       string     `json:"owner_id"`
+	OwnerName     string     `json:"owner_name,omitempty"`
+	OwnerEmail    string     `json:"owner_email,omitempty"`
 	BlobPath      string     `json:"-"`
 	IV            string     `json:"iv"`
 	Version       int        `json:"version"`

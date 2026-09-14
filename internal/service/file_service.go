@@ -140,6 +140,10 @@ func (s *FileService) Get(ctx context.Context, fileID, userID string) (*domain.F
 	if file == nil {
 		return nil, fmt.Errorf("file not found")
 	}
+	if owner, _ := s.userRepo.GetByID(ctx, file.OwnerID); owner != nil {
+		file.OwnerName = displayUserName(owner.Username, owner.Email)
+		file.OwnerEmail = owner.Email
+	}
 	return file, nil
 }
 

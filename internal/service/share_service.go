@@ -48,13 +48,14 @@ func NewShareService(
 
 // SharedItem is an enriched share listing entry.
 type SharedItem struct {
-	Share      domain.UserShare `json:"share"`
-	ItemType   string           `json:"item_type"`
-	ItemID     string           `json:"item_id"`
-	ItemName   string           `json:"item_name"`
-	OwnerID    string           `json:"owner_id"`
-	OwnerName  string           `json:"owner_name,omitempty"`
-	OwnerEmail string           `json:"owner_email,omitempty"`
+	Share        domain.UserShare `json:"share"`
+	ItemType     string           `json:"item_type"`
+	ItemID       string           `json:"item_id"`
+	ItemName     string           `json:"item_name"`
+	OwnerID      string           `json:"owner_id"`
+	OwnerName    string           `json:"owner_name,omitempty"`
+	OwnerEmail   string           `json:"owner_email,omitempty"`
+	SharedByName string           `json:"shared_by_name,omitempty"`
 }
 
 // CreateUserShare shares a file or folder with another user.
@@ -154,12 +155,25 @@ func (s *ShareService) enrichShares(ctx context.Context, shares []domain.UserSha
 			item.OwnerID = folder.OwnerID
 		}
 		if owner, _ := s.userRepo.GetByID(ctx, item.OwnerID); owner != nil {
-			item.OwnerName = owner.Username
+			item.OwnerName = displayUserName(owner.Username, owner.Email)
 			item.OwnerEmail = owner.Email
+		}
+		if sharer, _ := s.userRepo.GetByID(ctx, share.SharedBy); sharer != nil {
+			item.SharedByName = displayUserName(sharer.Username, sharer.Email)
+		} else if item.OwnerName != "" {
+			item.SharedByName = item.OwnerName
 		}
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func displayUserName(username, email string) string {
+	username = strings.TrimSpace(username)
+	if username != "" {
+		return username
+	}
+	return strings.TrimSpace(email)
 }
 
 // CreateLink creates a public share link for a file or folder.

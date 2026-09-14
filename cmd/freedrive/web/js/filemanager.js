@@ -623,7 +623,7 @@ const FileManager = (() => {
         const me = getCurrentUser();
         if (me?.id && userId === me.id) return me.username || me.email || 'You';
         const hit = usersCache.find((u) => u.id === userId);
-        return hit?.label || hit?.email || hit?.username || userId.slice(0, 8);
+        return hit?.username || hit?.email || hit?.label || userId.slice(0, 8);
     }
 
     async function requestApprovalForFile(file) {
@@ -646,10 +646,15 @@ const FileManager = (() => {
     }
 
     function itemOwner(item) {
+        if (!item) return 'Unknown';
         if (item.owner_name) return item.owner_name;
         const me = getCurrentUser();
         if (item.owner_id && me.id && item.owner_id === me.id) return currentUserLabel();
-        return item.shared_by_name || 'Unknown';
+        if (item.shared_by_name) return item.shared_by_name;
+        if (item.shared_by_email) return item.shared_by_email;
+        if (item.owner_email) return item.owner_email;
+        if (item.owner_id) return lookupUserLabel(item.owner_id);
+        return 'Unknown';
     }
 
     function isComputerListEntry(item) {
@@ -700,7 +705,7 @@ const FileManager = (() => {
             isMe = String(displayName).toLowerCase() === 'me'
                 || !!(item.owner_id && me.id && item.owner_id === me.id);
         } else if (isSharedWith) {
-            displayName = item.shared_by_name || item.shared_by_email || itemOwner(item);
+            displayName = item.shared_by_name || item.owner_name || item.shared_by_email || item.owner_email || itemOwner(item);
             isMe = !!(item.shared_by_id && me.id && item.shared_by_id === me.id);
         } else {
             isMe = !!(item.owner_id && me.id && item.owner_id === me.id);
@@ -2120,10 +2125,15 @@ const FileManager = (() => {
                         shared_at: item.share?.created_at || f.updated_at || f.created_at,
                     };
                     if (mode === 'with-me') {
+                        const ownerLabel = item.owner_name || item.owner_email || item.shared_by_name || 'User';
                         return {
                             ...base,
-                            shared_by_name: item.owner_name || 'User',
+                            owner_id: item.owner_id || f.owner_id,
+                            owner_name: item.owner_name || f.owner_name || ownerLabel,
+                            owner_email: item.owner_email || f.owner_email || '',
+                            shared_by_name: item.shared_by_name || item.owner_name || item.owner_email || ownerLabel,
                             shared_by_email: item.owner_email || '',
+                            shared_by_id: item.share?.shared_by || item.owner_id || '',
                         };
                     }
                     const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
@@ -2143,16 +2153,22 @@ const FileManager = (() => {
                 const base = {
                     id: item.item_id,
                     name: item.item_name || 'Folder',
+                    owner_id: item.owner_id || '',
+                    owner_name: item.owner_name || item.owner_email || '',
+                    owner_email: item.owner_email || '',
                     updated_at: item.share?.created_at || new Date().toISOString(),
                     created_at: item.share?.created_at || new Date().toISOString(),
                     share_role: permissionToRole(item.share?.permission),
                     shared_at: item.share?.created_at || new Date().toISOString(),
                 };
                 if (mode === 'with-me') {
+                    const ownerLabel = item.owner_name || item.owner_email || item.shared_by_name || 'User';
                     return {
                         ...base,
-                        shared_by_name: item.owner_name || 'User',
+                        owner_name: item.owner_name || ownerLabel,
+                        shared_by_name: item.shared_by_name || item.owner_name || item.owner_email || ownerLabel,
                         shared_by_email: item.owner_email || '',
+                        shared_by_id: item.share?.shared_by || item.owner_id || '',
                     };
                 }
                 const recipient = usersCache.find((u) => u.id === item.share?.shared_with);
@@ -4360,7 +4376,7 @@ const FileManager = (() => {
         }
 
         const sharedRows = currentPage === 'shared-with'
-            ? sharedPropRow('Shared by', esc(data.shared_by_name || 'User'))
+            ? sharedPropRow('Shared by', esc(data.shared_by_name || data.owner_name || data.shared_by_email || data.owner_email || 'User'))
               + sharedPropRow('Date shared', Components.formatAbsoluteDate(data.shared_at || data.updated_at || data.created_at))
               + sharedPropRow('Access', esc(capitalizeRole(data.share_role || 'viewer')))
             : '';
