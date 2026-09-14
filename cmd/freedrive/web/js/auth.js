@@ -106,6 +106,7 @@ const Auth = (() => {
         clearFormError('twofa-error');
         clearFormError('login-approval-error');
         clearFormError('force-pw-error');
+        syncAddingAccountUi();
     }
 
     function showForcePasswordForm(prefillCurrent = '') {
@@ -133,6 +134,7 @@ const Auth = (() => {
             if (prefillCurrent) document.getElementById('force-pw-new')?.focus();
             else currentInput?.focus();
         }, 50);
+        syncAddingAccountUi();
     }
 
     function stopApprovalPoll() {
@@ -208,25 +210,42 @@ const Auth = (() => {
         if (!data?.tokens?.access_token || !data?.user) {
             throw new Error('Login response was incomplete. Please try again.');
         }
-        API.setTokens(data.tokens);
-        API.setUser(data.user);
-        if (data.user?.avatar_url) {
-            try {
-                const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}') || {};
-                prefs.profileAvatar = data.user.avatar_url;
-                localStorage.setItem('fd_user_prefs', JSON.stringify(prefs));
-                localStorage.setItem('fd_profile_photo', data.user.avatar_url);
-            } catch { /* ignore */ }
+        const adding = API.isAddingAccount?.() || false;
+        API.upsertAccount ? API.upsertAccount(data.user, data.tokens) : (API.setTokens(data.tokens), API.setUser(data.user));
+        if (data.user?.avatar_url && API.setScopedItem) {
+            API.setScopedItem('fd_profile_photo', data.user.avatar_url);
         }
+        API.setAddingAccount?.(false);
         if (password && window.CryptoSync?.ensureUnlockedAfterLogin) {
             await CryptoSync.ensureUnlockedAfterLogin(password);
         }
         if (data.user.must_change_password) {
+            if (adding) API.markReloadAfterPassword?.();
             showForcePasswordForm(password || '');
+            syncAddingAccountUi();
             return;
         }
         Components.toast('Welcome back, ' + (data.user.username || data.user.email) + '!', 'success');
+        if (adding && API.reloadActive) {
+            API.reloadActive('#/files');
+            return;
+        }
         App.showApp();
+    }
+
+    function syncAddingAccountUi() {
+        const adding = API.isAddingAccount?.() || false;
+        const cancelBtn = document.getElementById('add-account-cancel-btn');
+        const forceOpen = document.getElementById('force-password-form') && !document.getElementById('force-password-form').classList.contains('hidden');
+        cancelBtn?.classList.toggle('hidden', !adding || forceOpen);
+        if (!adding) return;
+        const titleEl = document.querySelector('.auth-logo h1');
+        const subtitleEl = document.querySelector('.auth-logo .tagline');
+        const loginVisible = document.getElementById('login-form') && !document.getElementById('login-form').classList.contains('hidden');
+        if (loginVisible) {
+            if (titleEl) titleEl.textContent = 'Add account';
+            if (subtitleEl) subtitleEl.textContent = 'Sign in with another FreeDrive account';
+        }
     }
 
     async function submitForcePasswordChange() {
@@ -276,6 +295,10 @@ const Auth = (() => {
                 API.setUser(user);
             }
             Components.toast('Password updated', 'success');
+            if (API.consumeReloadAfterPassword?.()) {
+                API.reloadActive?.('#/files');
+                return;
+            }
             App.showApp();
         } catch (err) {
             const msg = friendlyAuthError(err);
@@ -365,6 +388,13 @@ const Auth = (() => {
 
         document.getElementById('login-approval-back-btn')?.addEventListener('click', () => {
             showLoginForm();
+        });
+
+        document.getElementById('add-account-cancel-btn')?.addEventListener('click', () => {
+            stopApprovalPoll();
+            API.setAddingAccount?.(false);
+            syncAddingAccountUi();
+            App.showApp();
         });
 
         document.getElementById('force-password-form')?.addEventListener('submit', async (e) => {
@@ -654,5 +684,5 @@ const Auth = (() => {
         });
     }
 
-    return { init, showForcePasswordForm };
+    return { init, showForcePasswordForm, showLoginForm, syncAddingAccountUi };
 })();

@@ -16,20 +16,23 @@ const App = (() => {
     function resolveAvatar(user, prefs) {
         const fromUser = String(user?.avatar_url || '').trim();
         if (fromUser) return fromUser;
+        const scoped = API.getScopedItem ? String(API.getScopedItem('fd_profile_photo') || '').trim() : '';
+        if (scoped) return scoped;
         const fromPrefs = String(prefs?.profileAvatar || '').trim();
         if (fromPrefs) return fromPrefs;
-        return String(localStorage.getItem('fd_profile_photo') || '').trim();
+        return '';
     }
 
     function syncAvatarCache(avatarUrl) {
         const prefs = getUserPrefs();
-        const next = { ...prefs, profileAvatar: avatarUrl || '' };
-        setUserPrefs(next);
-        if (avatarUrl) {
-            localStorage.setItem('fd_profile_photo', avatarUrl);
-        } else {
-            localStorage.removeItem('fd_profile_photo');
+        if (prefs.profileAvatar) {
+            const next = { ...prefs };
+            delete next.profileAvatar;
+            setUserPrefs(next);
         }
+        if (API.setScopedItem) API.setScopedItem('fd_profile_photo', avatarUrl || '');
+        else if (avatarUrl) localStorage.setItem('fd_profile_photo', avatarUrl);
+        else localStorage.removeItem('fd_profile_photo');
     }
 
     function resizeAvatarDataURL(dataUrl, maxSize = 256, quality = 0.85) {
@@ -158,6 +161,51 @@ const App = (() => {
         }
 
         refreshProfileStorage();
+        renderAccountSwitcher();
+    }
+
+    function renderAccountSwitcher() {
+        const list = document.getElementById('profile-accounts');
+        const signOutAll = document.getElementById('signout-all-btn');
+        const accounts = API.listAccounts?.() || [];
+        if (signOutAll) signOutAll.classList.toggle('hidden', accounts.length < 2);
+        if (!list) return;
+        if (accounts.length < 2) {
+            list.innerHTML = '';
+            return;
+        }
+        list.innerHTML = accounts.map((account) => {
+            const name = Components.escapeHtml(account.username || account.email || 'Account');
+            const email = Components.escapeHtml(account.email || '');
+            const initial = Components.escapeHtml(Components.initials(account.username || account.email || 'U'));
+            const photo = account.avatar_url
+                ? `<img alt="" src="${Components.escapeHtml(account.avatar_url)}">`
+                : initial;
+            const check = account.active ? '<span class="profile-account-check" aria-hidden="true">✓</span>' : '';
+            return `<button type="button" class="profile-account-row${account.active ? ' active' : ''}" data-account-id="${Components.escapeHtml(account.id)}" ${account.active ? 'aria-current="true"' : ''}>
+                <span class="profile-account-avatar">${photo}</span>
+                <span class="profile-account-text">
+                    <span class="profile-account-name">${name}</span>
+                    <span class="profile-account-email">${email}</span>
+                </span>
+                ${check}
+            </button>`;
+        }).join('');
+    }
+
+    async function beginAddAccount() {
+        document.getElementById('profile-dropdown')?.classList.add('hidden');
+        if (window.CryptoModule?.migrateUnscopedFileKeys) {
+            try { await CryptoModule.migrateUnscopedFileKeys(); } catch { /* cache miss is recoverable */ }
+        }
+        API.setAddingAccount?.(true);
+        showAuth();
+        Auth.showLoginForm?.();
+    }
+
+    async function switchToAccount(id) {
+        if (!id || !API.switchAccount?.(id)) return;
+        API.reloadActive?.('#/files');
     }
 
     function refreshUserUI() {
@@ -825,7 +873,10 @@ const App = (() => {
         });
     }
 
-    function init() {
+    async function init() {
+        if (window.CryptoModule?.migrateUnscopedFileKeys) {
+            try { await CryptoModule.migrateUnscopedFileKeys(); } catch { /* ignore */ }
+        }
         if (!window.location.hash && window.location.pathname.startsWith('/admin') && window.location.pathname !== '/admin') {
             // We use history wrapper below, do not convert to hash.
             // Allow pathname to dictate routing.
@@ -841,6 +892,9 @@ const App = (() => {
             const user = API.getUser();
             if (user?.must_change_password) {
                 Auth.showForcePasswordForm();
+            } else if (API.isAddingAccount?.()) {
+                showAuth();
+                Auth.syncAddingAccountUi?.();
             } else {
                 showApp();
             }
@@ -1192,13 +1246,32 @@ const App = (() => {
         // ── Sign out ──
         document.getElementById('logout-btn')?.addEventListener('click', async () => {
             profileDropdown?.classList.add('hidden');
-            try { await API.auth.logout(); } catch {}
-            if (window.CryptoSync?.lockAndClearDevice) {
-                await CryptoSync.lockAndClearDevice();
-            }
-            API.clearAuth();
-            SidebarTree.invalidateAll();
-            showAuth();
+            const id = API.getUser()?.id;
+            const result = await API.signOutAccount(id);
+            if (result?.remaining) API.reloadActive('#/files');
+            else API.reloadActive('#/login');
+        });
+
+        document.getElementById('signout-all-btn')?.addEventListener('click', async () => {
+            profileDropdown?.classList.add('hidden');
+            await API.signOutAll();
+            API.reloadActive('#/login');
+        });
+
+        document.getElementById('add-account-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            beginAddAccount();
+        });
+
+        document.getElementById('profile-accounts')?.addEventListener('click', (e) => {
+            const row = e.target.closest('[data-account-id]');
+            if (!row) return;
+            e.stopPropagation();
+            const id = row.dataset.accountId;
+            const current = API.getUser()?.id;
+            profileDropdown?.classList.add('hidden');
+            if (!id || id === current) return;
+            switchToAccount(id);
         });
 
         document.getElementById('admin-btn')?.addEventListener('click', (e) => {
@@ -1264,6 +1337,7 @@ const App = (() => {
         document.getElementById('admin-btn')?.classList.add('hidden');
         document.getElementById('auth-screen').classList.remove('hidden');
         app?.classList.add('hidden');
+        Auth.syncAddingAccountUi?.();
     }
 
     async function showApp() {
@@ -1501,4 +1575,4 @@ const App = (() => {
     };
 })();
 
-document.addEventListener('DOMContentLoaded', App.init);
+document.addEventListener('DOMContentLoaded', () => { App.init(); });

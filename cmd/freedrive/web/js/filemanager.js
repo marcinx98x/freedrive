@@ -544,9 +544,23 @@ const FileManager = (() => {
         });
     }
 
+    function scopedStorage(base) {
+        if (API.getScopedItem) return API.getScopedItem(base);
+        return localStorage.getItem(base);
+    }
+
+    function writeScopedStorage(base, value) {
+        if (API.setScopedItem) {
+            API.setScopedItem(base, value);
+            return;
+        }
+        if (value == null || value === '') localStorage.removeItem(base);
+        else localStorage.setItem(base, String(value));
+    }
+
     function loadMeta() {
         try {
-            const raw = localStorage.getItem(META_KEY);
+            const raw = scopedStorage(META_KEY);
             if (raw) {
                 const parsed = JSON.parse(raw);
                 meta = { ...meta, ...parsed };
@@ -563,7 +577,7 @@ const FileManager = (() => {
     }
 
     function saveMeta() {
-        localStorage.setItem(META_KEY, JSON.stringify(meta));
+        writeScopedStorage(META_KEY, JSON.stringify(meta));
     }
 
     function esc(value) {
@@ -684,11 +698,9 @@ const FileManager = (() => {
     }
 
     function getMyProfileAvatar() {
-        try {
-            return JSON.parse(localStorage.getItem('fd_user_prefs') || '{}').profileAvatar || '';
-        } catch {
-            return '';
-        }
+        const fromUser = String(API.getUser?.()?.avatar_url || '').trim();
+        if (fromUser) return fromUser;
+        return String(scopedStorage('fd_profile_photo') || '').trim();
     }
 
     function formatSizeStrict(bytes) {
@@ -1019,12 +1031,12 @@ const FileManager = (() => {
 
     function dismissHomeWarning() {
         const until = Date.now() + (12 * 60 * 60 * 1000);
-        localStorage.setItem(HOME_WARNING_DISMISS_KEY, String(until));
+        writeScopedStorage(HOME_WARNING_DISMISS_KEY, String(until));
         hideHomeWarning();
     }
 
     function isHomeWarningDismissed() {
-        const until = Number(localStorage.getItem(HOME_WARNING_DISMISS_KEY) || 0);
+        const until = Number(scopedStorage(HOME_WARNING_DISMISS_KEY) || 0);
         return until > Date.now();
     }
 
@@ -3456,13 +3468,7 @@ const FileManager = (() => {
         const ownerRow = document.createElement('div');
         ownerRow.className = 'share-existing-entry';
         
-        let savedPhoto = localStorage.getItem('fd_profile_photo');
-        if (!savedPhoto) {
-            try {
-                const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}');
-                if (prefs.profileAvatar) savedPhoto = prefs.profileAvatar;
-            } catch (e) {}
-        }
+        let savedPhoto = getMyProfileAvatar();
         
         let ownerAvatarHtml = savedPhoto 
             ? `<img src="${esc(savedPhoto)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
@@ -4119,14 +4125,7 @@ const FileManager = (() => {
             entries = [];
         }
 
-        let myAvatar = getMyProfileAvatar();
-        if (!myAvatar) {
-            try {
-                myAvatar = localStorage.getItem('fd_profile_photo') || '';
-            } catch {
-                myAvatar = '';
-            }
-        }
+        const myAvatar = getMyProfileAvatar();
 
         const people = [
             { label: currentUserLabel(), avatarUrl: myAvatar },
@@ -4553,10 +4552,7 @@ const FileManager = (() => {
                 list.innerHTML = '<div class="empty-state" style="min-height:220px;"><p>No activity yet</p></div>';
                 return;
             }
-            let myAvatar = '';
-            try {
-                myAvatar = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}').profileAvatar || '';
-            } catch {}
+            const myAvatar = getMyProfileAvatar();
 
             // The activity feed only needs recent items; capping also prevents a
             // huge joined string (RangeError: Invalid string length).

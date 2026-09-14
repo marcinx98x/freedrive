@@ -147,6 +147,7 @@ FreeDrive is ideal for:
 - When admin enables global `require_2fa`, all users must complete a second factor at sign-in (authenticator app **or** email). If both are enabled, authenticator is preferred with **Send code by email** as fallback
 - Desktop **0.1.8+** and current mobile builds verify TOTP / backup codes at login; authenticator enrollment stays web-only in v1
 - **Logged-in devices** — the web Security center and desktop app list active web and desktop sessions with device name, IP address, and last activity; re-login from the same browser/app overwrites that device's session instead of creating a duplicate
+- **Multiple web accounts** — the web profile menu can add another account and switch between them without signing out (same browser, same server). Each account keeps its own session and refresh token; Sign out removes only the current account, and Sign out of all accounts appears when more than one is saved. Desktop and mobile stay single-account. File metadata, crypto sync cursors, and cached file keys are stored per user so accounts do not share browser cache
 - **Instant remote logout** — revoke one device or every other device; server middleware rejects the revoked session immediately
 
 ### 7. Sharing Model

@@ -1,19 +1,213 @@
 const API = (() => {
     const BASE = '/api/v1';
+    const ACCOUNTS_KEY = 'fd_accounts';
+    const ADDING_ACCOUNT_KEY = 'fd_adding_account';
+    const RELOAD_AFTER_PASSWORD_KEY = 'fd_reload_after_password';
+    const SCOPED_KEYS = [
+        'fd_meta_v4',
+        'fd_crypto_sync_since',
+        'fd_crypto_needs_recovery',
+        'fd_profile_photo',
+        'fd_home_warning_dismiss_until',
+    ];
+
     let accessToken = localStorage.getItem('fd_access_token') || '';
     let refreshToken = localStorage.getItem('fd_refresh_token') || '';
     let currentUser = JSON.parse(localStorage.getItem('fd_user') || 'null');
+
+    function emptyVault() {
+        return { activeId: '', accounts: [] };
+    }
+
+    function loadVault() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || 'null');
+            if (!raw || !Array.isArray(raw.accounts)) return emptyVault();
+            return {
+                activeId: String(raw.activeId || ''),
+                accounts: raw.accounts.filter((account) => account && account.id),
+            };
+        } catch {
+            return emptyVault();
+        }
+    }
+
+    function saveVault(vault) {
+        localStorage.setItem(ACCOUNTS_KEY, JSON.stringify({
+            activeId: vault.activeId || '',
+            accounts: vault.accounts || [],
+        }));
+    }
+
+    function accountFromUser(user, tokens) {
+        return {
+            id: String(user.id),
+            email: user.email || '',
+            username: user.username || '',
+            role: user.role || '',
+            avatar_url: user.avatar_url || '',
+            must_change_password: Boolean(user.must_change_password),
+            access_token: tokens?.access_token || '',
+            refresh_token: tokens?.refresh_token || '',
+        };
+    }
+
+    function accountToUser(account) {
+        if (!account) return null;
+        return {
+            id: account.id,
+            email: account.email || '',
+            username: account.username || '',
+            role: account.role || '',
+            avatar_url: account.avatar_url || '',
+            must_change_password: Boolean(account.must_change_password),
+        };
+    }
+
+    function writeActiveSlots(token, refresh, user) {
+        accessToken = token || '';
+        refreshToken = refresh || '';
+        currentUser = user || null;
+        if (accessToken) localStorage.setItem('fd_access_token', accessToken);
+        else localStorage.removeItem('fd_access_token');
+        if (refreshToken) localStorage.setItem('fd_refresh_token', refreshToken);
+        else localStorage.removeItem('fd_refresh_token');
+        if (currentUser) localStorage.setItem('fd_user', JSON.stringify(currentUser));
+        else localStorage.removeItem('fd_user');
+    }
+
+    function applyAccount(account, user) {
+        writeActiveSlots(account?.access_token, account?.refresh_token, user || accountToUser(account));
+    }
+
+    function persistActiveTokens() {
+        const vault = loadVault();
+        if (!vault.activeId) return;
+        const idx = vault.accounts.findIndex((account) => account.id === vault.activeId);
+        if (idx < 0) return;
+        vault.accounts[idx].access_token = accessToken;
+        vault.accounts[idx].refresh_token = refreshToken;
+        if (currentUser) {
+            vault.accounts[idx].email = currentUser.email || vault.accounts[idx].email;
+            vault.accounts[idx].username = currentUser.username || vault.accounts[idx].username;
+            vault.accounts[idx].role = currentUser.role || vault.accounts[idx].role;
+            if (currentUser.avatar_url) vault.accounts[idx].avatar_url = currentUser.avatar_url;
+            vault.accounts[idx].must_change_password = Boolean(currentUser.must_change_password);
+        }
+        saveVault(vault);
+    }
+
+    function patchVaultUser(user) {
+        if (!user?.id) return;
+        const vault = loadVault();
+        const idx = vault.accounts.findIndex((account) => account.id === user.id);
+        if (idx < 0) return;
+        vault.accounts[idx] = {
+            ...vault.accounts[idx],
+            email: user.email || vault.accounts[idx].email,
+            username: user.username || '',
+            role: user.role || '',
+            avatar_url: user.avatar_url || vault.accounts[idx].avatar_url || '',
+            must_change_password: Boolean(user.must_change_password),
+        };
+        if (!vault.activeId) vault.activeId = user.id;
+        saveVault(vault);
+    }
+
+    function migrateVault() {
+        const vault = loadVault();
+        if (vault.accounts.length) {
+            if (!accessToken) {
+                const next = vault.accounts.find((account) => account.id === vault.activeId) || vault.accounts[0];
+                if (next) {
+                    if (!vault.activeId) {
+                        vault.activeId = next.id;
+                        saveVault(vault);
+                    }
+                    applyAccount(next);
+                }
+            } else if (currentUser?.id && !vault.accounts.some((account) => account.id === currentUser.id)) {
+                vault.accounts.push(accountFromUser(currentUser, { access_token: accessToken, refresh_token: refreshToken }));
+                if (!vault.activeId) vault.activeId = currentUser.id;
+                saveVault(vault);
+            }
+            return;
+        }
+        if (!accessToken || !currentUser?.id) return;
+        saveVault({
+            activeId: currentUser.id,
+            accounts: [accountFromUser(currentUser, { access_token: accessToken, refresh_token: refreshToken })],
+        });
+    }
+
+    function scopedStorageKey(base, userId) {
+        const id = userId || currentUser?.id || '';
+        return id ? `${base}:${id}` : base;
+    }
+
+    function getScopedItem(base, userId) {
+        return localStorage.getItem(scopedStorageKey(base, userId));
+    }
+
+    function setScopedItem(base, value, userId) {
+        const key = scopedStorageKey(base, userId);
+        if (value == null || value === '') localStorage.removeItem(key);
+        else localStorage.setItem(key, String(value));
+        if (base === 'fd_profile_photo' && value && currentUser?.id && (!userId || userId === currentUser.id)) {
+            currentUser.avatar_url = String(value);
+            patchVaultUser(currentUser);
+        }
+    }
+
+    function clearScopedStorage(userId) {
+        if (!userId) return;
+        SCOPED_KEYS.forEach((base) => localStorage.removeItem(`${base}:${userId}`));
+    }
+
+    function clearLegacyScopedStorage() {
+        SCOPED_KEYS.forEach((base) => localStorage.removeItem(base));
+    }
+
+    function migrateScopedStorage() {
+        const id = currentUser?.id;
+        if (!id) return;
+        SCOPED_KEYS.forEach((base) => {
+            const scoped = `${base}:${id}`;
+            if (localStorage.getItem(scoped) != null) return;
+            const legacy = localStorage.getItem(base);
+            if (legacy != null) localStorage.setItem(scoped, legacy);
+        });
+        try {
+            const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}') || {};
+            if (prefs.profileAvatar && !localStorage.getItem(`fd_profile_photo:${id}`)) {
+                localStorage.setItem(`fd_profile_photo:${id}`, prefs.profileAvatar);
+            }
+            if (prefs.profileAvatar) {
+                delete prefs.profileAvatar;
+                localStorage.setItem('fd_user_prefs', JSON.stringify(prefs));
+            }
+        } catch { /* ignore */ }
+        const photo = localStorage.getItem(`fd_profile_photo:${id}`) || '';
+        if (photo && currentUser && !currentUser.avatar_url) {
+            currentUser.avatar_url = photo;
+            localStorage.setItem('fd_user', JSON.stringify(currentUser));
+            patchVaultUser(currentUser);
+        }
+        if (loadVault().accounts.length <= 1) clearLegacyScopedStorage();
+    }
 
     function setTokens(tokens) {
         accessToken = tokens?.access_token || '';
         refreshToken = tokens?.refresh_token || '';
         localStorage.setItem('fd_access_token', accessToken);
         localStorage.setItem('fd_refresh_token', refreshToken);
+        persistActiveTokens();
     }
 
     function setUser(user) {
         currentUser = user || null;
         localStorage.setItem('fd_user', JSON.stringify(currentUser));
+        patchVaultUser(currentUser);
     }
 
     function getUser() {
@@ -23,6 +217,144 @@ const API = (() => {
     function isLoggedIn() {
         return Boolean(accessToken);
     }
+
+    function upsertAccount(user, tokens) {
+        if (!user?.id || !tokens?.access_token) return;
+        const vault = loadVault();
+        const entry = accountFromUser(user, tokens);
+        const idx = vault.accounts.findIndex((account) => account.id === user.id);
+        if (idx >= 0) vault.accounts[idx] = { ...vault.accounts[idx], ...entry };
+        else vault.accounts.push(entry);
+        vault.activeId = user.id;
+        saveVault(vault);
+        applyAccount(entry, user);
+    }
+
+    function listAccounts() {
+        const activeId = loadVault().activeId || currentUser?.id || '';
+        return loadVault().accounts.map((account) => ({
+            id: account.id,
+            email: account.email,
+            username: account.username,
+            role: account.role,
+            avatar_url: account.avatar_url,
+            active: account.id === activeId,
+        }));
+    }
+
+    function switchAccount(id) {
+        persistActiveTokens();
+        const vault = loadVault();
+        const account = vault.accounts.find((entry) => entry.id === id);
+        if (!account) return false;
+        vault.activeId = id;
+        saveVault(vault);
+        applyAccount(account);
+        return true;
+    }
+
+    function wipeSlots() {
+        writeActiveSlots('', '', null);
+    }
+
+    function clearAuth(opts) {
+        if (opts?.all) {
+            const ids = loadVault().accounts.map((account) => account.id);
+            ids.forEach(clearScopedStorage);
+            clearLegacyScopedStorage();
+            wipeSlots();
+            localStorage.removeItem(ACCOUNTS_KEY);
+            return { remaining: 0 };
+        }
+        const id = currentUser?.id || loadVault().activeId;
+        const vault = loadVault();
+        vault.accounts = vault.accounts.filter((account) => account.id !== id);
+        if (id) clearScopedStorage(id);
+        if (vault.accounts.length) {
+            if (!vault.activeId || vault.activeId === id) vault.activeId = vault.accounts[0].id;
+            saveVault(vault);
+        } else {
+            localStorage.removeItem(ACCOUNTS_KEY);
+        }
+        wipeSlots();
+        return { remaining: vault.accounts.length };
+    }
+
+    function isAddingAccount() {
+        return sessionStorage.getItem(ADDING_ACCOUNT_KEY) === '1';
+    }
+
+    function setAddingAccount(on) {
+        if (on) sessionStorage.setItem(ADDING_ACCOUNT_KEY, '1');
+        else sessionStorage.removeItem(ADDING_ACCOUNT_KEY);
+    }
+
+    function consumeReloadAfterPassword() {
+        const pending = sessionStorage.getItem(RELOAD_AFTER_PASSWORD_KEY) === '1';
+        sessionStorage.removeItem(RELOAD_AFTER_PASSWORD_KEY);
+        return pending;
+    }
+
+    function markReloadAfterPassword() {
+        sessionStorage.setItem(RELOAD_AFTER_PASSWORD_KEY, '1');
+    }
+
+    async function logoutRefreshToken(refresh) {
+        if (!refresh) return;
+        try {
+            await fetch(`${BASE}/auth/logout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: refresh }),
+            });
+        } catch { /* offline logout still drops the local session */ }
+    }
+
+    async function clearDeviceUek(userId) {
+        if (!userId) return;
+        try {
+            if (window.CryptoSync?.lockAndClearDevice) await CryptoSync.lockAndClearDevice(userId);
+            else if (window.CryptoModule?.clearDeviceUek) await CryptoModule.clearDeviceUek(userId);
+        } catch { /* ignore */ }
+    }
+
+    async function signOutAccount(id) {
+        const vault = loadVault();
+        const account = vault.accounts.find((entry) => entry.id === id) || null;
+        if (account?.refresh_token) await logoutRefreshToken(account.refresh_token);
+        else if (id && id === currentUser?.id) await logoutRefreshToken(refreshToken);
+        await clearDeviceUek(id);
+        const wasActive = !id || id === currentUser?.id || id === vault.activeId;
+        if (!wasActive && account) {
+            vault.accounts = vault.accounts.filter((entry) => entry.id !== id);
+            saveVault(vault);
+            clearScopedStorage(id);
+            return { remaining: vault.accounts.length, switched: false };
+        }
+        const result = clearAuth();
+        return { remaining: result.remaining, switched: result.remaining > 0 };
+    }
+
+    async function signOutAll() {
+        const accounts = loadVault().accounts.slice();
+        for (const account of accounts) {
+            await logoutRefreshToken(account.refresh_token);
+            await clearDeviceUek(account.id);
+        }
+        clearAuth({ all: true });
+        return { remaining: 0, switched: false };
+    }
+
+    function reloadActive(hash) {
+        const url = new URL(window.location.href);
+        url.pathname = '/';
+        url.search = '';
+        url.hash = hash || '#/files';
+        window.location.replace(url.toString());
+    }
+
+    migrateVault();
+    migrateScopedStorage();
 
     // Auto-refresh the access token before it expires (every 23 hours)
     let _refreshTimer = null;
@@ -37,16 +369,6 @@ const API = (() => {
     // Also try to refresh immediately on page load if we have a refresh token
     if (refreshToken) {
         setTimeout(() => tryRefresh().then(ok => { if (ok) startAutoRefresh(); }), 2000);
-    }
-
-    function clearAuth() {
-        accessToken = '';
-        refreshToken = '';
-        currentUser = null;
-        localStorage.removeItem('fd_access_token');
-        localStorage.removeItem('fd_refresh_token');
-        localStorage.removeItem('fd_user');
-        // Keep fd_device_id so re-login overwrites the same device session.
     }
 
     function getDeviceID() {
@@ -102,8 +424,9 @@ const API = (() => {
         if (res.status === 401 && !isRetry && refreshToken && !isPublicAuth) {
             const refreshed = await tryRefresh();
             if (refreshed) return request(method, path, body, true, rlRetries, extraHeaders);
-            clearAuth();
-            window.location.hash = '#/login';
+            const { remaining } = clearAuth();
+            if (remaining) reloadActive('#/files');
+            else window.location.hash = '#/login';
             throw new Error('Session expired');
         }
 
@@ -534,6 +857,19 @@ const API = (() => {
         getUser,
         isLoggedIn,
         clearAuth,
+        upsertAccount,
+        listAccounts,
+        switchAccount,
+        signOutAccount,
+        signOutAll,
+        isAddingAccount,
+        setAddingAccount,
+        consumeReloadAfterPassword,
+        markReloadAfterPassword,
+        scopedStorageKey,
+        getScopedItem,
+        setScopedItem,
+        reloadActive,
         auth,
         files,
         folders,

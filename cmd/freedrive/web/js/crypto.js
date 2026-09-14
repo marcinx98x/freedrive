@@ -158,13 +158,30 @@ var CryptoModule = window.CryptoModule = (() => {
         );
     }
 
+    function currentUserId() {
+        try {
+            return (typeof API !== 'undefined' && API.getUser?.()?.id) || '';
+        } catch {
+            return '';
+        }
+    }
+
+    function scopedFileKey(fileId) {
+        const uid = currentUserId();
+        const id = String(fileId || '');
+        if (!uid || !id) return id;
+        if (id.startsWith(`${uid}:`)) return id;
+        return `${uid}:${id}`;
+    }
+
     // Store key in IndexedDB
     async function storeKey(fileId, key) {
         const exported = await exportKey(key);
         const db = await openDB();
+        const keyId = scopedFileKey(fileId);
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
-            tx.objectStore(STORE_NAME).put(exported, fileId);
+            tx.objectStore(STORE_NAME).put(exported, keyId);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
@@ -173,9 +190,10 @@ var CryptoModule = window.CryptoModule = (() => {
     // Retrieve key from IndexedDB
     async function getKey(fileId) {
         const db = await openDB();
+        const keyId = scopedFileKey(fileId);
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readonly');
-            const req = tx.objectStore(STORE_NAME).get(fileId);
+            const req = tx.objectStore(STORE_NAME).get(keyId);
             req.onsuccess = async () => {
                 if (req.result) {
                     const key = await importKey(req.result);
@@ -191,12 +209,56 @@ var CryptoModule = window.CryptoModule = (() => {
     // Delete key from IndexedDB
     async function deleteKey(fileId) {
         const db = await openDB();
+        const keyId = scopedFileKey(fileId);
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
-            tx.objectStore(STORE_NAME).delete(fileId);
+            tx.objectStore(STORE_NAME).delete(keyId);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
+    }
+
+    // Copy unprefixed file keys onto the only signed-in account before a second one is added.
+    async function migrateUnscopedFileKeys() {
+        const uid = currentUserId();
+        if (!uid) return;
+        const flag = `fd_file_keys_migrated:${uid}`;
+        if (localStorage.getItem(flag)) return;
+        const accountCount = (typeof API !== 'undefined' && API.listAccounts?.()?.length) || 1;
+        if (accountCount > 1) {
+            localStorage.setItem(flag, 'skipped');
+            return;
+        }
+        const db = await openDB();
+        const moves = [];
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_NAME, 'readonly');
+            const req = tx.objectStore(STORE_NAME).openCursor();
+            req.onsuccess = () => {
+                const cursor = req.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+                const key = String(cursor.key);
+                if (!key.includes(':')) moves.push({ key, value: cursor.value });
+                cursor.continue();
+            };
+            req.onerror = () => reject(req.error);
+        });
+        if (moves.length) {
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                moves.forEach((item) => {
+                    store.put(item.value, `${uid}:${item.key}`);
+                    store.delete(item.key);
+                });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+        localStorage.setItem(flag, '1');
     }
 
     async function exportAllKeys() {
@@ -209,7 +271,12 @@ var CryptoModule = window.CryptoModule = (() => {
             req.onsuccess = () => {
                 const cursor = req.result;
                 if (cursor) {
-                    keys[cursor.key] = cursor.value;
+                    const uid = currentUserId();
+                    const prefix = uid ? `${uid}:` : '';
+                    const rawKey = String(cursor.key);
+                    if (!prefix || rawKey.startsWith(prefix)) {
+                        keys[prefix ? rawKey.slice(prefix.length) : rawKey] = cursor.value;
+                    }
                     cursor.continue();
                 } else {
                     resolve();
@@ -240,9 +307,10 @@ var CryptoModule = window.CryptoModule = (() => {
 
     async function storeKeyB64(fileId, keyB64url) {
         const db = await openDB();
+        const keyId = scopedFileKey(fileId);
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
-            tx.objectStore(STORE_NAME).put(keyB64url, fileId);
+            tx.objectStore(STORE_NAME).put(keyB64url, keyId);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
@@ -431,5 +499,6 @@ var CryptoModule = window.CryptoModule = (() => {
         persistDeviceUek,
         restoreDeviceUek,
         clearDeviceUek,
+        migrateUnscopedFileKeys,
     };
 })();

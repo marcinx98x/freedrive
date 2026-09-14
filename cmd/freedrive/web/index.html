@@ -31,6 +31,7 @@
                 <button class="auth-tab active" data-tab="login" id="login-tab">Sign in</button>
                 <button class="auth-tab" data-tab="register" id="register-tab">Create account</button>
             </div>
+            <button type="button" class="auth-link-btn hidden" id="add-account-cancel-btn">Cancel</button>
             <form id="login-form" class="auth-form">
                 <div class="form-group"><input type="email" id="login-email" placeholder="Email" required autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
                 <div class="form-group"><input type="password" id="login-password" placeholder="Password" required autocomplete="current-password"></div>
@@ -327,6 +328,12 @@
                             <div class="profile-dropdown-actions">
                                 <button type="button" class="profile-dropdown-signout" id="logout-btn">Sign out</button>
                             </div>
+                            <div class="profile-accounts" id="profile-accounts"></div>
+                            <button type="button" class="profile-add-account" id="add-account-btn">
+                                <span class="profile-add-account-icon" aria-hidden="true">+</span>
+                                Add account
+                            </button>
+                            <button type="button" class="profile-signout-all hidden" id="signout-all-btn">Sign out of all accounts</button>
                             <div class="profile-dropdown-storage hidden" id="profile-storage">
                                 <div class="profile-storage-row">
                                     <span class="profile-storage-warn hidden" id="profile-storage-warn" aria-hidden="true">!</span>

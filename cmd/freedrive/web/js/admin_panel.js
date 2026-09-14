@@ -1829,13 +1829,7 @@ const AdminPanel = (() => {
 
     function renderSettingsSection() {
         const cu = getCurrentUser();
-        let savedPhoto = localStorage.getItem('fd_profile_photo');
-        if (!savedPhoto) {
-            try {
-                const prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}');
-                if (prefs.profileAvatar) savedPhoto = prefs.profileAvatar;
-            } catch (e) {}
-        }
+        let savedPhoto = API.getScopedItem ? API.getScopedItem('fd_profile_photo') : localStorage.getItem('fd_profile_photo');
         savedPhoto = savedPhoto || cu.avatar_url;
 
         const avatarHtml = savedPhoto 
@@ -3034,7 +3028,7 @@ const AdminPanel = (() => {
                             'success',
                         );
                         setTimeout(() => {
-                            API.clearAuth();
+                            API.clearAuth({ all: true });
                             window.location.hash = '#/login';
                             window.location.reload();
                         }, 800);

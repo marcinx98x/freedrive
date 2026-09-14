@@ -39,16 +39,19 @@ var CryptoSync = window.CryptoSync = (() => {
         await CryptoModule.clearDeviceUek(uid);
     }
 
+    function scopedFlagKey(base) {
+        if (API.scopedStorageKey) return API.scopedStorageKey(base);
+        return base;
+    }
+
     function setNeedsRecovery(flag) {
-        if (flag) {
-            localStorage.setItem(NEEDS_RECOVERY_KEY, 'true');
-        } else {
-            localStorage.removeItem(NEEDS_RECOVERY_KEY);
-        }
+        const key = scopedFlagKey(NEEDS_RECOVERY_KEY);
+        if (flag) localStorage.setItem(key, 'true');
+        else localStorage.removeItem(key);
     }
 
     function getNeedsRecovery() {
-        return localStorage.getItem(NEEDS_RECOVERY_KEY) === 'true';
+        return localStorage.getItem(scopedFlagKey(NEEDS_RECOVERY_KEY)) === 'true';
     }
 
     async function detectNeedsRecovery() {
@@ -296,11 +299,13 @@ var CryptoSync = window.CryptoSync = (() => {
     }
 
     function getSyncCursor() {
-        return localStorage.getItem(SYNC_CURSOR_KEY) || '';
+        return localStorage.getItem(scopedFlagKey(SYNC_CURSOR_KEY)) || '';
     }
 
     function setSyncCursor(iso) {
-        if (iso) localStorage.setItem(SYNC_CURSOR_KEY, iso);
+        const key = scopedFlagKey(SYNC_CURSOR_KEY);
+        if (iso) localStorage.setItem(key, iso);
+        else localStorage.removeItem(key);
     }
 
     async function pullKeysFromServer() {
