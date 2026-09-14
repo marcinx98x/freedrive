@@ -462,11 +462,9 @@ const App = (() => {
         if (!pane) return;
         pane.innerHTML = '<div id="settings-shortcuts" class="shortcuts-grid settings-shortcuts settings-pane-pad"></div>';
         const target = document.getElementById('settings-shortcuts');
-        if (window.FileManager?.renderShortcutsInto && target) {
+        if (target && typeof FileManager !== 'undefined' && FileManager.renderShortcutsInto) {
             FileManager.renderShortcutsInto(target);
-            return;
         }
-        target.innerHTML = '<p style="margin:0;color:#5f6368;">Keyboard shortcuts are unavailable.</p>';
     }
 
     function formatEmailExpiry(iso) {
@@ -1254,9 +1252,6 @@ const App = (() => {
             const item = e.target.closest('[data-section]');
             if (!item) return;
             openSettingsPage(item.getAttribute('data-section') || 'account');
-        });
-        document.getElementById('topbar-security')?.addEventListener('click', () => {
-            openSecurityCenter();
         });
 
         const shouldIgnorePanelDismiss = (target) => {

@@ -1563,7 +1563,6 @@ body {
   }
 
   .app:not(.admin-mode) #topbar-settings,
-  .app:not(.admin-mode) #topbar-security,
   .app:not(.admin-mode) .topbar-view-toggle {
     display: none !important;
   }
@@ -3177,53 +3176,276 @@ body.dark-mode .app:not(.admin-mode),
 body.dark-mode .app:not(.admin-mode) .topbar,
 body.dark-mode .app:not(.admin-mode) .sidebar,
 body.dark-mode .app:not(.admin-mode) .content-area,
-body.dark-mode .app:not(.admin-mode) .main-content {
+body.dark-mode .app:not(.admin-mode) .main-content,
+body.dark-mode .app:not(.admin-mode) .content-frame {
   background: #202124 !important;
   color: #e8eaed !important;
 }
 
-body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row,
-body.dark-mode .app:not(.admin-mode) .file-grid.grid-view .file-card {
-  background: #292a2d !important;
-  color: #e8eaed !important;
-  border-color: #3c4043 !important;
-}
-
+body.dark-mode .app:not(.admin-mode) .logo-text,
+body.dark-mode .app:not(.admin-mode) .topbar-logo-text,
+body.dark-mode .app:not(.admin-mode) .topbar-brand,
 body.dark-mode .app:not(.admin-mode) .nav-item,
 body.dark-mode .app:not(.admin-mode) .file-label,
-body.dark-mode .app:not(.admin-mode) .file-name {
+body.dark-mode .app:not(.admin-mode) .file-name,
+body.dark-mode .app:not(.admin-mode) .breadcrumb-item,
+body.dark-mode .app:not(.admin-mode) .search-state-title,
+body.dark-mode .app:not(.admin-mode) .empty-state h3,
+body.dark-mode .app:not(.admin-mode) .file-card .card-name,
+body.dark-mode .app:not(.admin-mode) .gd-sr-name {
   color: #e8eaed !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .nav-item .material-icons-outlined,
+body.dark-mode .app:not(.admin-mode) .sort-col,
+body.dark-mode .app:not(.admin-mode) .cell-owner,
+body.dark-mode .app:not(.admin-mode) .cell-date,
+body.dark-mode .app:not(.admin-mode) .cell-size,
+body.dark-mode .app:not(.admin-mode) .owner-name,
+body.dark-mode .app:not(.admin-mode) .file-card .card-sub,
+body.dark-mode .app:not(.admin-mode) .empty-state p,
+body.dark-mode .app:not(.admin-mode) .breadcrumb-sep,
+body.dark-mode .app:not(.admin-mode) .gd-home-list-header .col-name,
+body.dark-mode .app:not(.admin-mode) .gd-home-list-header .col-owner,
+body.dark-mode .app:not(.admin-mode) .gd-home-list-header .col-date,
+body.dark-mode .app:not(.admin-mode) .gd-home-list-header .col-size,
+body.dark-mode .app:not(.admin-mode) .activity-time,
+body.dark-mode .app:not(.admin-mode) .btn-icon,
+body.dark-mode .app:not(.admin-mode) .btn-icon svg {
+  color: #9aa0a6 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .upload-btn,
+body.dark-mode .app:not(.admin-mode) .search-box,
+body.dark-mode .app:not(.admin-mode) .search-box:hover:not(:focus-within),
+body.dark-mode .app:not(.admin-mode) .search-box:focus-within,
+body.dark-mode .app:not(.admin-mode) .gd-home-search-box,
+body.dark-mode .app:not(.admin-mode) .gd-home-search:focus-within .gd-home-search-box {
+  background: #3c4043 !important;
+  color: #e8eaed !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .search-box input,
+body.dark-mode .app:not(.admin-mode) .gd-home-search-box input {
+  color: #e8eaed !important;
+  background: transparent !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .search-box input::placeholder,
+body.dark-mode .app:not(.admin-mode) .gd-home-search-box input::placeholder {
+  color: #9aa0a6 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .file-list-header,
+body.dark-mode .app:not(.admin-mode) .gd-home-list-header {
+  background: #202124 !important;
+  border-bottom-color: #5f6368 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row,
+body.dark-mode .app:not(.admin-mode) .file-grid.grid-view .file-card,
+body.dark-mode .app:not(.admin-mode) .gd-home-recent-list .file-row {
+  background: #292a2d !important;
+  color: #e8eaed !important;
+  border-color: #5f6368 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .file-card .card-thumb {
+  background: #202124 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .file-card .card-meta {
+  border-top-color: #5f6368 !important;
 }
 
 body.dark-mode .app:not(.admin-mode) .nav-item:hover,
-body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover {
+body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row:hover,
+body.dark-mode .app:not(.admin-mode) .gd-home-recent-list .file-row:hover,
+body.dark-mode .app:not(.admin-mode) .btn-icon:hover {
   background: #3c4043 !important;
 }
 
+body.dark-mode .app:not(.admin-mode) .nav-item.active,
+body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row.selected,
+body.dark-mode .app:not(.admin-mode) .file-card.selected {
+  background: #004a77 !important;
+  color: #e8eaed !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .md3-chip-btn,
+body.dark-mode .app:not(.admin-mode) .gd-chip-btn {
+  background: #3c4043 !important;
+  color: #e8eaed !important;
+  border-color: #5f6368 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .md3-chip-btn.active,
+body.dark-mode .app:not(.admin-mode) .gd-chip.active .gd-chip-btn {
+  background: #004a77 !important;
+  color: #e8eaed !important;
+  border-color: transparent !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .details-panel,
+body.dark-mode .app:not(.admin-mode) .notifications-panel,
+body.dark-mode .app:not(.admin-mode) .search-filter-panel,
+body.dark-mode .app:not(.admin-mode) .gd-home-search-dropdown,
+body.dark-mode .new-dropdown,
+body.dark-mode .context-menu,
+body.dark-mode .context-submenu,
+body.dark-mode .modal {
+  background: #292a2d !important;
+  color: #e8eaed !important;
+  border-color: #5f6368 !important;
+}
+
+body.dark-mode .context-item,
+body.dark-mode .context-item-label,
+body.dark-mode .modal-header h3,
+body.dark-mode .app:not(.admin-mode) .gd-sr-row {
+  color: #e8eaed !important;
+  background: transparent;
+}
+
+body.dark-mode .context-item:hover,
+body.dark-mode .app:not(.admin-mode) .gd-sr-row:hover,
+body.dark-mode .app:not(.admin-mode) .gd-chip-option:hover {
+  background: #3c4043 !important;
+}
+
+body.dark-mode .context-item-icon,
+body.dark-mode .context-item-chevron {
+  color: #9aa0a6 !important;
+}
+
+body.dark-mode .profile-dropdown {
+  background: #202124 !important;
+  color: #e8eaed !important;
+}
+
+body.dark-mode .profile-card,
+body.dark-mode .profile-dropdown-signout,
+body.dark-mode .profile-signout-all {
+  background: #292a2d !important;
+  color: #e8eaed !important;
+}
+
+body.dark-mode .profile-greeting,
+body.dark-mode .profile-account-row,
+body.dark-mode .profile-account-name,
+body.dark-mode .profile-add-account {
+  color: #e8eaed !important;
+}
+
+body.dark-mode .profile-email,
+body.dark-mode .profile-account-email,
+body.dark-mode .profile-dropdown-close,
+body.dark-mode .profile-action-icon {
+  color: #9aa0a6 !important;
+}
+
+body.dark-mode .profile-accounts-toggle {
+  background: #3c4043 !important;
+  color: #e8eaed !important;
+}
+
+body.dark-mode .profile-dropdown-signout:hover,
+body.dark-mode .profile-signout-all:hover,
+body.dark-mode .profile-account-row:hover,
+body.dark-mode .profile-add-account:hover,
+body.dark-mode .profile-dropdown-close:hover {
+  background: #3c4043 !important;
+}
+
+body.dark-mode .empty-art {
+  background: #004a77 !important;
+}
+
 body.dark-mode .settings-page {
-  background: #202124;
-  color: #e8eaed;
+  background: #202124 !important;
+  color: #e8eaed !important;
 }
 
 body.dark-mode .settings-card,
 body.dark-mode .settings-menu {
-  background: #292a2d;
-  color: #e8eaed;
+  background: #292a2d !important;
+  color: #e8eaed !important;
 }
 
+body.dark-mode .settings-top h1,
 body.dark-mode .settings-nav button,
 body.dark-mode .settings-menu-item,
 body.dark-mode .settings-row-title,
-body.dark-mode .settings-choice {
-  color: #e8eaed;
+body.dark-mode .settings-choice,
+body.dark-mode .settings-row-desc,
+body.dark-mode .drive-settings-name,
+body.dark-mode .drive-settings-field span {
+  color: #e8eaed !important;
+}
+
+body.dark-mode .settings-row-desc,
+body.dark-mode .drive-settings-email,
+body.dark-mode .settings-group-label,
+body.dark-mode .drive-avatar-remove-btn {
+  color: #9aa0a6 !important;
+}
+
+body.dark-mode .settings-row {
+  border-bottom-color: #5f6368 !important;
 }
 
 body.dark-mode .settings-nav button:hover,
-body.dark-mode .settings-menu-item:hover {
-  background: #3c4043;
+body.dark-mode .settings-menu-item:hover,
+body.dark-mode .settings-menu-item:focus-visible {
+  background: #3c4043 !important;
 }
 
 body.dark-mode .settings-nav button.active {
-  background: #004a77;
-  color: #e8eaed;
+  background: #004a77 !important;
+  color: #e8eaed !important;
+}
+
+body.dark-mode .settings-soon {
+  background: #004a77 !important;
+  color: #8ab4f8 !important;
+}
+
+body.dark-mode .drive-settings-profile {
+  background: #292a2d !important;
+  border-color: #5f6368 !important;
+}
+
+body.dark-mode .settings-page input,
+body.dark-mode .settings-page select,
+body.dark-mode .settings-page textarea,
+body.dark-mode .settings-pane input,
+body.dark-mode .settings-pane select,
+body.dark-mode .settings-pane textarea,
+body.dark-mode .drive-settings-field input,
+body.dark-mode .drive-settings-field select,
+body.dark-mode .drive-settings-confirm-btn {
+  background: #3c4043 !important;
+  color: #e8eaed !important;
+  border-color: #5f6368 !important;
+}
+
+body.dark-mode .settings-pane [style*="background:#fff"],
+body.dark-mode .settings-pane [style*="background: #fff"],
+body.dark-mode .settings-pane [style*="background:#f1f3f4"],
+body.dark-mode .settings-pane [style*="background:#f9fbff"] {
+  background: #292a2d !important;
+  color: #e8eaed !important;
+  border-color: #5f6368 !important;
+}
+
+body.dark-mode .settings-pane [style*="color:#202124"],
+body.dark-mode .settings-pane [style*="color:#1f1f1f"] {
+  color: #e8eaed !important;
+}
+
+body.dark-mode .settings-pane [style*="color:#5f6368"],
+body.dark-mode .settings-pane [style*="color:#3c4043"],
+body.dark-mode .settings-pane [style*="color:#444746"] {
+  color: #9aa0a6 !important;
 }
