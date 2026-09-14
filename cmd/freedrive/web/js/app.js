@@ -126,7 +126,7 @@ const App = (() => {
                 return;
             }
             const pct = Math.min(100, Math.round((used / total) * 100));
-            textEl.textContent = `${Components.formatSize(used)} of ${Components.formatSize(total)} used`;
+            textEl.textContent = `${pct}% of ${Components.formatSize(total)} used`;
             fillEl.style.width = `${pct}%`;
             warnEl?.classList.toggle('hidden', pct < 80);
             storageEl.classList.remove('hidden');
@@ -140,7 +140,7 @@ const App = (() => {
         const displayName = profileDisplayName(user);
         const greeting = document.getElementById('profile-greeting');
         const emailEl = document.getElementById('profile-email');
-        if (greeting) greeting.textContent = `Hi, ${displayName}!`;
+        if (greeting) greeting.textContent = displayName;
         if (emailEl) emailEl.textContent = user.email || '';
 
         const initial = Components.initials(displayName || user.email || 'U');
@@ -164,33 +164,49 @@ const App = (() => {
         renderAccountSwitcher();
     }
 
+    function setAccountsExpanded(expanded) {
+        const card = document.getElementById('profile-account-card');
+        const list = document.getElementById('profile-accounts');
+        const toggle = document.getElementById('profile-accounts-toggle');
+        card?.classList.toggle('is-expanded', expanded);
+        if (list) list.hidden = !expanded;
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            toggle.setAttribute('aria-label', expanded ? 'Hide other accounts' : 'Show other accounts');
+        }
+    }
+
     function renderAccountSwitcher() {
         const list = document.getElementById('profile-accounts');
         const signOutAll = document.getElementById('signout-all-btn');
+        const toggle = document.getElementById('profile-accounts-toggle');
         const accounts = API.listAccounts?.() || [];
+        const others = accounts.filter((account) => !account.active);
         if (signOutAll) signOutAll.classList.toggle('hidden', accounts.length < 2);
+        if (toggle) toggle.classList.toggle('hidden', others.length < 1);
         if (!list) return;
-        if (accounts.length < 2) {
+        if (!others.length) {
             list.innerHTML = '';
+            setAccountsExpanded(false);
             return;
         }
-        list.innerHTML = accounts.map((account) => {
+        list.innerHTML = others.map((account) => {
             const name = Components.escapeHtml(account.username || account.email || 'Account');
             const email = Components.escapeHtml(account.email || '');
             const initial = Components.escapeHtml(Components.initials(account.username || account.email || 'U'));
             const photo = account.avatar_url
                 ? `<img alt="" src="${Components.escapeHtml(account.avatar_url)}">`
                 : initial;
-            const check = account.active ? '<span class="profile-account-check" aria-hidden="true">✓</span>' : '';
-            return `<button type="button" class="profile-account-row${account.active ? ' active' : ''}" data-account-id="${Components.escapeHtml(account.id)}" ${account.active ? 'aria-current="true"' : ''}>
+            return `<button type="button" class="profile-account-row" data-account-id="${Components.escapeHtml(account.id)}">
                 <span class="profile-account-avatar">${photo}</span>
                 <span class="profile-account-text">
                     <span class="profile-account-name">${name}</span>
                     <span class="profile-account-email">${email}</span>
                 </span>
-                ${check}
             </button>`;
         }).join('');
+        const expanded = document.getElementById('profile-account-card')?.classList.contains('is-expanded');
+        setAccountsExpanded(Boolean(expanded));
     }
 
     async function beginAddAccount() {
@@ -238,7 +254,7 @@ const App = (() => {
             if (ur) ur.textContent = user.role;
 
             const greeting = document.getElementById('profile-greeting');
-            if (greeting) greeting.textContent = `Hi, ${profileDisplayName(user)}!`;
+            if (greeting) greeting.textContent = profileDisplayName(user);
             const emailEl = document.getElementById('profile-email');
             if (emailEl) emailEl.textContent = user.email || '';
             const lgAvatar = document.getElementById('profile-avatar-lg');
@@ -1223,7 +1239,10 @@ const App = (() => {
             closeTransientPanels();
             const opening = profileDropdown?.classList.contains('hidden');
             profileDropdown?.classList.toggle('hidden');
-            if (opening) populateProfileDropdown();
+            if (opening) {
+                setAccountsExpanded(false);
+                populateProfileDropdown();
+            }
         });
 
         document.getElementById('profile-dropdown-close')?.addEventListener('click', (e) => {
@@ -1244,6 +1263,12 @@ const App = (() => {
         });
 
         // ── Sign out ──
+        document.getElementById('profile-accounts-toggle')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const expanded = document.getElementById('profile-account-card')?.classList.contains('is-expanded');
+            setAccountsExpanded(!expanded);
+        });
+
         document.getElementById('logout-btn')?.addEventListener('click', async () => {
             profileDropdown?.classList.add('hidden');
             const id = API.getUser()?.id;
