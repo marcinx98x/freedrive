@@ -29,6 +29,7 @@ import { ItemActionsSheet, type ItemTarget } from "../components/ItemActionsShee
 import { NewFolderDialog } from "../components/NewFolderDialog";
 import { SortHeader } from "../components/SortHeader";
 import { useRegisterCreateHandlers } from "../create/CreateActionsContext";
+import { useFabScrollVisibility } from "../hooks/useFabScrollVisibility";
 import { useGridColumns } from "../hooks/useGridColumns";
 import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
@@ -59,6 +60,7 @@ export function FolderScreen({ route, navigation }: Props) {
   const { folderId, title } = route.params;
   const gridCols = useGridColumns();
   const isLandscape = useWideLayout();
+  const { fabVisible, onScroll: onFabScroll } = useFabScrollVisibility();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -362,6 +364,8 @@ export function FolderScreen({ route, navigation }: Props) {
           numColumns={viewMode === "grid" ? gridCols : 1}
           columnWrapperStyle={viewMode === "grid" ? styles.gridRow : undefined}
           contentContainerStyle={entries.length === 0 ? styles.emptyContainer : undefined}
+          onScroll={onFabScroll}
+          scrollEventThrottle={16}
           onEndReached={() => {
             void loadMore();
           }}
@@ -388,6 +392,7 @@ export function FolderScreen({ route, navigation }: Props) {
       )}
       {!isLandscape ? (
         <CreateFab
+          visible={fabVisible}
           onUpload={() => void handleUpload()}
           onFolder={() => setFolderDialog(true)}
           onDocument={() => void handleCreateDocument()}

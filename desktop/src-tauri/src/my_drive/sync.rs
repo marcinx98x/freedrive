@@ -393,6 +393,8 @@ static DELETE_IN_FLIGHT: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::
 static RENAME_IN_FLIGHT: OnceLock<Mutex<Vec<RenameInFlight>>> = OnceLock::new();
 static MY_DRIVE_DELETE_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 static FOLDER_DELETE_CLAIMED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Folders already marked In-Sync this process (avoid CfSetInSyncState every poll).
+static FOLDER_STATUS_HEALED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct RenameInFlight {
@@ -412,6 +414,37 @@ fn my_drive_delete_semaphore() -> &'static Semaphore {
 
 fn folder_delete_claimed() -> &'static Mutex<HashSet<String>> {
     FOLDER_DELETE_CLAIMED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn folder_status_healed() -> &'static Mutex<HashSet<String>> {
+    FOLDER_STATUS_HEALED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Mark folder In-Sync at most once per session unless UNPINNED (stuck sync arrows).
+fn maybe_heal_folder_status(local_dir: &Path) {
+    if is_path_under_active_free_up(local_dir)
+        || is_path_under_active_delete(local_dir)
+        || is_path_under_active_rename(local_dir)
+    {
+        return;
+    }
+    let key = local_dir.to_string_lossy().to_ascii_lowercase();
+    let unpinned = is_unpinned(local_dir);
+    if !unpinned {
+        let Ok(mut set) = folder_status_healed().lock() else {
+            return;
+        };
+        if !set.insert(key) {
+            return;
+        }
+    }
+    refresh_placeholder_status(local_dir);
+    if unpinned {
+        sync_log(format!(
+            "My Drive heal UNPINNED folder — {}",
+            local_dir.display()
+        ));
+    }
 }
 
 struct FolderDeleteClaim {
@@ -1097,6 +1130,20 @@ async fn reconcile_my_drive_offline_changes(
         return Ok(());
     }
 
+    // Quiet path: every tracked path still exists — no busy UI, no full identity walk.
+    let any_missing = rows.iter().any(|row| {
+        if row.relative_path.eq_ignore_ascii_case(MY_DRIVE_FOLDER_NAME) {
+            return false;
+        }
+        if row.remote_id.is_empty() {
+            return false;
+        }
+        !path_exists_for_placeholder(sync_root, &row.relative_path, &row.item_type)
+    });
+    if !any_missing {
+        return Ok(());
+    }
+
     if let Some(cb) = on_busy {
         cb("Reconciling My Drive…");
     }
@@ -1576,20 +1623,7 @@ fn heal_hydrated_unpinned_status(db: &DbHandle, parent_relative: &str, local_dir
     if is_free_up_in_progress() {
         return;
     }
-    // Folder Status is independent of children. Mark In-Sync even when UNPINNED is already clear.
-    if !is_path_under_active_free_up(local_dir)
-        && !is_path_under_active_delete(local_dir)
-        && !is_path_under_active_rename(local_dir)
-    {
-        let was_unpinned = is_unpinned(local_dir);
-        refresh_placeholder_status(local_dir);
-        if was_unpinned {
-            sync_log(format!(
-                "My Drive heal UNPINNED folder — {}",
-                local_dir.display()
-            ));
-        }
-    }
+    maybe_heal_folder_status(local_dir);
     let Ok(entries) = std::fs::read_dir(local_dir) else {
         return;
     };

@@ -34,6 +34,7 @@ import { ProfileMenu } from "../components/ProfileMenu";
 import { SearchBar } from "../components/SearchBar";
 import { SortHeader } from "../components/SortHeader";
 import { useRegisterCreateHandlers } from "../create/CreateActionsContext";
+import { useFabScrollVisibility } from "../hooks/useFabScrollVisibility";
 import { useGridColumns } from "../hooks/useGridColumns";
 import { useWideLayout } from "../hooks/useWideLayout";
 import type { FilesStackParamList, MainTabParamList, RootStackParamList } from "../navigation/types";
@@ -110,6 +111,11 @@ export function FilesScreen({ navigation }: Props) {
   const [dir, setDir] = useState<SortDir>("asc");
   const isWide = useWideLayout();
   const gridCols = useGridColumns();
+  const { fabVisible, onScroll: onFabScroll, resetFabVisible } = useFabScrollVisibility();
+
+  useEffect(() => {
+    resetFabVisible();
+  }, [tab, resetFabVisible]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [menuTarget, setMenuTarget] = useState<ItemTarget | null>(null);
@@ -497,6 +503,8 @@ export function FilesScreen({ navigation }: Props) {
             viewMode === "grid" && tab === "my-drive" ? styles.gridRow : undefined
           }
           contentContainerStyle={entries.length === 0 ? styles.emptyContainer : undefined}
+          onScroll={onFabScroll}
+          scrollEventThrottle={16}
           onEndReached={() => {
             void loadMoreMyDrive();
           }}
@@ -524,6 +532,7 @@ export function FilesScreen({ navigation }: Props) {
 
       {tab === "my-drive" && !isWide ? (
         <CreateFab
+          visible={fabVisible}
           onUpload={() => void handleUpload()}
           onFolder={() => setFolderDialog(true)}
           onDocument={() => void handleCreateDocument()}

@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -15,6 +16,8 @@ type Props = {
   onFolder: () => void;
   onDocument: () => void;
   onSpreadsheet: () => void;
+  /** When false, hide + and camera (list scrolled away from top). */
+  visible?: boolean;
 };
 
 export function CreateFab({
@@ -22,23 +25,51 @@ export function CreateFab({
   onFolder,
   onDocument,
   onSpreadsheet,
+  visible = true,
 }: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [open, setOpen] = useState(false);
   const insets = useSafeAreaInsets();
+  const anim = useRef(new Animated.Value(visible ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (!visible) setOpen(false);
+    Animated.timing(anim, {
+      toValue: visible ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [visible, anim]);
 
   const close = () => setOpen(false);
 
   return (
-    <View pointerEvents="box-none" style={styles.wrap}>
+    <View
+      pointerEvents={visible ? "box-none" : "none"}
+      style={styles.wrap}
+    >
       {open ? (
         <Pressable style={styles.overlay} onPress={close} accessibilityLabel="Dismiss" />
       ) : null}
 
-      <View
-        style={[styles.stack, { paddingBottom: insets.bottom + spacing.lg }]}
-        pointerEvents="box-none"
+      <Animated.View
+        style={[
+          styles.stack,
+          {
+            paddingBottom: insets.bottom + spacing.lg,
+            opacity: anim,
+            transform: [
+              {
+                translateY: anim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [24, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+        pointerEvents={visible ? "box-none" : "none"}
       >
         <Pressable
           style={styles.camera}
@@ -106,7 +137,7 @@ export function CreateFab({
             color={open ? colors.bg : colors.text}
           />
         </Pressable>
-      </View>
+      </Animated.View>
     </View>
   );
 }
