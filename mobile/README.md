@@ -29,6 +29,7 @@ Part of the **FreeDrive monorepo** (`mobile/`). The server lives in the repo roo
 - **Large media limit** — images/videos **over 100 MiB** are not opened in the in-app player (avoids crashes); tapping shows Save / Share / Cancel instead
 - **Spreadsheet editor** — SheetJS grid with formula bar and sheet tabs; Edit / Save re-encrypts and uploads via `POST /api/v1/files/{id}/content` (same path as text)
 - **Image gallery** — swipe left/right between photos in the same loaded list (Folder / Files / Starred / Home); counter shows position; neighbors decrypt in the background (skips files over the preview size limit); bottom counter and image pad above the Android system nav bar
+- **Image zoom** — pinch, double-tap, pan when zoomed, **+/−/%** overlay; gallery swipe disabled while zoomed (Drive-like)
 - **Video gallery** — same swipe between videos in the loaded list; only the active page mounts the player; bottom controls respect Android safe-area insets
 - **Text / spreadsheet / PDF** — FilePreview text editor, sheet tabs, and PDF actions also pad for the system nav bar
 - **Text edit** — Edit / Save on text previews; content is re-encrypted and uploaded via the same native multipart helper (`POST /api/v1/files/{id}/content`)
@@ -92,7 +93,7 @@ cd C:\fdm\android
 Copy-Item "C:\fdm\android\app\build\outputs\apk\release\app-release.apk" "C:\Users\marci\Desktop\Projekty\freedrive-master\mobile\dist\FreeDrive-1.0.0.apk" -Force
 ```
 
-Do **not** run `expo prebuild` on every rebuild — only when `C:\fdm\android` is missing or **native** config changed (`app.json` plugins, new Expo native module such as `expo-image-manipulator`, or `plugins/with-freedrive-downloads/`).
+Do **not** run `expo prebuild` on every rebuild — only when `C:\fdm\android` is missing or **native** config changed (`app.json` plugins, new Expo native module such as `expo-image-manipulator`, `react-native-gesture-handler` / `react-native-reanimated`, or `plugins/with-freedrive-downloads/`).
 
 ### First build or native changes only
 
