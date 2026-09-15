@@ -5633,6 +5633,8 @@ const FileManager = (() => {
     function navigateEditorMedia(delta) {
         const nav = editorState?.mediaNav;
         if (!nav || nav.siblings.length <= 1) return;
+        // Drive-like: do not change slides while zoomed in
+        if ((editorState?.imageZoom ?? 1) > 1.01) return;
         const nextIdx = (nav.index + delta + nav.siblings.length) % nav.siblings.length;
         const nextFile = nav.siblings[nextIdx];
         if (!nextFile || nextFile.id === editorState?.file?.id) return;
@@ -5893,7 +5895,11 @@ const FileManager = (() => {
             <div class="image-editor-body">
                 <div class="editor-canvas-wrap" id="img-canvas-wrap">
                     <canvas id="img-editor-canvas"></canvas>
-                    <div class="zoom-indicator" id="img-zoom-indicator">100%</div>
+                    <div class="zoom-controls" id="img-zoom-controls">
+                        <button type="button" class="zoom-btn" id="img-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+                        <button type="button" class="zoom-btn zoom-pct" id="img-zoom-indicator" title="Reset zoom" aria-label="Reset zoom">100%</button>
+                        <button type="button" class="zoom-btn" id="img-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+                    </div>
                     <div class="selection-indicator" id="img-selection-indicator">0 × 0 px</div>
                 </div>
                 <aside class="image-panel" id="img-panel-adjust" hidden>
@@ -5946,6 +5952,8 @@ const FileManager = (() => {
         let panY = 0;
         let baseSnapshot = null;
         let transformState = { rotate: 0, flipH: false, flipV: false };
+        let spaceHeld = false;
+        if (editorState) editorState.imageZoom = 1;
 
         const adjustment = {
             brightness: 0,
@@ -5965,11 +5973,48 @@ const FileManager = (() => {
         };
         img.src = imageURL;
 
+        function clampZoom(z) {
+            return Math.max(0.2, Math.min(z, 4));
+        }
+
         function applyImageTransform() {
             const f = `brightness(${100 + adjustment.brightness}%) contrast(${100 + adjustment.contrast}%) saturate(${100 + adjustment.saturation}%) blur(${adjustment.blur}px) opacity(${adjustment.opacity}%)`;
             canvas.style.filter = f;
             canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
-            document.getElementById('img-zoom-indicator').textContent = `${Math.round(zoom * 100)}%`;
+            const pctEl = document.getElementById('img-zoom-indicator');
+            if (pctEl) pctEl.textContent = `${Math.round(zoom * 100)}%`;
+            if (editorState) editorState.imageZoom = zoom;
+            wrap.classList.toggle('is-zoomed', zoom > 1.01);
+        }
+
+        function setZoomLevel(next, focalClientX, focalClientY) {
+            const prev = zoom;
+            const nextZoom = clampZoom(next);
+            if (focalClientX != null && focalClientY != null && wrap && prev > 0) {
+                const rect = wrap.getBoundingClientRect();
+                const cx = focalClientX - rect.left - rect.width / 2;
+                const cy = focalClientY - rect.top - rect.height / 2;
+                const ratio = nextZoom / prev;
+                panX = cx - (cx - panX) * ratio;
+                panY = cy - (cy - panY) * ratio;
+            }
+            zoom = nextZoom;
+            if (zoom <= 1.01) {
+                zoom = Math.min(zoom, 1);
+                if (Math.abs(zoom - 1) < 0.02) {
+                    zoom = 1;
+                    panX = 0;
+                    panY = 0;
+                }
+            }
+            applyImageTransform();
+        }
+
+        function resetZoomPan() {
+            zoom = 1;
+            panX = 0;
+            panY = 0;
+            applyImageTransform();
         }
 
         function currentPoint(e) {
@@ -6030,6 +6075,8 @@ const FileManager = (() => {
         }
 
         canvas.addEventListener('mousedown', (e) => {
+            // When zoomed, primary drag pans (Drive-like browse); keep drawing at 1×
+            if (zoom > 1.01 && e.button === 0 && !spaceHeld && !e.shiftKey) return;
             drawing = true;
             start = currentPoint(e);
             baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -6106,22 +6153,31 @@ const FileManager = (() => {
         wrap.addEventListener('wheel', (e) => {
             if (!(e.ctrlKey || e.metaKey)) return;
             e.preventDefault();
-            zoom += e.deltaY < 0 ? 0.08 : -0.08;
-            zoom = Math.max(0.2, Math.min(zoom, 4));
-            applyImageTransform();
+            const delta = e.deltaY < 0 ? 0.08 : -0.08;
+            setZoomLevel(zoom + delta, e.clientX, e.clientY);
         }, { passive: false });
 
         let panning = false;
         let panStart = null;
-        let spaceHeld = false;
+        let pinchStartDist = 0;
+        let pinchStartZoom = 1;
         const onKeyDown = (ev) => { if (ev.code === 'Space') spaceHeld = true; };
         const onKeyUp = (ev) => { if (ev.code === 'Space') spaceHeld = false; };
         document.addEventListener('keydown', onKeyDown);
         document.addEventListener('keyup', onKeyUp);
-        wrap.addEventListener('mousedown', (e) => {
-            if (!spaceHeld && !e.shiftKey && e.button !== 1) return;
+
+        function beginPan(clientX, clientY) {
             panning = true;
-            panStart = { x: e.clientX - panX, y: e.clientY - panY };
+            panStart = { x: clientX - panX, y: clientY - panY };
+        }
+
+        wrap.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.zoom-controls')) return;
+            const forcePan = spaceHeld || e.shiftKey || e.button === 1;
+            const zoomPan = zoom > 1.01 && e.button === 0;
+            if (!forcePan && !zoomPan) return;
+            e.preventDefault();
+            beginPan(e.clientX, e.clientY);
         });
         wrap.addEventListener('mousemove', (e) => {
             if (!panning) return;
@@ -6129,7 +6185,70 @@ const FileManager = (() => {
             panY = e.clientY - panStart.y;
             applyImageTransform();
         });
-        wrap.addEventListener('mouseup', () => { panning = false; });
+        const endPan = () => { panning = false; };
+        wrap.addEventListener('mouseup', endPan);
+        wrap.addEventListener('mouseleave', endPan);
+
+        wrap.addEventListener('dblclick', (e) => {
+            if (e.target.closest('.zoom-controls')) return;
+            e.preventDefault();
+            if (zoom > 1.01) {
+                resetZoomPan();
+            } else {
+                setZoomLevel(2.5, e.clientX, e.clientY);
+            }
+        });
+
+        wrap.addEventListener('touchstart', (e) => {
+            if (e.target.closest('.zoom-controls')) return;
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                drawing = false;
+                panning = false;
+                const a = e.touches[0];
+                const b = e.touches[1];
+                pinchStartDist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY) || 1;
+                pinchStartZoom = zoom;
+            } else if (e.touches.length === 1 && zoom > 1.01) {
+                e.preventDefault();
+                beginPan(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+        wrap.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && pinchStartDist > 0) {
+                e.preventDefault();
+                const a = e.touches[0];
+                const b = e.touches[1];
+                const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY) || 1;
+                const midX = (a.clientX + b.clientX) / 2;
+                const midY = (a.clientY + b.clientY) / 2;
+                setZoomLevel(pinchStartZoom * (dist / pinchStartDist), midX, midY);
+            } else if (e.touches.length === 1 && panning) {
+                e.preventDefault();
+                panX = e.touches[0].clientX - panStart.x;
+                panY = e.touches[0].clientY - panStart.y;
+                applyImageTransform();
+            }
+        }, { passive: false });
+
+        wrap.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) pinchStartDist = 0;
+            if (e.touches.length === 0) panning = false;
+        });
+
+        document.getElementById('img-zoom-in')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setZoomLevel(zoom + 0.25);
+        });
+        document.getElementById('img-zoom-out')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setZoomLevel(zoom - 0.25);
+        });
+        document.getElementById('img-zoom-indicator')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            resetZoomPan();
+        });
 
         document.querySelectorAll('#img-tool-list .tool-btn').forEach((b) => {
             b.addEventListener('click', () => {
@@ -7899,10 +8018,23 @@ const FileManager = (() => {
                     ['Ctrl + S', 'Save file (in editor)', true],
                     ['Ctrl + Z', 'Undo edit (in editor)', true],
                     ['Ctrl + Y / Ctrl + Shift + Z', 'Redo edit (in editor)', true],
+                    ['Ctrl + D', 'Download file (in editor)', true],
                     ['Ctrl + B', 'Bold text (in editor)', true],
                     ['Ctrl + I', 'Italic text (in editor)', true],
                     ['Ctrl + U', 'Underline text (in editor)', true],
                     ['Ctrl + K', 'Insert link (in editor when focused)', true],
+                    ['Esc', 'Close editor', true],
+                ],
+            },
+            {
+                title: 'Image viewer',
+                items: [
+                    ['Ctrl + Mouse wheel', 'Zoom in / out', true],
+                    ['Double-click', 'Toggle zoom (1× / 2.5×)', true],
+                    ['Space + drag', 'Pan image', true],
+                    ['Shift + drag', 'Pan image', true],
+                    ['Drag (when zoomed)', 'Pan image', true],
+                    ['← / →', 'Previous / next media (when not zoomed)', true],
                 ],
             },
             {

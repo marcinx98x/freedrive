@@ -4,7 +4,6 @@ import {
   Alert,
   Dimensions,
   FlatList,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,6 +23,10 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 import { SheetEditorView, loadAndSerializeSheet } from "../components/SheetEditorView";
+import {
+  ZoomableImage,
+  type ZoomableImageHandle,
+} from "../components/ZoomableImage";
 import {
   canPrefetchMedia,
   downloadAndDecrypt,
@@ -94,6 +97,14 @@ export function FilePreviewScreen({ route, navigation }: Props) {
   const paging = (mode === "image" || mode === "video") && gallery.length > 1;
   const pageWidth = Dimensions.get("window").width;
   const insets = useSafeAreaInsets();
+  const zoomRef = useRef<ZoomableImageHandle>(null);
+  const [imageZoomed, setImageZoomed] = useState(false);
+  const [zoomPct, setZoomPct] = useState(100);
+
+  const onImageZoomChange = useCallback((scale: number) => {
+    setImageZoomed(scale > 1.01);
+    setZoomPct(Math.round(scale * 100));
+  }, []);
 
   const [pageIndex, setPageIndex] = useState(
     Math.min(Math.max(initialIndex, 0), Math.max(gallery.length - 1, 0)),
@@ -207,7 +218,35 @@ export function FilePreviewScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     setDirtyRotate(false);
+    setImageZoomed(false);
+    setZoomPct(100);
   }, [pageIndex]);
+
+  const zoomControls = currentIsImage ? (
+    <View style={[styles.zoomControls, { bottom: spacing.lg + insets.bottom + (paging ? 28 : 0) }]}>
+      <Pressable
+        style={styles.zoomBtn}
+        onPress={() => zoomRef.current?.zoomOut()}
+        accessibilityLabel="Zoom out"
+      >
+        <Text style={styles.zoomBtnText}>−</Text>
+      </Pressable>
+      <Pressable
+        style={[styles.zoomBtn, styles.zoomPctBtn]}
+        onPress={() => zoomRef.current?.reset()}
+        accessibilityLabel="Reset zoom"
+      >
+        <Text style={styles.zoomPctText}>{zoomPct}%</Text>
+      </Pressable>
+      <Pressable
+        style={styles.zoomBtn}
+        onPress={() => zoomRef.current?.zoomIn()}
+        accessibilityLabel="Zoom in"
+      >
+        <Text style={styles.zoomBtnText}>+</Text>
+      </Pressable>
+    </View>
+  ) : null;
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -476,6 +515,7 @@ export function FilePreviewScreen({ route, navigation }: Props) {
           keyExtractor={(item) => item.id}
           horizontal
           pagingEnabled
+          scrollEnabled={!imageZoomed}
           showsHorizontalScrollIndicator={false}
           initialScrollIndex={Math.min(initialIndex, gallery.length - 1)}
           getItemLayout={(_, index) => ({
@@ -505,7 +545,12 @@ export function FilePreviewScreen({ route, navigation }: Props) {
                 ) : uri && video ? (
                   <View style={styles.video} />
                 ) : uri ? (
-                  <Image source={{ uri }} style={styles.image} resizeMode="contain" />
+                  <ZoomableImage
+                    ref={active ? zoomRef : undefined}
+                    uri={uri}
+                    active={active}
+                    onZoomChange={active ? onImageZoomChange : undefined}
+                  />
                 ) : loading ? (
                   <ActivityIndicator color={colors.accent} />
                 ) : error ? (
@@ -520,6 +565,7 @@ export function FilePreviewScreen({ route, navigation }: Props) {
         <Text style={[styles.counter, { bottom: spacing.lg + insets.bottom }]}>
           {pageIndex + 1} / {gallery.length}
         </Text>
+        {zoomControls}
       </View>
     );
   }
@@ -528,10 +574,16 @@ export function FilePreviewScreen({ route, navigation }: Props) {
     return (
       <View style={[styles.center, { paddingBottom: insets.bottom, width: "100%" }]}>
         {currentUri ? (
-          <Image source={{ uri: currentUri }} style={styles.image} resizeMode="contain" />
+          <ZoomableImage
+            ref={zoomRef}
+            uri={currentUri}
+            active
+            onZoomChange={onImageZoomChange}
+          />
         ) : (
           <ActivityIndicator color={colors.accent} />
         )}
+        {zoomControls}
       </View>
     );
   }
@@ -665,4 +717,26 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
   },
+  zoomControls: {
+    position: "absolute",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(32,33,36,0.88)",
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.2)",
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+  },
+  zoomBtn: {
+    minWidth: 36,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  zoomPctBtn: { minWidth: 52 },
+  zoomBtnText: { color: "#fff", fontSize: 18, fontWeight: "600" },
+  zoomPctText: { color: "#fff", fontSize: 12, fontWeight: "500" },
 });
