@@ -156,6 +156,8 @@ func NewRouter(
 				r.Post("/{id}/comments", commentHandler.Create)
 				r.Delete("/{id}/comments/{commentId}", commentHandler.Delete)
 				r.Get("/{id}/download", fileHandler.Download)
+				r.Put("/{id}/thumbnail", fileHandler.PutThumbnail)
+				r.Get("/{id}/thumbnail", fileHandler.GetThumbnail)
 				r.Patch("/{id}", fileHandler.Update)
 				r.Post("/{id}/content", fileHandler.UpdateContent)
 				r.Delete("/{id}", fileHandler.Delete)

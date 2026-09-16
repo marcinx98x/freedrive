@@ -49,6 +49,32 @@ func (ds *DiskStorage) Save(userID string, r io.Reader) (string, int64, error) {
 	return blobPath, written, nil
 }
 
+// SaveIn writes data under userID/subdir/ and returns the relative blob path.
+func (ds *DiskStorage) SaveIn(userID, subdir string, r io.Reader) (string, int64, error) {
+	userDir := filepath.Join(ds.baseDir, userID, subdir)
+	if err := os.MkdirAll(userDir, 0755); err != nil {
+		return "", 0, fmt.Errorf("create user subdir: %w", err)
+	}
+
+	blobName := uuid.New().String() + ".enc"
+	blobPath := filepath.Join(userID, subdir, blobName)
+	fullPath := filepath.Join(ds.baseDir, blobPath)
+
+	f, err := os.Create(fullPath)
+	if err != nil {
+		return "", 0, fmt.Errorf("create blob file: %w", err)
+	}
+	defer f.Close()
+
+	written, err := io.Copy(f, r)
+	if err != nil {
+		os.Remove(fullPath)
+		return "", 0, fmt.Errorf("write blob: %w", err)
+	}
+
+	return filepath.ToSlash(blobPath), written, nil
+}
+
 // Get opens a blob file for reading.
 func (ds *DiskStorage) Get(blobPath string) (io.ReadCloser, error) {
 	fullPath := filepath.Join(ds.baseDir, blobPath)

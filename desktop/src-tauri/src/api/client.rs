@@ -1258,7 +1258,85 @@ impl ApiClient {
         }
     }
 
+    /// Encrypt and PUT a JPEG thumbnail for an existing remote file. Soft-fails.
+    pub async fn upload_file_thumbnail(
+        &self,
+        local_path: &Path,
+        file_id: &str,
+        file_key: &[u8; 32],
+    ) -> AppResult<()> {
+        if !crate::thumbnail::is_thumbnailable(local_path) {
+            return Ok(());
+        }
+        let Some(jpeg) = crate::thumbnail::generate_jpeg_thumbnail(local_path) else {
+            return Ok(());
+        };
+        let _ = crate::thumb_cache::write_jpeg_cache_for_path(file_id, local_path, &jpeg);
+        let original_size = jpeg.len() as u64;
+        let (cipher, iv) = crypto::encrypt_file(&jpeg, file_key)?;
+        let iv_b64 = crypto::iv_to_base64(&iv);
 
+        let url = self.api_url(&format!("/files/{file_id}/thumbnail"));
+        let access_token = self.inner.read().access_token.clone();
+        let http = self.inner.read().upload_http.clone();
+
+        let part = Part::bytes(cipher)
+            .file_name("thumb.jpg")
+            .mime_str("application/octet-stream")
+            .map_err(|e| AppError::msg(e.to_string()))?;
+
+        let form = Form::new()
+            .part("file", part)
+            .text("iv", iv_b64)
+            .text("mime_type", "image/jpeg")
+            .text("original_size", original_size.to_string());
+
+        let res = http
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .multipart(form)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            return Err(http_api_error(status, &text));
+        }
+        Ok(())
+    }
+
+    /// Download and decrypt a file thumbnail JPEG from the server.
+    pub async fn download_file_thumbnail(
+        &self,
+        file_id: &str,
+        file_key: &[u8; 32],
+    ) -> AppResult<Vec<u8>> {
+        let url = self.api_url(&format!("/files/{file_id}/thumbnail"));
+        let access_token = self.inner.read().access_token.clone();
+        let http = self.inner.read().http.clone();
+        let res = http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            return Err(http_api_error(status, &text));
+        }
+        let iv_b64 = res
+            .headers()
+            .get("X-Thumb-IV")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let cipher = res.bytes().await?.to_vec();
+        let iv = crypto::iv_from_base64(&iv_b64)?;
+        crypto::decrypt_file(&cipher, file_key, &iv)
+    }
 
     pub async fn upload_file(
         &self,
@@ -1525,6 +1603,11 @@ impl ApiClient {
                     }
 
                     crate::sync::log::sync_log(format!("http ok {}", prepared.name));
+
+                    // Best-effort encrypted thumbnail (Explorer / future web grid).
+                    let _ = self
+                        .upload_file_thumbnail(local_path, &rec.id, &prepared.key)
+                        .await;
 
                     return Ok((rec, prepared.key));
 

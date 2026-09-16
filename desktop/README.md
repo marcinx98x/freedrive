@@ -55,6 +55,7 @@ Part of the **FreeDrive monorepo** (`desktop/`). The server lives in the repo ro
 - **Mass folder Delete leftovers (0.1.83+)** — Confirmed Explorer deletes soft-trash immediately (no grace/full identity scan); coalesce never no-ops when children are still on disk; poll/mirror do not recreate placeholders under `delete_in_flight`.
 - **Cloud open hydrate (0.1.84+)** — Explorer FETCH_DATA runs on the app runtime (shared HTTP client no longer hangs after an upload queue) and small cloud files fail in about 90s instead of waiting 2 hours.
 - **Folder Status glyphs (0.1.85+)** — A folder is marked In-Sync (not only its files), so cloud-only trees show the cloud glyph instead of sync arrows. When every file in the folder is on this PC, Explorer shows the check; a mix stays cloud on the folder and check only on downloaded files. Always keep (PINNED) is not cleared.
+- **Cloud file thumbnails (0.1.87+)** — Upload/save generates an encrypted JPEG thumb (images + first video frame); Explorer `freedrive_thumb.dll` serves My Drive previews from `%LOCALAPPDATA%\FreeDrive\thumbs\` without full-file FETCH_DATA. Idle backfill fills thumbs for existing media; NSIS registers/unregisters the ShellEx.
 - **Authenticator 2FA** — version **0.1.8** accepts TOTP / backup codes at sign-in (setup stays in the web Security center) and can fall back to “Send code by email” when available
 - **Start minimized** — version **0.1.9** can hide the main window to the system tray on cold start (Preferences → Launch); tray click / second instance still open the window
 - **Duplicate event safe** — version **0.1.7** serializes uploads per local path, so browser download Create/Write/Rename bursts produce one remote file; only the current remote mapping may clean up older same-name copies
@@ -137,12 +138,21 @@ scripts\dev.cmd build
 Or from `desktop/`:
 
 ```bash
+npm run build:exe
+```
+
+(`build:exe` regenerates icons, builds `freedrive_thumb.dll` for Explorer thumbnails, then the NSIS installer.)
+
+For a clean rebuild after icon/native changes:
+
+```bash
 npm run build:exe:clean
 ```
 
 Outputs (monorepo path):
 
 - `desktop/src-tauri/target/release/freedrive-desktop.exe`
+- `desktop/src-tauri/resources/freedrive_thumb.dll` (bundled into the installer as `$INSTDIR\freedrive_thumb.dll`)
 - `desktop/src-tauri/target/release/bundle/nsis/FreeDrive_<version>_x64-setup.exe`
 
 > Only the **NSIS** target is built: it runs the uninstall hooks (CfAPI sync root, My Drive, `%APPDATA%\FreeDrive`), which MSI/WiX cannot do. A previous MSI install also forces a full uninstall on the reinstall page.

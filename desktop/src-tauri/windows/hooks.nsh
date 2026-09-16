@@ -6,7 +6,17 @@
 ; /UPDATE when the user picks "Uninstall before installing" on the reinstall page, so
 ; deleting files additionally requires the explicit "Delete application data" choice.
 
+!macro NSIS_HOOK_POSTINSTALL
+  ; Register Explorer thumbnail provider for My Drive media previews.
+  ${If} ${FileExists} "$INSTDIR\freedrive_thumb.dll"
+    ExecWait 'regsvr32 /s "$INSTDIR\freedrive_thumb.dll"'
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
+  ${If} ${FileExists} "$INSTDIR\freedrive_thumb.dll"
+    ExecWait 'regsvr32 /u /s "$INSTDIR\freedrive_thumb.dll"'
+  ${EndIf}
   ; Stop a running client so CfAPI disconnect and file deletes can succeed.
   ExecWait 'taskkill /F /IM "${MAINBINARYNAME}.exe" /T'
 

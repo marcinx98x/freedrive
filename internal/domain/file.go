@@ -17,6 +17,11 @@ type File struct {
 	IV            string     `json:"iv"`
 	Version       int        `json:"version"`
 	ContentHash   string     `json:"content_hash,omitempty"`
+	HasThumbnail  bool       `json:"has_thumbnail"`
+	ThumbnailBlobPath string `json:"-"`
+	ThumbnailIV   string     `json:"-"`
+	ThumbnailSize int64      `json:"-"`
+	ThumbnailMime string     `json:"-"`
 	IsStarred     bool       `json:"is_starred"`
 	IsTrashed     bool       `json:"is_trashed"`
 	TrashedAt     *time.Time `json:"trashed_at,omitempty"`

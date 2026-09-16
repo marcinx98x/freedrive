@@ -566,9 +566,35 @@ pub fn ensure_shell_registered(db: &DbHandle, sync_root: &Path) -> AppResult<()>
     // WinRT Register also pins a second Desktop\NameSpace CLSID for the same path.
     purge_duplicate_freedrive_namespace_pins(sync_root);
     refresh_offline_context_menu(db)?;
+    ensure_thumb_provider_registered();
     mark_shell_registered(db)?;
     shell_log(&format!("shell registered id={}", sync_root_id));
     Ok(())
+}
+
+/// Repair-register Explorer ThumbnailProvider (`freedrive_thumb.dll`) next to the exe.
+fn ensure_thumb_provider_registered() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let dll = dir.join("freedrive_thumb.dll");
+    if !dll.is_file() {
+        return;
+    }
+    let status = std::process::Command::new("regsvr32")
+        .args(["/s", &dll.to_string_lossy()])
+        .status();
+    match status {
+        Ok(s) if s.success() => shell_log("thumb provider registered (freedrive_thumb.dll)"),
+        Ok(s) => shell_log(&format!(
+            "thumb provider regsvr32 exit={}",
+            s.code().unwrap_or(-1)
+        )),
+        Err(e) => shell_log(&format!("thumb provider regsvr32 failed: {e}")),
+    }
 }
 
 /// Clear legacy FreeDrive Download / Free up shell verbs.

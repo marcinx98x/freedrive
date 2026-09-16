@@ -194,6 +194,9 @@ func (s *FileService) PermanentDelete(ctx context.Context, fileID, userID string
 	if err := s.storage.Delete(file.BlobPath); err != nil {
 		return err
 	}
+	if file.ThumbnailBlobPath != "" {
+		_ = s.storage.Delete(file.ThumbnailBlobPath)
+	}
 
 	if err := s.fileRepo.Delete(ctx, fileID); err != nil {
 		return err
@@ -328,6 +331,9 @@ func (s *FileService) hardDeleteFileRows(ctx context.Context, files []domain.Fil
 			_ = s.storage.Delete(v.BlobPath)
 		}
 		blobPaths = append(blobPaths, f.BlobPath)
+		if f.ThumbnailBlobPath != "" {
+			blobPaths = append(blobPaths, f.ThumbnailBlobPath)
+		}
 		freed += f.EncryptedSize
 		_ = s.fileRepo.Delete(ctx, f.ID)
 		_ = s.userRepo.UpdateUsedBytes(ctx, f.OwnerID, -f.EncryptedSize)
@@ -557,6 +563,12 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 	if contentHash != "" {
 		file.ContentHash = contentHash
 	}
+	oldThumb := file.ThumbnailBlobPath
+	file.ThumbnailBlobPath = ""
+	file.ThumbnailIV = ""
+	file.ThumbnailSize = 0
+	file.ThumbnailMime = "image/jpeg"
+	file.HasThumbnail = false
 
 	if err := s.fileRepo.Update(ctx, file); err != nil {
 		_ = s.storage.Delete(newBlobPath)
@@ -569,6 +581,9 @@ func (s *FileService) UpdateContent(ctx context.Context, fileID, userID, name, m
 
 	if !versionKept {
 		_ = s.storage.Delete(oldBlobPath)
+	}
+	if oldThumb != "" {
+		_ = s.storage.Delete(oldThumb)
 	}
 	s.pruneFileVersions(ctx, userID, file.ID)
 	s.logActivity(ctx, userID, domain.ActionUpload, "file", file.ID, file.Name, `{"updated":true}`)
@@ -655,6 +670,12 @@ func (s *FileService) UpdateContentFromBlob(
 	if contentHash != "" {
 		file.ContentHash = contentHash
 	}
+	oldThumb := file.ThumbnailBlobPath
+	file.ThumbnailBlobPath = ""
+	file.ThumbnailIV = ""
+	file.ThumbnailSize = 0
+	file.ThumbnailMime = "image/jpeg"
+	file.HasThumbnail = false
 
 	if err := s.fileRepo.Update(ctx, file); err != nil {
 		_ = s.storage.Delete(blobPath)
@@ -667,6 +688,9 @@ func (s *FileService) UpdateContentFromBlob(
 
 	if !versionKept {
 		_ = s.storage.Delete(oldBlobPath)
+	}
+	if oldThumb != "" {
+		_ = s.storage.Delete(oldThumb)
 	}
 	s.pruneFileVersions(ctx, userID, file.ID)
 	s.logActivity(ctx, userID, domain.ActionUpload, "file", file.ID, file.Name, `{"updated":true}`)
@@ -744,6 +768,12 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 	now := time.Now()
 	file.UpdatedAt = now
 	file.AccessedAt = now
+	oldThumb := file.ThumbnailBlobPath
+	file.ThumbnailBlobPath = ""
+	file.ThumbnailIV = ""
+	file.ThumbnailSize = 0
+	file.ThumbnailMime = "image/jpeg"
+	file.HasThumbnail = false
 
 	if err := s.fileRepo.Update(ctx, file); err != nil {
 		_ = s.storage.Delete(newBlobPath)
@@ -756,6 +786,9 @@ func (s *FileService) RestoreVersion(ctx context.Context, fileID, userID string,
 
 	if !versionKept {
 		_ = s.storage.Delete(oldBlobPath)
+	}
+	if oldThumb != "" {
+		_ = s.storage.Delete(oldThumb)
 	}
 	s.pruneFileVersions(ctx, userID, file.ID)
 	s.logActivity(ctx, userID, domain.ActionRestore, "file", file.ID, file.Name, fmt.Sprintf(`{"version":%d}`, version))
@@ -926,3 +959,72 @@ func (s *FileService) checkServerCapacity(ctx context.Context, additionalBytes i
 	}
 	return nil
 }
+
+// PutThumbnail stores an encrypted JPEG (or other) thumbnail for a file.
+// Uses the same file key on the client; server only stores ciphertext + IV.
+func (s *FileService) PutThumbnail(ctx context.Context, fileID, userID, iv, mime string, originalSize int64, r io.Reader) (*domain.File, error) {
+	if err := s.access.CanWriteFile(ctx, fileID, userID); err != nil {
+		return nil, err
+	}
+	file, err := s.fileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if file == nil {
+		return nil, fmt.Errorf("file not found")
+	}
+	if iv == "" {
+		return nil, fmt.Errorf("missing thumbnail iv")
+	}
+	if mime == "" {
+		mime = "image/jpeg"
+	}
+
+	newPath, encSize, err := s.storage.SaveIn(file.OwnerID, "thumbs", r)
+	if err != nil {
+		return nil, err
+	}
+	if originalSize > 0 && encSize == 0 {
+		_ = s.storage.Delete(newPath)
+		return nil, fmt.Errorf("empty thumbnail")
+	}
+
+	oldPath := file.ThumbnailBlobPath
+	file.ThumbnailBlobPath = newPath
+	file.ThumbnailIV = iv
+	file.ThumbnailSize = encSize
+	file.ThumbnailMime = mime
+	file.HasThumbnail = true
+	// Do not bump UpdatedAt — thumbnails are metadata, not content edits.
+
+	if err := s.fileRepo.Update(ctx, file); err != nil {
+		_ = s.storage.Delete(newPath)
+		return nil, err
+	}
+	if oldPath != "" && oldPath != newPath {
+		_ = s.storage.Delete(oldPath)
+	}
+	return file, nil
+}
+
+// GetThumbnail returns file metadata and a reader for the encrypted thumbnail blob.
+func (s *FileService) GetThumbnail(ctx context.Context, fileID, userID string) (*domain.File, func() (io.ReadCloser, error), error) {
+	if err := s.access.CanReadFile(ctx, fileID, userID); err != nil {
+		return nil, nil, err
+	}
+	file, err := s.fileRepo.GetByID(ctx, fileID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if file == nil {
+		return nil, nil, fmt.Errorf("file not found")
+	}
+	if file.ThumbnailBlobPath == "" {
+		return nil, nil, fmt.Errorf("thumbnail not found")
+	}
+	getReader := func() (io.ReadCloser, error) {
+		return s.storage.Get(file.ThumbnailBlobPath)
+	}
+	return file, getReader, nil
+}
+

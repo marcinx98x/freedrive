@@ -7,6 +7,89 @@ const Upload = (() => {
     let batchUploaded = 0;
     let batchFailed = 0;
     let batchTotal = 0;
+    const THUMB_MAX = 512;
+
+    function isThumbnailable(file) {
+        const mime = (file.type || '').toLowerCase();
+        if (mime.startsWith('image/') || mime.startsWith('video/')) return true;
+        const name = (file.name || '').toLowerCase();
+        return /\.(jpe?g|png|gif|webp|bmp|tiff?|mp4|mov|m4v|webm|avi|mkv)$/i.test(name);
+    }
+
+    function canvasToJpegBlob(canvas) {
+        return new Promise((resolve) => {
+            canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.7);
+        });
+    }
+
+    async function jpegFromImageFile(file) {
+        const bmp = await createImageBitmap(file);
+        const scale = Math.min(1, THUMB_MAX / Math.max(bmp.width, bmp.height));
+        const w = Math.max(1, Math.round(bmp.width * scale));
+        const h = Math.max(1, Math.round(bmp.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bmp, 0, 0, w, h);
+        bmp.close?.();
+        return canvasToJpegBlob(canvas);
+    }
+
+    async function jpegFromVideoFile(file) {
+        const url = URL.createObjectURL(file);
+        try {
+            const video = document.createElement('video');
+            video.muted = true;
+            video.playsInline = true;
+            video.preload = 'auto';
+            video.src = url;
+            await new Promise((resolve, reject) => {
+                video.onloadeddata = () => resolve();
+                video.onerror = () => reject(new Error('video load failed'));
+            });
+            try {
+                video.currentTime = Math.min(0.1, (video.duration || 1) * 0.01);
+                await new Promise((resolve) => {
+                    video.onseeked = () => resolve();
+                    setTimeout(resolve, 800);
+                });
+            } catch { /* use first frame */ }
+            const scale = Math.min(1, THUMB_MAX / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+            const w = Math.max(1, Math.round((video.videoWidth || THUMB_MAX) * scale));
+            const h = Math.max(1, Math.round((video.videoHeight || THUMB_MAX) * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+            return canvasToJpegBlob(canvas);
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    async function uploadEncryptedThumbnail(fileId, key, file) {
+        if (!fileId || !key || !isThumbnailable(file)) return;
+        const cryptoModule = window.CryptoModule;
+        if (!cryptoModule?.encryptFile || !cryptoModule?.uint8ToBase64) return;
+        try {
+            const mime = (file.type || '').toLowerCase();
+            const jpegBlob = mime.startsWith('video/') || /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(file.name || '')
+                ? await jpegFromVideoFile(file)
+                : await jpegFromImageFile(file);
+            if (!jpegBlob) return;
+            const plain = new Uint8Array(await jpegBlob.arrayBuffer());
+            const { ciphertext, iv } = await cryptoModule.encryptFile(plain, key);
+            const form = new FormData();
+            form.append('file', new Blob([ciphertext], { type: 'application/octet-stream' }), 'thumb.jpg');
+            form.append('iv', cryptoModule.uint8ToBase64(iv));
+            form.append('mime_type', 'image/jpeg');
+            form.append('original_size', String(plain.length));
+            await API.files.putThumbnail(fileId, form);
+        } catch (err) {
+            console.warn('thumbnail upload skipped', err);
+        }
+    }
 
     function init() {
         document.getElementById('upload-minimize')?.addEventListener('click', () => {
@@ -344,6 +427,7 @@ const Upload = (() => {
             if (key) {
                 await cryptoModule.storeKey(result.id, key);
                 if (window.CryptoSync?.pushFileKey) await CryptoSync.pushFileKey(result.id, key);
+                await uploadEncryptedThumbnail(result.id, key, file);
             }
             progressFill.style.width = '100%';
             statusEl.textContent = 'Done';
@@ -366,5 +450,7 @@ const Upload = (() => {
         uploadFileTree,
         collectFromDataTransfer,
         addFiles,
+        uploadEncryptedThumbnail,
+        isThumbnailable,
     };
 })();

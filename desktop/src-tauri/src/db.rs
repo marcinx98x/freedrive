@@ -1331,6 +1331,35 @@ pub fn my_drive_get_placeholder_by_remote_id(
     }
 }
 
+/// List file placeholders that look like images/videos (for thumbnail backfill).
+pub fn list_my_drive_media_placeholders(
+    conn: &Connection,
+    limit: usize,
+) -> AppResult<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT remote_id, relative_path FROM my_drive_placeholders
+         WHERE item_type = 'file'
+           AND (
+             lower(relative_path) LIKE '%.jpg' OR lower(relative_path) LIKE '%.jpeg'
+             OR lower(relative_path) LIKE '%.png' OR lower(relative_path) LIKE '%.gif'
+             OR lower(relative_path) LIKE '%.webp' OR lower(relative_path) LIKE '%.bmp'
+             OR lower(relative_path) LIKE '%.mp4' OR lower(relative_path) LIKE '%.mov'
+             OR lower(relative_path) LIKE '%.m4v' OR lower(relative_path) LIKE '%.avi'
+             OR lower(relative_path) LIKE '%.mkv' OR lower(relative_path) LIKE '%.webm'
+           )
+         ORDER BY relative_path COLLATE NOCASE
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit as i64], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 pub fn my_drive_known_remote_version(conn: &Connection, remote_id: &str) -> AppResult<i32> {
     let mut stmt = conn.prepare(
         "SELECT COALESCE(remote_version, 0) FROM my_drive_placeholders WHERE remote_id = ?1 LIMIT 1",

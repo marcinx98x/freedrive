@@ -45,15 +45,21 @@ func (r *FileRepo) GetByID(ctx context.Context, id string) (*domain.File, error)
 	f := &domain.File{}
 	err := r.reader.QueryRowContext(ctx,
 		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
-		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at, content_hash
+		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at, content_hash,
+		        thumbnail_blob_path, thumbnail_iv, thumbnail_size, thumbnail_mime
 		 FROM files WHERE id = ?`, id,
 	).Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
 		&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
-		&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt, &f.ContentHash)
+		&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt, &f.ContentHash,
+		&f.ThumbnailBlobPath, &f.ThumbnailIV, &f.ThumbnailSize, &f.ThumbnailMime)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return f, err
+	if err != nil {
+		return nil, err
+	}
+	f.HasThumbnail = f.ThumbnailBlobPath != ""
+	return f, nil
 }
 
 func (r *FileRepo) Update(ctx context.Context, file *domain.File) error {
@@ -61,11 +67,13 @@ func (r *FileRepo) Update(ctx context.Context, file *domain.File) error {
 	// (Download used to bump modified via this path and broke "Date modified").
 	_, err := r.writer.ExecContext(ctx,
 		`UPDATE files SET name=?, mime_type=?, size=?, encrypted_size=?, folder_id=?, blob_path=?, iv=?,
-		        version=?, is_starred=?, is_trashed=?, trashed_at=?, updated_at=?, accessed_at=?, content_hash=?
+		        version=?, is_starred=?, is_trashed=?, trashed_at=?, updated_at=?, accessed_at=?, content_hash=?,
+		        thumbnail_blob_path=?, thumbnail_iv=?, thumbnail_size=?, thumbnail_mime=?
 		 WHERE id=?`,
 		file.Name, file.MimeType, file.Size, file.EncryptedSize, file.FolderID,
 		file.BlobPath, file.IV, file.Version, file.IsStarred, file.IsTrashed,
-		file.TrashedAt, file.UpdatedAt, file.AccessedAt, file.ContentHash, file.ID,
+		file.TrashedAt, file.UpdatedAt, file.AccessedAt, file.ContentHash,
+		file.ThumbnailBlobPath, file.ThumbnailIV, file.ThumbnailSize, file.ThumbnailMime, file.ID,
 	)
 	return err
 }
@@ -147,7 +155,8 @@ func (r *FileRepo) List(ctx context.Context, opts domain.FileListOptions) ([]dom
 
 	query := fmt.Sprintf(
 		`SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
-		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+		        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at,
+		        CASE WHEN IFNULL(thumbnail_blob_path,'') != '' THEN 1 ELSE 0 END
 		 FROM files WHERE %s ORDER BY %s %s LIMIT ? OFFSET ?`,
 		where, sortBy, sortDir,
 	)
@@ -162,11 +171,13 @@ func (r *FileRepo) List(ctx context.Context, opts domain.FileListOptions) ([]dom
 	var files []domain.File
 	for rows.Next() {
 		var f domain.File
+		var hasThumb int
 		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
 			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
-			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt, &hasThumb); err != nil {
 			return nil, 0, err
 		}
+		f.HasThumbnail = hasThumb != 0
 		files = append(files, f)
 	}
 	return files, total, nil
@@ -195,14 +206,16 @@ func (r *FileRepo) GetByFolderIDPage(ctx context.Context, folderID *string, owne
 		countQuery = `SELECT COUNT(*) FROM files WHERE folder_id IS NULL AND owner_id = ? AND is_trashed = 0`
 		countArgs = []interface{}{ownerID}
 		listQuery = `SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
-			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at,
+			        CASE WHEN IFNULL(thumbnail_blob_path,'') != '' THEN 1 ELSE 0 END
 			 FROM files WHERE folder_id IS NULL AND owner_id = ? AND is_trashed = 0 ORDER BY name COLLATE NOCASE, id`
 		listArgs = []interface{}{ownerID}
 	} else {
 		countQuery = `SELECT COUNT(*) FROM files WHERE folder_id = ? AND owner_id = ? AND is_trashed = 0`
 		countArgs = []interface{}{*folderID, ownerID}
 		listQuery = `SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
-			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+			        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at,
+			        CASE WHEN IFNULL(thumbnail_blob_path,'') != '' THEN 1 ELSE 0 END
 			 FROM files WHERE folder_id = ? AND owner_id = ? AND is_trashed = 0 ORDER BY name COLLATE NOCASE, id`
 		listArgs = []interface{}{*folderID, ownerID}
 	}
@@ -229,11 +242,13 @@ func (r *FileRepo) GetByFolderIDPage(ctx context.Context, folderID *string, owne
 	var files []domain.File
 	for rows.Next() {
 		var f domain.File
+		var hasThumb int
 		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
 			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
-			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt, &hasThumb); err != nil {
 			return nil, 0, err
 		}
+		f.HasThumbnail = hasThumb != 0
 		files = append(files, f)
 	}
 	if files == nil {
@@ -295,7 +310,7 @@ func (r *FileRepo) GetByFolderIDs(ctx context.Context, folderIDs []string) ([]do
 		args[i] = id
 	}
 	query := `SELECT id, name, mime_type, size, encrypted_size, folder_id, owner_id, blob_path, iv, version,
-	        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at
+	        is_starred, is_trashed, trashed_at, created_at, updated_at, accessed_at, thumbnail_blob_path
 	 FROM files WHERE folder_id IN (` + strings.Join(placeholders, ",") + `)`
 
 	rows, err := r.reader.QueryContext(ctx, query, args...)
@@ -309,9 +324,11 @@ func (r *FileRepo) GetByFolderIDs(ctx context.Context, folderIDs []string) ([]do
 		var f domain.File
 		if err := rows.Scan(&f.ID, &f.Name, &f.MimeType, &f.Size, &f.EncryptedSize,
 			&f.FolderID, &f.OwnerID, &f.BlobPath, &f.IV, &f.Version,
-			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt); err != nil {
+			&f.IsStarred, &f.IsTrashed, &f.TrashedAt, &f.CreatedAt, &f.UpdatedAt, &f.AccessedAt,
+			&f.ThumbnailBlobPath); err != nil {
 			return nil, err
 		}
+		f.HasThumbnail = f.ThumbnailBlobPath != ""
 		files = append(files, f)
 	}
 	return files, nil
@@ -500,6 +517,8 @@ func (r *FileRepo) ListAllBlobPaths(ctx context.Context) ([]string, error) {
 	rows, err := r.reader.QueryContext(ctx, `
 		SELECT blob_path FROM files
 		UNION ALL
+		SELECT thumbnail_blob_path FROM files WHERE IFNULL(thumbnail_blob_path,'') != ''
+		UNION ALL
 		SELECT blob_path FROM file_versions`)
 	if err != nil {
 		return nil, err
@@ -525,9 +544,11 @@ func (r *FileRepo) ListBlobPathsByOwner(ctx context.Context, ownerID string) ([]
 	rows, err := r.reader.QueryContext(ctx, `
 		SELECT blob_path FROM files WHERE owner_id = ?
 		UNION ALL
+		SELECT thumbnail_blob_path FROM files WHERE owner_id = ? AND IFNULL(thumbnail_blob_path,'') != ''
+		UNION ALL
 		SELECT fv.blob_path FROM file_versions fv
 		INNER JOIN files f ON f.id = fv.file_id
-		WHERE f.owner_id = ?`, ownerID, ownerID)
+		WHERE f.owner_id = ?`, ownerID, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
