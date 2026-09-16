@@ -1,14 +1,11 @@
 import { Alert, NativeModules, Platform } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import * as ImageManipulator from "expo-image-manipulator";
-import * as VideoThumbnails from "expo-video-thumbnails";
 import { api } from "../api/client";
 import type { FileItem } from "../api/types";
 import {
   cacheFileKey,
   contentHashHex,
-  encryptFileBytes,
   prepareNewEncryptedFile,
   prepareNewFileKey,
   rawKeyToStandardBase64,
@@ -64,69 +61,6 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function isImageAsset(asset: DocumentPicker.DocumentPickerAsset): boolean {
-  const mime = (asset.mimeType || "").toLowerCase();
-  if (mime.startsWith("image/")) return true;
-  return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(asset.name || "");
-}
-
-function isVideoAsset(asset: DocumentPicker.DocumentPickerAsset): boolean {
-  const mime = (asset.mimeType || "").toLowerCase();
-  if (mime.startsWith("video/")) return true;
-  return /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(asset.name || "");
-}
-
-async function maybeUploadThumbnail(
-  fileId: string,
-  rawKey: Uint8Array,
-  asset: DocumentPicker.DocumentPickerAsset,
-): Promise<void> {
-  try {
-    let thumbUri: string | null = null;
-    if (isImageAsset(asset)) {
-      const manipulated = await ImageManipulator.manipulateAsync(
-        asset.uri,
-        [{ resize: { width: 512 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
-      );
-      thumbUri = manipulated.uri;
-    } else if (isVideoAsset(asset)) {
-      const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 0 });
-      const manipulated = await ImageManipulator.manipulateAsync(
-        uri,
-        [{ resize: { width: 512 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
-      );
-      thumbUri = manipulated.uri;
-    }
-    if (!thumbUri) return;
-
-    const b64 = await FileSystem.readAsStringAsync(thumbUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const plain = base64ToBytes(b64);
-    const { ciphertext, ivB64 } = await encryptFileBytes(plain, rawKey);
-    const dir = FileSystem.cacheDirectory;
-    if (!dir) return;
-    const encPath = `${dir}fd_thumb_${Date.now()}.bin`;
-    await FileSystem.writeAsStringAsync(encPath, bytesToBase64(ciphertext), {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    try {
-      await api.putThumbnail({
-        fileId,
-        iv: ivB64,
-        originalSize: plain.length,
-        encryptedUri: encPath,
-      });
-    } finally {
-      await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
-    }
-  } catch {
-    // Soft-fail: file upload already succeeded.
-  }
-}
-
 async function uploadOneJs(
   asset: DocumentPicker.DocumentPickerAsset,
   folderId: string | null,
@@ -156,7 +90,6 @@ async function uploadOneJs(
     });
     await api.putFileEncryptionKey(created.id, prepared.wrappedFileKey);
     await cacheFileKey(created.id, prepared.rawKey);
-    await maybeUploadThumbnail(created.id, prepared.rawKey, asset);
     return created;
   } finally {
     await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});
@@ -190,7 +123,6 @@ async function uploadOneNative(
     });
     await api.putFileEncryptionKey(created.id, wrappedFileKey);
     await cacheFileKey(created.id, rawKey);
-    await maybeUploadThumbnail(created.id, rawKey, asset);
     return created;
   } finally {
     await FileSystem.deleteAsync(encPath, { idempotent: true }).catch(() => {});

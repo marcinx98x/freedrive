@@ -465,10 +465,10 @@ const API = (() => {
         }
     }
 
-    function uploadXHR(path, formData, onProgress, method = 'POST') {
+    function uploadXHR(path, formData, onProgress) {
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open(method || 'POST', BASE + path);
+            xhr.open('POST', BASE + path);
             if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
             xhr.setRequestHeader('X-Device-ID', getDeviceID());
 
@@ -668,7 +668,6 @@ const API = (() => {
         trash: () => request('GET', '/files/trash'),
         upload: (formData, onProgress) => uploadXHR('/files/upload', formData, onProgress),
         updateContent: (id, formData, onProgress) => uploadXHR(`/files/${id}/content`, formData, onProgress),
-        putThumbnail: (id, formData) => uploadXHR(`/files/${id}/thumbnail`, formData, null, 'PUT'),
         restoreVersion: (id, version) => request('POST', `/files/${id}/versions/${version}/restore`),
     };
 

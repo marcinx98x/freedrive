@@ -45,7 +45,6 @@ func runMigrations(db *sql.DB) error {
 		{21, migrationV21, nil},
 		{22, "", migrationV22},
 		{23, migrationV23, nil},
-		{24, migrationV24, nil},
 	}
 
 	for _, m := range migrations {
@@ -681,11 +680,4 @@ CREATE TABLE IF NOT EXISTS share_item_settings (
     viewers_can_download   INTEGER NOT NULL DEFAULT 1,
     CHECK (file_id IS NOT NULL OR folder_id IS NOT NULL)
 );
-`
-
-const migrationV24 = `
-ALTER TABLE files ADD COLUMN thumbnail_blob_path TEXT NOT NULL DEFAULT '';
-ALTER TABLE files ADD COLUMN thumbnail_iv TEXT NOT NULL DEFAULT '';
-ALTER TABLE files ADD COLUMN thumbnail_size INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE files ADD COLUMN thumbnail_mime TEXT NOT NULL DEFAULT 'image/jpeg';
 `

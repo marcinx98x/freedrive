@@ -844,47 +844,6 @@ export const api = {
     });
   },
 
-  /** PUT encrypted JPEG thumbnail for a file. */
-  putThumbnail: async (opts: {
-    fileId: string;
-    iv: string;
-    originalSize: number;
-    encryptedUri: string;
-    mimeType?: string;
-  }): Promise<FileItem> => {
-    const url = await baseUrl();
-    const headers: Record<string, string> = { ...(await deviceHeaders()) };
-    const tokens = await getTokens();
-    if (tokens?.access_token) {
-      headers.Authorization = `Bearer ${tokens.access_token}`;
-    }
-    const result = await FileSystem.uploadAsync(
-      `${url}/api/v1/files/${encodeURIComponent(opts.fileId)}/thumbnail`,
-      opts.encryptedUri,
-      {
-        httpMethod: "PUT",
-        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-        fieldName: "file",
-        mimeType: "application/octet-stream",
-        parameters: {
-          iv: opts.iv,
-          mime_type: opts.mimeType || "image/jpeg",
-          original_size: String(opts.originalSize),
-        },
-        headers,
-        sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
-      },
-    );
-    if (result.status < 200 || result.status >= 300) {
-      throw new ApiError(`Thumbnail upload failed (${result.status})`, result.status);
-    }
-    try {
-      return JSON.parse(result.body) as FileItem;
-    } catch {
-      throw new ApiError("Invalid thumbnail response", result.status);
-    }
-  },
-
   getCryptoAccount: () => request<CryptoAccount>("GET", "/crypto/account"),
 
   listEncryptionKeys: async (since?: string) => {

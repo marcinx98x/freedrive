@@ -12,9 +12,6 @@ mod my_drive_shell;
 mod session;
 mod state;
 mod sync;
-mod thumb_backfill;
-mod thumb_cache;
-mod thumbnail;
 
 use state::AppState;
 use tauri::{

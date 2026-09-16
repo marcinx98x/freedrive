@@ -405,9 +405,6 @@ func (s *FolderService) PermanentDelete(ctx context.Context, folderID, ownerID s
 		}
 		// Remove main blob
 		_ = s.storage.Delete(f.BlobPath)
-		if f.ThumbnailBlobPath != "" {
-			_ = s.storage.Delete(f.ThumbnailBlobPath)
-		}
 		if err := s.fileRepo.Delete(ctx, f.ID); err != nil {
 			return err
 		}

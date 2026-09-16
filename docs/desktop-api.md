@@ -41,8 +41,6 @@ Response includes `folders` (full child-folder list on the first page only), `fi
 |--------|------|---------|
 | `POST` | `/api/v1/files/upload` | Upload new encrypted file (multipart; used when ciphertext ≤ 32 MiB) |
 | `POST` | `/api/v1/files/{id}/content` | Update file content (multipart; small payloads) |
-| `PUT` | `/api/v1/files/{id}/thumbnail` | Upload encrypted JPEG thumbnail (multipart `file` + `iv` + `original_size` + optional `mime_type`) |
-| `GET` | `/api/v1/files/{id}/thumbnail` | Download encrypted thumbnail (`X-Thumb-IV`, `X-Thumb-Mime`) |
 | `GET` | `/api/v1/files/{id}/download` | Download encrypted blob |
 
 ## Resumable uploads

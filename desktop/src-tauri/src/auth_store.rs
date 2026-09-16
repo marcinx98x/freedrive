@@ -158,10 +158,5 @@ pub fn my_drive_path(create: bool) -> AppResult<PathBuf> {
     if create {
         fs::create_dir_all(&dir)?;
     }
-    if let Some(base) = dirs::data_local_dir() {
-        let meta = base.join("FreeDrive");
-        let _ = fs::create_dir_all(&meta);
-        let _ = fs::write(meta.join("my_drive_root.txt"), dir.to_string_lossy().as_bytes());
-    }
     Ok(dir)
 }

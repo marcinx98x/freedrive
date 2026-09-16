@@ -247,10 +247,6 @@ fn start_sync_services(
         });
     }
 
-    if let Some(api) = state.api.lock().clone() {
-        crate::thumb_backfill::start_thumb_backfill(state.db.clone(), api);
-    }
-
     let _ = app.emit("sync-status-changed", engine.get_status());
     Ok(())
 }
