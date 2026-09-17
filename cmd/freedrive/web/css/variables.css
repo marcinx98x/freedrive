@@ -68,6 +68,21 @@
   --fd-key-border: #dadce0;
   --fd-key-fg: #444746;
   --fd-accent-heading: #0b57d0;
+
+  /* Soft status fills (admin metrics / activity badges) */
+  --fd-info-bg: #e8f0fe;
+  --fd-warn-bg: #fef7e0;
+  --fd-danger-bg: #fce8e6;
+  --fd-purple-bg: rgba(142, 36, 170, 0.12);
+  --fd-purple-fg: #8e24aa;
+
+  /* Admin ghost-var aliases (admin.css historically used these names) */
+  --text: var(--fd-text);
+  --card-bg: var(--fd-bg-elev);
+  --bg-primary: var(--fd-bg);
+  --bg-secondary: var(--fd-bg-soft);
+  --border-light: var(--fd-border);
+  --bg-hover: var(--hover-row);
 }
 
 /* Dark theme: remap tokens so surfaces using vars follow automatically */
@@ -114,4 +129,9 @@ body.dark-mode {
   --fd-key-border: #5f6368;
   --fd-key-fg: #e8eaed;
   --fd-accent-heading: #8ab4f8;
+  --fd-info-bg: #0d47a1;
+  --fd-warn-bg: #3c3000;
+  --fd-danger-bg: #5f2120;
+  --fd-purple-bg: rgba(233, 213, 255, 0.16);
+  --fd-purple-fg: #e9d5ff;
 }

@@ -148,7 +148,7 @@ const AdminPanel = (() => {
         const hue = ((u?.email || u?.username || '').length * 137) % 360;
         const cls = xl ? 'gd-avatar gd-avatar-xl' : 'gd-avatar';
         if (photo) {
-            return `<span class="${cls}" style="padding:0;background:#e8eaed"><img src="${esc(photo)}" alt=""></span>`;
+            return `<span class="${cls}" style="padding:0;background:var(--fd-bg-elev-2)"><img src="${esc(photo)}" alt=""></span>`;
         }
         return `<span class="${cls}" style="background-color:hsl(${hue},60%,50%)">${esc(initials(u?.username || u?.email))}</span>`;
     }
@@ -640,14 +640,14 @@ const AdminPanel = (() => {
 
 
     const AdminFileIcons = {
-        folder: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>',
+        folder: '<span class="gd-file-icon"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg></span>',
         image: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#34a853"><path d="M21 19V5c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5A1.5 1.5 0 1 1 8.5 8a1.5 1.5 0 0 1 0 3.5zM5 18l3.5-4.5 2.5 3 3.5-4.5 4.5 6H5z"/></svg>',
         video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#ea4335"><path d="M17 10.5V7c0-1.1-.9-2-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10c1.1 0 2-.9 2-2v-3.5l4 4v-11l-4 4z"/></svg>',
         audio: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#a142f4"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55a4 4 0 1 0 4 4V7h4V3h-6z"/></svg>',
         pdf: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#ea4335"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="#fff"/><path d="M8 17h1v-1h1.2a1.8 1.8 0 1 0 0-3.6H8V17zm1-2v-1.6h1.1a.8.8 0 1 1 0 1.6H9zm3 2h2.2a1.9 1.9 0 0 0 0-3.8H12V17zm1-1v-1.8h1.1a.9.9 0 1 1 0 1.8H13zm4 1h1v-1.5h1.4v-1H18v-.6h1.7v-1H17V17z" fill="#fff"/></svg>',
         sheet: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#34a853"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="#fff"/><path d="M8 11h8v2H8zm0 3h8v2H8zm0 3h5v2H8z" fill="#fff"/></svg>',
         text: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#4285f4"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="#fff"/><path d="M8 12h8v1.6H8zm0 3h8v1.6H8zm0 3h5v1.6H8z" fill="#fff"/></svg>',
-        document: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#5f6368"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="#fff"/><path d="M8 12h8v1.6H8zm0 3h8v1.6H8zm0 3h5v1.6H8z" fill="#fff"/></svg>'
+        document: '<span class="gd-file-icon"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3.5V9h5.5" fill="var(--fd-bg)"/><path d="M8 12h8v1.6H8zm0 3h8v1.6H8zm0 3h5v1.6H8z" fill="var(--fd-bg)"/></svg></span>'
     };
 
     function adminGetFileIcon(mime, name) {
@@ -665,12 +665,12 @@ const AdminPanel = (() => {
 
     function emptyFileTypeBuckets() {
         return {
-            Images: { size: 0, count: 0, color: '#1967D2' },
-            Videos: { size: 0, count: 0, color: '#188038' },
-            Documents: { size: 0, count: 0, color: '#E37400' },
-            Audio: { size: 0, count: 0, color: '#F59E0B' },
-            Archives: { size: 0, count: 0, color: '#E53935' },
-            Other: { size: 0, count: 0, color: '#5F6368' },
+            Images: { size: 0, count: 0, color: 'var(--fd-info-fg)' },
+            Videos: { size: 0, count: 0, color: 'var(--fd-success-fg)' },
+            Documents: { size: 0, count: 0, color: 'var(--fd-warn-fg)' },
+            Audio: { size: 0, count: 0, color: 'var(--fd-purple-fg)' },
+            Archives: { size: 0, count: 0, color: 'var(--fd-red)' },
+            Other: { size: 0, count: 0, color: 'var(--fd-text-muted)' },
         };
     }
 
@@ -766,7 +766,7 @@ const AdminPanel = (() => {
 
                 <div class="gd-overview-grid">
                     <div class="gd-card gd-overview-card">
-                        <div class="gd-metric-icon" style="color: #1967D2; background: #E8F0FE;">
+                        <div class="gd-metric-icon gd-metric-icon--users">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5s-3 1.34-3 3 1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.98 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
                         </div>
                         <div class="gd-metric-content">
@@ -776,18 +776,18 @@ const AdminPanel = (() => {
                         </div>
                     </div>
                     <div class="gd-card gd-overview-card">
-                        <div class="gd-metric-icon" style="color: #188038; background: #CEEAD6;">
+                        <div class="gd-metric-icon gd-metric-icon--storage">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
                         </div>
                         <div class="gd-metric-content">
                             <span class="gd-metric-label">FreeDrive storage</span>
                             <span class="gd-metric-value">${Components.formatSize(freedriveUsed)}</span>
-                            <div class="gd-mini-bar" style="margin-top:4px;"><div class="gd-mini-fill" style="width: ${storagePct}%; background:${storagePct > 80 ? '#D93025' : '#188038'};"></div></div>
+                            <div class="gd-mini-bar" style="margin-top:4px;"><div class="gd-mini-fill" style="width: ${storagePct}%; background:var(${storagePct > 80 ? '--fd-red' : '--fd-success-fg'});"></div></div>
                             <span class="gd-metric-sub">${diskFree ? `${Components.formatSize(diskFree)} free on disk` : (diskTotal ? `of ${Components.formatSize(diskTotal)} disk capacity` : 'Encrypted file data')}</span>
                         </div>
                     </div>
                     <div class="gd-card gd-overview-card">
-                        <div class="gd-metric-icon" style="color: #F8BC04; background: #FEF7E0;">
+                        <div class="gd-metric-icon gd-metric-icon--activity">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
                         </div>
                         <div class="gd-metric-content">
@@ -797,7 +797,7 @@ const AdminPanel = (() => {
                         </div>
                     </div>
                     <div class="gd-card gd-overview-card">
-                        <div class="gd-metric-icon" style="color: #D93025; background: #FCE8E6;">
+                        <div class="gd-metric-icon gd-metric-icon--alerts">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M13 2.05v2.02A8.001 8.001 0 0 1 20 12h2c0-5-3.66-9.15-8.45-9.95zM11 2.05C6.22 2.86 2.56 7 2.56 12S6.22 21.14 11 21.95v-2.02A8.001 8.001 0 0 1 4.56 12 8.001 8.001 0 0 1 11 4.07V2.05zM12 8v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
                         </div>
                         <div class="gd-metric-content">
@@ -813,20 +813,20 @@ const AdminPanel = (() => {
                         <div class="gd-card-header">
                             <div class="gd-card-title-area">
                                 <h3>Storage usage over time</h3>
-                                <p style="margin:4px 0 0;font-size:12px;color:#5f6368;font-weight:400;">Cumulative FreeDrive data from file upload dates (last 30 days)</p>
+                                <p class="gd-settings-muted" style="margin:4px 0 0;font-weight:400;">Cumulative FreeDrive data from file upload dates (last 30 days)</p>
                             </div>
                         </div>
                         <div class="admin-chart-wrap" style="height: 250px; overflow: hidden; position: relative;">
                             <svg class="admin-line-chart" viewBox="0 0 ${chartW} ${chartH}" style="width: 100%; height: 100%;">
-                                <path d="${linePath}" fill="none" stroke="#1A73E8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                                <path class="gd-chart-line" d="${linePath}" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                                 <defs>
                                     <linearGradient id="chartFade" x1="0" x2="0" y1="0" y2="1">
-                                        <stop offset="0%" stop-color="rgba(26,115,232,0.2)"/>
-                                        <stop offset="100%" stop-color="rgba(26,115,232,0)"/>
+                                        <stop offset="0%" stop-color="var(--blue)" stop-opacity="0.2"/>
+                                        <stop offset="100%" stop-color="var(--blue)" stop-opacity="0"/>
                                     </linearGradient>
                                 </defs>
                                 ${linePoints.length > 0 ? `<path d="${linePath} L ${linePoints[linePoints.length - 1].x} ${chartH - padY} L ${linePoints[0].x} ${chartH - padY} Z" fill="url(#chartFade)" opacity="0.5" />` : ''}
-                                ${linePoints.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#1A73E8" class="gd-chart-dot"><title>${esc(p.label)}: ${p.value.toFixed(2)} GB</title></circle>`).join('')}
+                                ${linePoints.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="4" class="gd-chart-dot"><title>${esc(p.label)}: ${p.value.toFixed(2)} GB</title></circle>`).join('')}
                             </svg>
                         </div>
                     </div>
@@ -896,7 +896,7 @@ const AdminPanel = (() => {
 
                 <div class="gd-users-controls">
                     <div class="gd-search-bar" style="max-width: 500px;">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="#5F6368"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="color:var(--fd-text-muted)"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
                         <input id="admin-users-search" type="text" value="${esc(state.usersSearch)}" placeholder="Search users by name or email">
                     </div>
                     
@@ -918,7 +918,7 @@ const AdminPanel = (() => {
                         <div style="display:flex; gap: 8px;">
                             <button class="gd-btn-outline" data-admin-action="bulk-suspend">Suspend</button>
                             <button class="gd-btn-outline" data-admin-action="bulk-role">Role</button>
-                            <button class="gd-btn-outline" style="color:#D93025; border-color:#FCE8E6;" data-admin-action="bulk-delete">Delete</button>
+                            <button class="gd-btn-outline gd-btn-danger-outline" data-admin-action="bulk-delete">Delete</button>
                         </div>
                     </div>
                 ` : ''}
@@ -960,10 +960,10 @@ const AdminPanel = (() => {
                                             <td>
                                                 <div class="gd-usage-cell" style="width: 120px;">
                                                     <span style="font-size:12px;">${Components.formatSize(used)} / ${Math.round(quota/(1024**3))} GB</span>
-                                                    <div class="gd-mini-bar" style="width:100%"><div class="gd-mini-fill" style="width: ${pct.toFixed(1)}%; background: ${pct > 90 ? '#D93025' : '#1A73E8'}"></div></div>
+                                                    <div class="gd-mini-bar" style="width:100%"><div class="gd-mini-fill" style="width: ${pct.toFixed(1)}%; background: var(${pct > 90 ? '--fd-red' : '--blue'})"></div></div>
                                                 </div>
                                             </td>
-                                            <td style="color:#5F6368;">${Components.formatDate(state.userMeta[u.id]?.last_active || u.updated_at || u.created_at)}</td>
+                                            <td class="gd-cell-muted">${Components.formatDate(state.userMeta[u.id]?.last_active || u.updated_at || u.created_at)}</td>
                                             <td><span class="gd-status-badge gd-status-${status}">${esc(status[0].toUpperCase() + status.slice(1))}</span></td>
                                             <td style="position:relative;">
                                                 <button class="gd-icon-btn" data-admin-action="toggle-user-menu" data-user-id="${u.id}">
@@ -976,7 +976,7 @@ const AdminPanel = (() => {
                                                     <button data-admin-action="adjust-quota" data-user-id="${u.id}">Adjust quota</button>
                                                     <button data-admin-action="toggle-suspend" data-user-id="${u.id}">${status === 'suspended' ? 'Unsuspend' : 'Suspend'}</button>
                                                     <div class="gd-menu-divider"></div>
-                                                    <button class="danger" data-admin-action="delete-user" data-user-id="${u.id}" style="color:#D93025 !important;">Delete user</button>
+                                                    <button class="danger" data-admin-action="delete-user" data-user-id="${u.id}">Delete user</button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -1063,13 +1063,13 @@ const AdminPanel = (() => {
                         </div>
                         <div class="gd-input-group">
                             <label>Authenticator app (TOTP)</label>
-                            <span style="font-size:13px;color:${totpEnabled ? '#137333' : '#5f6368'};">${totpEnabled ? 'Enabled' : 'Not enabled'} — users set this up in Security</span>
+                            <span style="font-size:13px;color:var(--fd-text-muted);">${totpEnabled ? 'Enabled' : 'Not enabled'} — users set this up in Security</span>
                         </div>
                         <div class="gd-input-group">
                             <label>Email two-factor authentication</label>
                             <label class="live-toggle" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
                                 <input type="checkbox" id="drawer-2fa" ${twofaEnabled ? 'checked' : ''} ${email2faDisabled}>
-                                <span style="font-size:13px;color:#5f6368;">${email2faHint}</span>
+                                <span class="gd-settings-muted" style="font-size:13px;">${email2faHint}</span>
                             </label>
                         </div>
                         <div style="display:flex; justify-content: flex-end;">
@@ -1183,7 +1183,7 @@ const AdminPanel = (() => {
                     <!-- Usage by User Card -->
                     <div class="gd-card">
                         <div class="gd-card-header">
-                            <div class="gd-card-icon-wrap" style="background-color: #CEEAD6; color: #188038;">
+                            <div class="gd-card-icon-wrap gd-card-icon-wrap--ok">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5s-3 1.34-3 3 1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.98 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
                             </div>
                             <div class="gd-card-title-area">
@@ -1238,7 +1238,7 @@ const AdminPanel = (() => {
                     <!-- Large Files Card -->
                     <div class="gd-card">
                         <div class="gd-card-header">
-                            <div class="gd-card-icon-wrap" style="background-color: #FCE8E6; color: #D93025;">
+                            <div class="gd-card-icon-wrap gd-card-icon-wrap--danger">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
                             </div>
                             <div class="gd-card-title-area">
@@ -1530,22 +1530,22 @@ const AdminPanel = (() => {
 
                 <div class="gd-card" style="padding:24px;margin-bottom:24px;">
                     <h3 style="margin:0 0 8px;font-size:16px;">Two-factor authentication</h3>
-                    <p style="margin:0 0 16px;color:#5f6368;font-size:14px;">Require a second factor at sign-in for every user (authenticator app or email code).</p>
+                    <p class="gd-settings-sub" style="margin:0 0 16px;">Require a second factor at sign-in for every user (authenticator app or email code).</p>
                     <label class="live-toggle" style="display:inline-flex;align-items:center;gap:10px;cursor:pointer;">
                         <input type="checkbox" data-admin-action="toggle-require-2fa" ${require2FA ? 'checked' : ''}>
-                        <span style="font-weight:500;color:#3c4043;">Require 2FA for all users</span>
+                        <span class="gd-text-emphasis">Require 2FA for all users</span>
                     </label>
                     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:18px;">
                         <button class="gd-btn-outline" data-admin-action="send-2fa-reminder">Remind users without 2FA</button>
                         <button class="gd-btn-outline" data-admin-action="rotate-keys">Record key rotation</button>
                     </div>
-                    <p style="margin:12px 0 0;font-size:12px;color:#5f6368;">Last recorded key rotation: ${esc(lastRotation)}. Full encryption key rotation is not automated yet — this only updates the timestamp.</p>
+                    <p class="gd-settings-muted" style="margin:12px 0 0;font-size:12px;">Last recorded key rotation: ${esc(lastRotation)}. Full encryption key rotation is not automated yet — this only updates the timestamp.</p>
                 </div>
 
                 <div class="gd-cards-layout">
                     <div class="gd-card" style="padding:0;">
                         <div class="gd-card-header" style="align-items:center; padding: 24px 24px 0 24px;">
-                            <div class="gd-card-icon-wrap" style="background-color: #FCE8E6; color: #D93025; width:36px; height:36px;">
+                            <div class="gd-card-icon-wrap gd-card-icon-wrap--danger" style="width:36px; height:36px;">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>
                             </div>
                             <div class="gd-card-title-area" style="flex:1;">
@@ -1559,7 +1559,7 @@ const AdminPanel = (() => {
                                     ${fails.map((f) => `
                                         <tr>
                                             <td style="padding-left:24px;">${esc(f.email_ip)}</td>
-                                            <td><span style="color:#D93025; font-weight:600;">${f.attempts}</span></td>
+                                            <td><span class="gd-text-danger">${f.attempts}</span></td>
                                             <td>${Components.formatDate(f.last_attempt)}</td>
                                             <td>
                                                 <div class="gd-toggle">
@@ -1568,7 +1568,7 @@ const AdminPanel = (() => {
                                                 </div>
                                             </td>
                                         </tr>
-                                    `).join('') || '<tr><td colspan="4" class="gd-empty-table" style="color:#188038; padding:32px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display:block; margin: 0 auto 8px;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>No suspicious activity detected recently</td></tr>'}
+                                    `).join('') || '<tr><td colspan="4" class="gd-empty-table" class="gd-cell-muted" style="color:var(--fd-success-fg); padding:32px;"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display:block; margin: 0 auto 8px;"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>No suspicious activity detected recently</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -1576,7 +1576,7 @@ const AdminPanel = (() => {
 
                     <div class="gd-card" style="padding:0;">
                         <div class="gd-card-header" style="align-items:center; padding: 24px 24px 0 24px;">
-                            <div class="gd-card-icon-wrap" style="background-color: #E8F0FE; color: #1967D2; width:36px; height:36px;">
+                            <div class="gd-card-icon-wrap gd-card-icon-wrap--info" style="width:36px; height:36px;">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
                             </div>
                             <div class="gd-card-title-area" style="flex:1;">
@@ -1596,13 +1596,13 @@ const AdminPanel = (() => {
                                                 <div style="display:flex; align-items:center; gap:8px;">
                                                     ${userAvatarHtml(u)}
                                                     ${esc(s.user)}
-                                                    ${s.is_me ? '<span style="font-size:10px; font-weight:600; padding:2px 6px; background:#CEEAD6; color:#188038; border-radius:10px;">This device</span>' : ''}
+                                                    ${s.is_me ? '<span class="fd-badge-current">This device</span>' : ''}
                                                 </div>
                                             </td>
                                             <td>${esc(s.device)}</td>
-                                            <td style="font-family:monospace; font-size:12px; color:#5F6368;">${esc(s.ip)}</td>
-                                            <td style="color:#5F6368;">${Components.formatDate(s.started)}</td>
-                                            <td style="color:#5F6368;">${Components.formatDate(s.last_active)}</td>
+                                            <td class="gd-cell-muted" style="font-family:monospace; font-size:12px;">${esc(s.ip)}</td>
+                                            <td class="gd-cell-muted">${Components.formatDate(s.started)}</td>
+                                            <td class="gd-cell-muted">${Components.formatDate(s.last_active)}</td>
                                             <td></td>
                                         </tr>
                                     `;
@@ -1620,8 +1620,8 @@ const AdminPanel = (() => {
         const g = state.settingsDraft.general;
         return `
             <div style="margin-bottom: 24px;">
-                <h3 style="font-size: 18px; color: #202124; margin: 0 0 8px 0;">Workspace Identity</h3>
-                <p style="color: #5F6368; font-size: 14px; margin: 0;">Manage your FreeDrive site name, language, and core behavior.</p>
+                <h3 class="gd-settings-title">Workspace Identity</h3>
+                <p class="gd-settings-sub">Manage your FreeDrive site name, language, and core behavior.</p>
             </div>
             <div class="settings-grid">
                 <div class="admin-form-group">
@@ -1674,8 +1674,8 @@ const AdminPanel = (() => {
         const e = state.settingsDraft.email;
         return `
             <div style="margin-bottom: 24px;">
-                <h3 style="font-size: 18px; color: #202124; margin: 0 0 8px 0;">Email Configuration</h3>
-                <p style="color: #5F6368; font-size: 14px; margin: 0;">Configure your SMTP server to allow FreeDrive to send invites and notifications.</p>
+                <h3 class="gd-settings-title">Email Configuration</h3>
+                <p class="gd-settings-sub">Configure your SMTP server to allow FreeDrive to send invites and notifications.</p>
             </div>
             <div class="settings-grid">
                 <div class="admin-form-group">
@@ -1704,25 +1704,25 @@ const AdminPanel = (() => {
                 </div>
             </div>
             
-            <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #E8EAED;">
+            <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--fd-border);">
                 <label class="live-toggle" style="display: inline-flex; align-items: center; cursor: pointer; gap: 8px;">
                     <div style="position: relative;">
                         <input type="checkbox" data-setting="email.tls" ${e.tls ? 'checked' : ''} style="width: 18px; height: 18px;">
                     </div>
-                    <span style="font-weight: 500; color: #3C4043;">Require TLS encryption (recommended)</span>
+                    <span class="gd-text-emphasis">Require TLS encryption (recommended)</span>
                 </label>
             </div>
 
-            <div style="margin-top: 24px; background: #F8F9FA; border-radius: 8px; padding: 20px; border: 1px solid #E8EAED;">
-                <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #202124;">Test Configuration</h4>
+            <div style="margin-top: 24px; background: var(--fd-bg-soft); border-radius: 8px; padding: 20px; border: 1px solid var(--fd-border);">
+                <h4 class="gd-settings-title" style="margin: 0 0 12px 0; font-size: 14px;">Test Configuration</h4>
                 <div class="chip-add-row" style="display: flex; gap: 12px;">
-                    <input class="admin-input filetype-input" style="flex: 1; max-width: 300px; background: white;" id="test-email-input" placeholder="test@domain.com">
+                    <input class="admin-input filetype-input" style="flex: 1; max-width: 300px; background: var(--fd-bg);" id="test-email-input" placeholder="test@domain.com">
                     <button class="gd-btn-primary" data-admin-action="send-test-email">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 6px;"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
                         Send Test Email
                     </button>
                 </div>
-                <div id="test-email-result" style="margin-top: 12px; font-size: 13px; display: none;"></div>
+                <div id="test-email-result" class="test-email-result" style="margin-top: 12px;"></div>
             </div>
         `;
     }
@@ -1766,7 +1766,7 @@ const AdminPanel = (() => {
         const b = state.settingsDraft.backup;
         const backups = state.backups || [];
         return `
-            <p class="settings-hint" style="margin:0 0 12px; color:#5f6368; font-size:13px;">Settings backup — exports admin settings JSON only (not database or file blobs).</p>
+            <p class="settings-hint" style="margin:0 0 12px; font-size:13px;" class="gd-settings-muted">Settings backup — exports admin settings JSON only (not database or file blobs).</p>
             <div class="backup-top-row">
                 <button class="gd-btn-primary" data-admin-action="run-backup-now">Create settings backup</button>
                 <div class="backup-progress"><span id="backup-progress-fill"></span></div>
@@ -1858,13 +1858,13 @@ const AdminPanel = (() => {
 
         return `
             <div class="gd-storage-container" style="max-width: 900px;">
-                <div class="gd-card" style="margin-bottom: 24px; display: flex; align-items: center; gap: 20px; padding: 24px; background: linear-gradient(135deg, rgba(26,115,232,0.05), rgba(124,92,252,0.05)); border-radius: 12px; border: 1px solid rgba(26,115,232,0.1);">
-                    <div class="gd-avatar" style="width: 80px; height: 80px; font-size: 32px; background: linear-gradient(135deg, #1A73E8, #7C5CFC); color: white; border: 4px solid white; box-shadow: 0 4px 12px rgba(26,115,232,0.2);">${avatarHtml}</div>
+                <div class="gd-card admin-profile-card">
+                    <div class="gd-avatar admin-profile-avatar">${avatarHtml}</div>
                     <div style="flex: 1;">
-                        <h2 style="margin: 0 0 4px 0; font-size: 24px; font-weight: 600; color: #202124;">${esc(getCurrentUser().username || 'Administrator')}</h2>
-                        <div style="display: flex; gap: 12px; color: #5F6368; font-size: 14px;">
+                        <h2 style="margin: 0 0 4px 0; font-size: 24px; font-weight: 600; color: var(--fd-text);">${esc(getCurrentUser().username || 'Administrator')}</h2>
+                        <div style="display: flex; gap: 12px; color: var(--fd-text-muted); font-size: 14px;">
                             <span style="display: flex; align-items: center; gap: 4px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>${esc(getCurrentUser().email || 'admin@freedrive.local')}</span>
-                            <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #188038;"></span> System Admin</span>
+                            <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; border-radius: 50%; background: var(--fd-success-fg);"></span> System Admin</span>
                         </div>
                     </div>
                 </div>
@@ -2878,22 +2878,14 @@ const AdminPanel = (() => {
                         
                         const resultDiv = document.getElementById('test-email-result');
                         if (resultDiv) {
-                            resultDiv.style.display = 'block';
-                            resultDiv.style.color = '#188038';
-                            resultDiv.style.backgroundColor = '#E6F4EA';
-                            resultDiv.style.padding = '8px 12px';
-                            resultDiv.style.borderRadius = '4px';
+                            resultDiv.className = 'test-email-result is-success';
                             resultDiv.innerHTML = `<strong>Success!</strong> The test email was successfully delivered to ${esc(target)}.`;
                         }
                         Components.toast(`Test email sent to ${target}`, 'success');
                     }).catch((err) => {
                         const resultDiv = document.getElementById('test-email-result');
                         if (resultDiv) {
-                            resultDiv.style.display = 'block';
-                            resultDiv.style.color = '#D93025';
-                            resultDiv.style.backgroundColor = '#FCE8E6';
-                            resultDiv.style.padding = '8px 12px';
-                            resultDiv.style.borderRadius = '4px';
+                            resultDiv.className = 'test-email-result is-error';
                             resultDiv.innerHTML = `<strong>Error:</strong> ${esc(err.message)}`;
                         }
                         Components.toast(err.message, 'error');
