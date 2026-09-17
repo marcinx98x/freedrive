@@ -328,11 +328,11 @@ const Auth = (() => {
         const loginEmail = String(document.getElementById('login-email')?.value || '').trim();
         Components.showModal(
             'Forgot password',
-            `<p style="margin:0 0 12px;color:#5f6368;font-size:14px;line-height:1.45;">
+            `<p class="fd-muted" style="margin:0 0 12px;font-size:14px;">
                 Enter the email on your FreeDrive account. If it exists, we will send a reset link (requires SMTP).
             </p>
-            <input id="forgot-email-input" type="email" autocomplete="email"
-                style="width:100%;height:48px;padding:0 14px;border-radius:8px;border:1px solid #dadce0;font-size:15px;box-sizing:border-box;"
+            <input id="forgot-email-input" class="fd-input" type="email" autocomplete="email"
+                style="height:48px;font-size:15px;"
                 value="${Components.escapeHtml(loginEmail)}" placeholder="you@example.com">`,
             [
                 { text: 'Cancel', class: 'btn-secondary' },

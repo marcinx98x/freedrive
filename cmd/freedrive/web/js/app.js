@@ -690,7 +690,7 @@ const App = (() => {
         } catch { /* ignore */ }
 
         const requiredNote = required
-            ? '<p class="fd-hint" style="margin:12px 0 0;color:#174ea6;">Your administrator requires two-factor authentication (authenticator app or email).</p>'
+            ? '<p class="fd-hint fd-status-info" style="margin:12px 0 0;">Your administrator requires two-factor authentication (authenticator app or email).</p>'
             : '';
 
         let needsRecovery = false;
@@ -714,7 +714,7 @@ const App = (() => {
             : '';
 
         const totpBody = totpEnabled
-            ? `<p class="fd-muted" style="margin:0;color:#137333;">Authenticator app is enabled${profile.totp_enrolled_at ? ` (since ${esc(new Date(profile.totp_enrolled_at).toLocaleDateString())})` : ''}.</p>
+            ? `<p class="fd-muted fd-status-ok" style="margin:0;">Authenticator app is enabled${profile.totp_enrolled_at ? ` (since ${esc(new Date(profile.totp_enrolled_at).toLocaleDateString())})` : ''}.</p>
                <button type="button" class="btn btn-secondary" id="security-totp-disable-btn" style="margin-top:12px;">Disable authenticator</button>`
             : `<p class="fd-muted" style="margin:0 0 12px;">Use Google Authenticator, Authy, or 1Password for sign-in codes. Preferred when both methods are enabled.</p>
                <button type="button" class="btn btn-primary" id="security-totp-setup-btn">Set up authenticator</button>
@@ -722,18 +722,18 @@ const App = (() => {
 
         const emailCanDisable = !(required && !totpEnabled);
         const emailBody = emailEnabled
-            ? `<p class="fd-muted" style="margin:0;color:#137333;">Email verification codes are enabled for ${esc(profile.email || 'your email')}.</p>
+            ? `<p class="fd-muted fd-status-ok" style="margin:0;">Email verification codes are enabled for ${esc(profile.email || 'your email')}.</p>
                <button type="button" class="btn btn-secondary" id="security-email-2fa-disable-btn" style="margin-top:12px;" ${emailCanDisable ? '' : 'disabled'}>Disable email codes</button>
-               ${emailCanDisable ? '' : '<p class="fd-hint" style="margin:8px 0 0;color:#174ea6;">Required by your administrator until an authenticator app is set up.</p>'}`
+               ${emailCanDisable ? '' : '<p class="fd-hint fd-status-info" style="margin:8px 0 0;">Required by your administrator until an authenticator app is set up.</p>'}`
             : `<p class="fd-muted" style="margin:0 0 12px;">Protect your account with a 6-digit code sent to ${esc(profile.email || 'your email')} each time you sign in.</p>
                <button type="button" class="btn btn-primary" id="security-email-2fa-enable-btn">Enable email codes</button>
                ${requiredNote}`;
 
         const phoneTrustedNote = phoneStatus.has_trusted_mobile
-            ? '<p class="fd-hint" style="margin:8px 0 0;color:#137333;">Trusted FreeDrive mobile app detected.</p>'
-            : '<p class="fd-hint" style="margin:8px 0 0;color:#b06000;">No trusted mobile app signed in yet. Install FreeDrive on your phone and stay signed in.</p>';
+            ? '<p class="fd-hint fd-status-ok" style="margin:8px 0 0;">Trusted FreeDrive mobile app detected.</p>'
+            : '<p class="fd-hint fd-status-warn" style="margin:8px 0 0;">No trusted mobile app signed in yet. Install FreeDrive on your phone and stay signed in.</p>';
         const phoneBody = phoneEnabled
-            ? `<p class="fd-muted" style="margin:0;color:#137333;">Phone sign-in prompts are enabled.</p>
+            ? `<p class="fd-muted fd-status-ok" style="margin:0;">Phone sign-in prompts are enabled.</p>
                ${phoneTrustedNote}
                <button type="button" class="btn btn-secondary" id="security-phone-approval-disable-btn" style="margin-top:12px;">Disable phone prompts</button>`
             : `<p class="fd-muted" style="margin:0 0 12px;">When you sign in on a new computer or browser, FreeDrive can ask your phone to approve instead of an authenticator code. Requires the FreeDrive mobile app signed in.</p>
@@ -943,7 +943,7 @@ const App = (() => {
                         icon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
                     }
                     const badge = s.current
-                        ? '<span style="display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#e6f4ea;color:#137333;font-size:11px;font-weight:600;">This device</span>'
+                        ? '<span class="fd-badge-current">This device</span>'
                         : '';
                     const revokeBtn = s.current
                         ? ''
@@ -1425,7 +1425,7 @@ const App = (() => {
 
         document.getElementById('help-shortcuts')?.addEventListener('click', () => FileManager.showShortcuts());
         document.getElementById('help-feedback')?.addEventListener('click', () => {
-            Components.showModal('Send feedback', '<p style="margin:0;color:#5f6368;font-size:14px;line-height:1.45;">Email your administrator or open an issue in the FreeDrive repository with steps to reproduce and screenshots.</p>', [{ text: 'OK', class: 'btn-primary' }]);
+            Components.showModal('Send feedback', '<p class="fd-muted" style="margin:0;font-size:14px;">Email your administrator or open an issue in the FreeDrive repository with steps to reproduce and screenshots.</p>', [{ text: 'OK', class: 'btn-primary' }]);
         });
         document.getElementById('help-center')?.addEventListener('click', () => {
             window.open('https://github.com/abdullaabdullazade/freedrive', '_blank', 'noopener');

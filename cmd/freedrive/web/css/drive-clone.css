@@ -671,12 +671,12 @@ body {
 
 .app:not(.admin-mode) .activity-top {
   position: relative;
-  background: #fff;
+  background: var(--fd-bg);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 8px 0 12px;
-  border-bottom: 1px solid #e8edf5;
+  border-bottom: 1px solid var(--fd-border);
   margin-bottom: 8px;
 }
 
@@ -684,20 +684,21 @@ body {
   margin: 0;
   font-size: 22px;
   font-weight: 600;
-  color: #202124;
+  color: var(--fd-text);
 }
 
 .app:not(.admin-mode) #activity-filter {
-  border: 1px solid #d5deea;
+  border: 1px solid var(--fd-border);
   border-radius: 999px;
   padding: 8px 12px;
-  background: #f8fbff;
+  background: var(--fd-bg-soft);
+  color: var(--fd-text);
 }
 
 .app:not(.admin-mode) #activity-list {
-  background: #fff;
+  background: var(--fd-bg-elev);
   border-radius: 16px;
-  border: 1px solid #dadce0;
+  border: 1px solid var(--fd-border);
   overflow: hidden;
   margin-top: 20px;
 }
@@ -708,7 +709,7 @@ body {
   margin: 0;
   padding: 16px 20px;
   border: none;
-  border-bottom: 1px solid #f1f3f4;
+  border-bottom: 1px solid var(--fd-border);
   border-radius: 0;
   background: transparent;
   transition: background-color 0.2s;
@@ -719,7 +720,7 @@ body {
 }
 
 .app:not(.admin-mode) .activity-item:hover {
-  background: #f8f9fa;
+  background: var(--hover-row);
 }
 
 .app:not(.admin-mode) .activity-avatar {
@@ -739,18 +740,18 @@ body {
 
 .app:not(.admin-mode) .activity-text {
   font-size: 14px;
-  color: #3c4043;
+  color: var(--fd-text-muted);
   margin-bottom: 2px;
 }
 
 .app:not(.admin-mode) .activity-text strong {
-  color: #202124;
+  color: var(--fd-text);
   font-weight: 500;
 }
 
 .app:not(.admin-mode) .activity-time {
   font-size: 12px;
-  color: #5f6368;
+  color: var(--fd-text-muted);
 }
 
 .drive-settings-modal {
@@ -1012,7 +1013,7 @@ body {
   font-family: 'Google Sans', 'Roboto', Arial, sans-serif;
   font-size: 16px;
   font-weight: 500;
-  color: #202124;
+  color: var(--fd-text);
 }
 
 .app:not(.admin-mode) .adv-search-close {
@@ -1020,12 +1021,12 @@ body {
   height: 36px;
   font-size: 22px;
   line-height: 1;
-  color: #5f6368;
+  color: var(--fd-text-muted);
   border-radius: 50%;
 }
 
 .app:not(.admin-mode) .adv-search-close:hover {
-  background: rgba(60, 64, 67, 0.08);
+  background: var(--hover-row);
 }
 
 .app:not(.admin-mode) .adv-search-body {
@@ -1049,7 +1050,7 @@ body {
 .app:not(.admin-mode) .adv-search-label {
   font-size: 14px;
   font-weight: 500;
-  color: #3c4043;
+  color: var(--fd-text-muted);
   padding-top: 10px;
   text-align: right;
 }
@@ -1064,11 +1065,11 @@ body {
 .app:not(.admin-mode) .adv-search-control {
   width: 100%;
   height: 40px;
-  border: 1px solid #dadce0;
+  border: 1px solid var(--fd-border);
   border-radius: 8px;
   padding: 0 12px;
-  background: #fff;
-  color: #202124;
+  background: var(--fd-bg);
+  color: var(--fd-text);
   font-size: 14px;
   font-family: 'Roboto', Arial, sans-serif;
   box-sizing: border-box;
@@ -1110,7 +1111,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  color: #202124;
+  color: var(--fd-text);
   cursor: pointer;
   user-select: none;
 }
@@ -2063,8 +2064,8 @@ body {
 .app:not(.admin-mode) .details-preview {
   height: 148px !important;
   border-radius: 12px !important;
-  border: 1px solid #e0e3e7 !important;
-  background: #f7f9fc !important;
+  border: 1px solid var(--fd-border) !important;
+  background: var(--fd-bg-soft) !important;
 }
 
 .app:not(.admin-mode) #details-properties .details-preview-container {
@@ -2073,9 +2074,9 @@ body {
 
 .app:not(.admin-mode) .m3-details-access {
   margin: 0 10px 12px !important;
-  border: 1px solid #e0e3e7 !important;
+  border: 1px solid var(--fd-border) !important;
   border-radius: 12px !important;
-  background: #fbfcff !important;
+  background: var(--fd-bg-soft) !important;
 }
 
 .app:not(.admin-mode) #details-properties-body {
@@ -2085,9 +2086,9 @@ body {
 .app:not(.admin-mode) .m3-manage-access-btn {
   height: 34px !important;
   border-radius: 999px !important;
-  border: 1px solid #c6dafc !important;
-  color: #1a73e8 !important;
-  background: #ecf3fe !important;
+  border: 1px solid var(--fd-border) !important;
+  color: var(--blue) !important;
+  background: var(--fd-accent-soft) !important;
 }
 
 .app:not(.admin-mode) .m3-details-tabs .tab-btn {
@@ -2096,13 +2097,13 @@ body {
 }
 
 .app:not(.admin-mode) .property-item {
-  border-bottom: 1px solid #f1f3f6 !important;
+  border-bottom: 1px solid var(--fd-border) !important;
   padding-left: 12px !important;
   padding-right: 12px !important;
 }
 
 .app:not(.admin-mode) .details-versions-btn {
-  color: #5f6368 !important;
+  color: var(--fd-text-muted) !important;
 }
 
 .app:not(.admin-mode) .details-versions-btn:hover {
@@ -2250,10 +2251,12 @@ body {
   left: 0;
   right: 0;
   z-index: 55;
-  background: #fff;
+  background: var(--fd-bg-elev);
+  border: 1px solid var(--fd-border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(32, 33, 36, 0.28);
+  box-shadow: var(--fd-shadow);
   text-align: left;
+  color: var(--fd-text);
 }
 
 .app:not(.admin-mode) .search-live-dropdown.hidden {
@@ -2272,7 +2275,7 @@ body {
   font-size: 22px;
   line-height: 28px;
   font-weight: 400;
-  color: #202124;
+  color: var(--fd-text);
   margin: 0 0 16px;
 }
 
@@ -2421,9 +2424,10 @@ body {
   max-height: 320px;
   overflow-y: auto;
   padding: 6px 0;
-  background: #fff;
+  background: var(--fd-bg-elev);
+  border: 1px solid var(--fd-border);
   border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--fd-shadow);
 }
 
 .app:not(.admin-mode) .gd-chip-menu.hidden {
@@ -2438,13 +2442,13 @@ body {
   background: transparent;
   text-align: left;
   font-size: 14px;
-  color: #202124;
+  color: var(--fd-text);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .app:not(.admin-mode) .gd-chip-option:hover {
-  background: #f1f3f4;
+  background: var(--hover-row);
 }
 
 /* Live search dropdown */
@@ -3112,8 +3116,8 @@ body {
 .settings-history-list li {
   padding: 6px 0;
   font-size: 13px;
-  color: #3c4043;
-  border-bottom: 1px solid #f1f3f4;
+  color: var(--fd-text-muted);
+  border-bottom: 1px solid var(--fd-border);
 }
 
 .settings-shortcuts.shortcuts-grid {
@@ -3464,29 +3468,9 @@ body.dark-mode .settings-pane textarea,
 body.dark-mode .drive-settings-field input,
 body.dark-mode .drive-settings-field select,
 body.dark-mode .drive-settings-confirm-btn {
-  background: #3c4043 !important;
-  color: #e8eaed !important;
-  border-color: #5f6368 !important;
-}
-
-body.dark-mode .settings-pane [style*="background:#fff"],
-body.dark-mode .settings-pane [style*="background: #fff"],
-body.dark-mode .settings-pane [style*="background:#f1f3f4"],
-body.dark-mode .settings-pane [style*="background:#f9fbff"] {
-  background: #292a2d !important;
-  color: #e8eaed !important;
-  border-color: #5f6368 !important;
-}
-
-body.dark-mode .settings-pane [style*="color:#202124"],
-body.dark-mode .settings-pane [style*="color:#1f1f1f"] {
-  color: #e8eaed !important;
-}
-
-body.dark-mode .settings-pane [style*="color:#5f6368"],
-body.dark-mode .settings-pane [style*="color:#3c4043"],
-body.dark-mode .settings-pane [style*="color:#444746"] {
-  color: #9aa0a6 !important;
+  background: var(--fd-bg-elev-2) !important;
+  color: var(--fd-text) !important;
+  border-color: var(--fd-border) !important;
 }
 
 /* Google-style share dialog */

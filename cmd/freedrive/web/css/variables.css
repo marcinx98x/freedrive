@@ -58,6 +58,16 @@
   --fd-grid-tile-min: 200px;
   --fd-grid-tile-max: 250px;
   --fd-topbar-h: var(--topbar-h);
+
+  /* Semantic status / shortcuts */
+  --fd-success-bg: #e6f4ea;
+  --fd-success-fg: #137333;
+  --fd-info-fg: #174ea6;
+  --fd-warn-fg: #b06000;
+  --fd-key-bg: #fff;
+  --fd-key-border: #dadce0;
+  --fd-key-fg: #444746;
+  --fd-accent-heading: #0b57d0;
 }
 
 /* Dark theme: remap tokens so surfaces using vars follow automatically */
@@ -96,4 +106,12 @@ body.dark-mode {
   --fd-shadow-sm: 0 1px 2px rgba(0,0,0,.4),0 1px 3px 1px rgba(0,0,0,.2);
   --fd-shadow: 0 1px 3px rgba(0,0,0,.4),0 4px 8px 3px rgba(0,0,0,.25);
   --fd-shadow-lg: 0 6px 10px 4px rgba(0,0,0,.3),0 2px 3px rgba(0,0,0,.4);
+  --fd-success-bg: #0d3b1e;
+  --fd-success-fg: #81c995;
+  --fd-info-fg: #8ab4f8;
+  --fd-warn-fg: #fdd663;
+  --fd-key-bg: #3c4043;
+  --fd-key-border: #5f6368;
+  --fd-key-fg: #e8eaed;
+  --fd-accent-heading: #8ab4f8;
 }

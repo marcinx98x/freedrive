@@ -690,7 +690,7 @@ const FileManager = (() => {
     const SHARED_BADGE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18 16.08a2.9 2.9 0 0 0-1.96.77L8.91 12.7a2.9 2.9 0 0 0 0-1.39l7.05-4.11A2.99 2.99 0 1 0 15 5a2.9 2.9 0 0 0 .09.7L8.04 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.96 2.96 0 1 0 2.88-2.27z"/></svg>';
 
     function renderSharedBadge() {
-        return `<span class="file-shared-badge" title="Shared" style="display:inline-flex;align-items:center;margin-left:4px;color:#5f6368;vertical-align:middle;">${SHARED_BADGE_SVG}</span>`;
+        return `<span class="file-shared-badge" title="Shared" style="display:inline-flex;align-items:center;margin-left:4px;color:var(--fd-text-muted);vertical-align:middle;">${SHARED_BADGE_SVG}</span>`;
     }
 
     function renderOwnerCell(item, options = {}) {
@@ -4482,7 +4482,7 @@ const FileManager = (() => {
 
         let html = `<div class="details-section-title">Activity</div>`;
         if (!list.length) {
-            html += `<div style="padding:16px;color:#5f6368;font-size:13px;font-family:'Roboto',Arial,sans-serif;">No local activity yet.</div>`;
+            html += `<div class="fd-muted" style="padding:16px;font-size:13px;font-family:'Roboto',Arial,sans-serif;">No local activity yet.</div>`;
         } else {
             html += list.map((a) => `
                 <div class="activity-item">
@@ -4502,12 +4502,12 @@ const FileManager = (() => {
                 const res = await API.comments.list(data.id);
                 comments = res.comments || [];
                 if (!comments.length) {
-                    html += `<div style="padding:8px 16px;color:#5f6368;font-size:13px;">No comments yet.</div>`;
+                    html += `<div class="fd-muted" style="padding:8px 16px;font-size:13px;">No comments yet.</div>`;
                 } else {
                     html += comments.map((c) => {
                         const canDelete = me && (c.user_id === me.id || canWriteFileItem(data));
                         const assigneeBadge = c.assigned_to_username || c.assigned_to
-                            ? `<span style="font-size:11px;color:#5f6368;margin-left:6px;">→ ${esc(c.assigned_to_username || lookupUserLabel(c.assigned_to))}</span>`
+                            ? `<span class="fd-muted" style="font-size:11px;margin-left:6px;">→ ${esc(c.assigned_to_username || lookupUserLabel(c.assigned_to))}</span>`
                             : '';
                         return `
                         <div class="activity-item" data-comment-id="${esc(c.id)}">
@@ -4527,7 +4527,7 @@ const FileManager = (() => {
                         <button class="btn btn-primary btn-sm" id="detail-comment-submit" style="margin-top:8px;">Comment</button>
                     </div>`;
             } catch {
-                html += `<div style="padding:8px 16px;color:#5f6368;font-size:13px;">Comments unavailable.</div>`;
+                html += `<div class="fd-muted" style="padding:8px 16px;font-size:13px;">Comments unavailable.</div>`;
             }
 
             try {
@@ -4538,7 +4538,7 @@ const FileManager = (() => {
 
                 html += `<div class="details-section-title" style="margin-top:16px;">Approvals</div>`;
                 if (!fileApprovals.length) {
-                    html += `<div style="padding:8px 16px;color:#5f6368;font-size:13px;">No approval requests yet.</div>`;
+                    html += `<div class="fd-muted" style="padding:8px 16px;font-size:13px;">No approval requests yet.</div>`;
                 } else {
                     fileApprovals.forEach((a) => {
                         const status = String(a.status || 'pending').toLowerCase();

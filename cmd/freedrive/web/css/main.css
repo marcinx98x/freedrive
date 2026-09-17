@@ -1229,11 +1229,13 @@ svg.fd-folder-icon path {
   bottom: 16px;
   right: 16px;
   width: 340px;
-  background: #fff;
+  background: var(--fd-bg-elev);
+  border: 1px solid var(--fd-border);
   border-radius: 8px;
   box-shadow: var(--fd-shadow-lg);
   z-index: 600;
   overflow: hidden;
+  color: var(--fd-text);
 }
 .upload-progress-header {
   display: flex;
@@ -1537,7 +1539,7 @@ svg.fd-folder-icon path {
 .gd-suggested-file-card:hover { box-shadow: var(--fd-shadow); }
 .gd-suggested-file-preview {
   height: 80px;
-  background: #f1f3f4;
+  background: var(--fd-bg-elev-2);
   border-radius: 4px;
   display: flex;
   align-items: center;

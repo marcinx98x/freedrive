@@ -63,11 +63,11 @@
 }
 
 .file-row:hover {
-  background: #f1f3f4 !important;
+  background: var(--hover-row) !important;
 }
 
 .file-row.selected {
-  background: #e8f0fe !important;
+  background: var(--selected-row) !important;
 }
 
 /* =====================================================
@@ -192,7 +192,7 @@
 }
 
 .btn-icon:hover {
-  background: #f1f3f4 !important;
+  background: var(--hover-row) !important;
 }
 
 .btn-icon:active {
