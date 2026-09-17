@@ -412,12 +412,12 @@ var CryptoSync = window.CryptoSync = (() => {
         return new Promise((resolve) => {
             Components.showModal(
                 'Save your recovery code',
-                `<p style="margin:0 0 12px;font-size:14px;color:#5f6368;line-height:1.45;">
+                `<p class="fd-muted" style="margin:0 0 12px;font-size:14px;">
                     Store this code in a safe place. You will need it only if you reset your password
                     without knowing the old one.
                 </p>
-                <div style="font-family:monospace;font-size:15px;padding:12px;border-radius:8px;background:#f1f3f4;word-break:break-all;">${Components.escapeHtml(recoveryCode)}</div>
-                <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:#3c4043;">
+                <div class="fd-code-block" style="font-size:15px;padding:12px;">${Components.escapeHtml(recoveryCode)}</div>
+                <label class="fd-muted" style="display:flex;align-items:center;gap:8px;margin-top:12px;">
                     <input type="checkbox" id="crypto-recovery-saved">
                     I saved this recovery code
                 </label>`,

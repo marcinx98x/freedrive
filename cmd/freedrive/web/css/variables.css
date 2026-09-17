@@ -2,8 +2,8 @@
   --blue: #1a73e8;
   --blue-hover: #1557b0;
   --blue-light: #e8f0fe;
-  --active-nav-bg: var(--blue-light);
-  --active-nav-text: #1a73e8;
+  --active-nav-bg: #c2e7ff;
+  --active-nav-text: #001d35;
   --hover-row: #f0f4f9;
   --selected-row: rgba(66, 133, 244, 0.1);
   --border: #e0e0e0;
@@ -14,6 +14,23 @@
   --red: #d93025;
   --green: #34a853;
   --yellow: #f9ab00;
+
+  /* Selection bar (Drive cyan pill) */
+  --selection-bar-bg: #c2e7ff;
+  --selection-bar-fg: #001d35;
+
+  /* Storage page accents */
+  --storage-card-border: #d8e2f7;
+  --storage-card-bg: linear-gradient(135deg, #ffffff 0%, #f7faff 100%);
+  --storage-ring-track: #e5edff;
+  --storage-ring-hole: #fff;
+  --storage-stat-bg: #f6f9ff;
+  --storage-stat-border: #d2e3fc;
+  --storage-break-border: #e3ebfb;
+  --home-warning-bg: #fef9c3;
+  --home-warning-border: #fde047;
+  --trash-banner-bg: var(--blue-light);
+  --trash-banner-fg: #3c4043;
 
   /* fd-* aliases for JS-generated HTML */
   --fd-accent: var(--blue);
@@ -41,4 +58,42 @@
   --fd-grid-tile-min: 200px;
   --fd-grid-tile-max: 250px;
   --fd-topbar-h: var(--topbar-h);
+}
+
+/* Dark theme: remap tokens so surfaces using vars follow automatically */
+html.dark-mode,
+body.dark-mode {
+  color-scheme: dark;
+  --blue-light: #004a77;
+  --active-nav-bg: #004a77;
+  --active-nav-text: #e8eaed;
+  --hover-row: #3c4043;
+  --selected-row: rgba(138, 180, 248, 0.16);
+  --border: #5f6368;
+  --gray-text: #9aa0a6;
+  --dark-text: #e8eaed;
+  --selection-bar-bg: #004a77;
+  --selection-bar-fg: #e8eaed;
+  --storage-card-border: #5f6368;
+  --storage-card-bg: #292a2d;
+  --storage-ring-track: #3c4043;
+  --storage-ring-hole: #202124;
+  --storage-stat-bg: #3c4043;
+  --storage-stat-border: #5f6368;
+  --storage-break-border: #5f6368;
+  --home-warning-bg: #3c3000;
+  --home-warning-border: #8a7000;
+  --trash-banner-bg: #004a77;
+  --trash-banner-fg: #e8eaed;
+  --fd-accent-soft: #004a77;
+  --fd-bg: #202124;
+  --fd-bg-soft: #292a2d;
+  --fd-bg-elev: #292a2d;
+  --fd-bg-elev-2: #3c4043;
+  --fd-border: #5f6368;
+  --fd-text: #e8eaed;
+  --fd-text-muted: #9aa0a6;
+  --fd-shadow-sm: 0 1px 2px rgba(0,0,0,.4),0 1px 3px 1px rgba(0,0,0,.2);
+  --fd-shadow: 0 1px 3px rgba(0,0,0,.4),0 4px 8px 3px rgba(0,0,0,.25);
+  --fd-shadow-lg: 0 6px 10px 4px rgba(0,0,0,.3),0 2px 3px rgba(0,0,0,.4);
 }

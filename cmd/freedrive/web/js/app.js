@@ -274,8 +274,10 @@ const App = (() => {
         const t = theme || 'system';
         const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         const dark = t === 'dark' || (t === 'system' && prefersDark);
-        document.body.classList.toggle('dark-mode', dark);
-        document.body.dataset.fdTheme = t;
+        document.documentElement.classList.toggle('dark-mode', dark);
+        document.body?.classList.toggle('dark-mode', dark);
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        if (document.body) document.body.dataset.fdTheme = t;
     }
 
     function applyUserPrefs(prefs) {
@@ -284,6 +286,15 @@ const App = (() => {
         document.body.classList.remove('fd-density-cosy', 'fd-density-compact');
         if (p.density === 'cosy') document.body.classList.add('fd-density-cosy');
         if (p.density === 'compact') document.body.classList.add('fd-density-compact');
+    }
+
+    let themeMediaBound = false;
+    function bindThemeMediaListener() {
+        if (themeMediaBound) return;
+        themeMediaBound = true;
+        window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', () => {
+            if ((getUserPrefs().theme || 'system') === 'system') applyUserPrefs();
+        });
     }
 
     let settingsRenderGen = 0;
@@ -498,7 +509,7 @@ const App = (() => {
         if (gen !== settingsRenderGen) return;
 
         const pendingBanner = pendingStatus.pending
-            ? `<div id="settings-email-pending" style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#e8f0fe;color:#174ea6;font-size:13px;line-height:1.45;">
+            ? `<div id="settings-email-pending" class="fd-banner fd-banner-info">
                 Check your inbox at <strong>${esc(pendingStatus.new_email_masked || 'your new address')}</strong>.
                 The confirmation link expires ${esc(formatEmailExpiry(pendingStatus.expires_at))}.
             </div>`
@@ -521,21 +532,21 @@ const App = (() => {
                 </div>
                 <div style="display:flex;flex-direction:column;gap:16px;">
                     <label class="drive-settings-field drive-settings-field-full">
-                        <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">First name</span>
-                        <input id="settings-first-name" type="text" value="${esc(firstName)}" placeholder="First name" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
+                        <span class="fd-label">First name</span>
+                        <input id="settings-first-name" class="fd-input" type="text" value="${esc(firstName)}" placeholder="First name">
                     </label>
                     <label class="drive-settings-field drive-settings-field-full">
-                        <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Last name</span>
-                        <input id="settings-last-name" type="text" value="${esc(lastName)}" placeholder="Last name" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
+                        <span class="fd-label">Last name</span>
+                        <input id="settings-last-name" class="fd-input" type="text" value="${esc(lastName)}" placeholder="Last name">
                     </label>
                     <label class="drive-settings-field drive-settings-field-full">
-                        <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Email</span>
-                        <input id="settings-email" type="email" value="${esc(user.email || '')}" placeholder="Email" autocomplete="email" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
-                        <span style="display:block;margin-top:6px;font-size:12px;color:#5f6368;">Confirmation link will be sent to the new address.</span>
+                        <span class="fd-label">Email</span>
+                        <input id="settings-email" class="fd-input" type="email" value="${esc(user.email || '')}" placeholder="Email" autocomplete="email">
+                        <span class="fd-hint">Confirmation link will be sent to the new address.</span>
                     </label>
                     <label class="drive-settings-field drive-settings-field-full hidden" id="settings-email-password-wrap">
-                        <span style="font-size:13px;font-weight:500;color:#5f6368;display:block;margin-bottom:6px;">Current password</span>
-                        <input id="settings-email-password" type="password" placeholder="Required to change email" autocomplete="current-password" style="width:100%;height:36px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;font-size:14px;background:#fff;">
+                        <span class="fd-label">Current password</span>
+                        <input id="settings-email-password" class="fd-input" type="password" placeholder="Required to change email" autocomplete="current-password">
                     </label>
                     <button type="button" class="btn btn-secondary drive-settings-confirm-btn" id="settings-send-email-confirm">Confirm</button>
                     ${pendingBanner}
@@ -679,7 +690,7 @@ const App = (() => {
         } catch { /* ignore */ }
 
         const requiredNote = required
-            ? '<p style="margin:12px 0 0;font-size:12px;color:#174ea6;line-height:1.45;">Your administrator requires two-factor authentication (authenticator app or email).</p>'
+            ? '<p class="fd-hint" style="margin:12px 0 0;color:#174ea6;">Your administrator requires two-factor authentication (authenticator app or email).</p>'
             : '';
 
         let needsRecovery = false;
@@ -689,14 +700,13 @@ const App = (() => {
             } catch { /* ignore */ }
         }
         const recoveryBanner = needsRecovery
-            ? `<div id="security-crypto-recovery-banner" style="margin-bottom:12px;padding:12px 14px;border-radius:8px;background:#fce8e6;color:#c5221f;font-size:13px;line-height:1.45;">
+            ? `<div id="security-crypto-recovery-banner" class="fd-banner fd-banner-danger" style="margin-bottom:12px;margin-top:0;">
                 Server lost encryption account data, but encrypted file keys are still on the server. Enter your recovery code below to restore access.
             </div>`
             : '';
         const recoverySection = needsRecovery
             ? `<div id="security-crypto-recovery-section" style="margin-bottom:12px;">
-                <input id="security-crypto-recovery-input" type="text" placeholder="xxxx-xxxx-..."
-                    style="width:100%;height:40px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
+                <input id="security-crypto-recovery-input" class="fd-input" type="text" placeholder="xxxx-xxxx-..." style="height:40px;">
                 <button type="button" class="btn btn-secondary" id="security-crypto-recovery-restore-btn" style="margin-top:8px;">
                     Restore encryption
                 </button>
@@ -704,29 +714,29 @@ const App = (() => {
             : '';
 
         const totpBody = totpEnabled
-            ? `<p style="margin:0;font-size:13px;color:#137333;line-height:1.45;">Authenticator app is enabled${profile.totp_enrolled_at ? ` (since ${esc(new Date(profile.totp_enrolled_at).toLocaleDateString())})` : ''}.</p>
+            ? `<p class="fd-muted" style="margin:0;color:#137333;">Authenticator app is enabled${profile.totp_enrolled_at ? ` (since ${esc(new Date(profile.totp_enrolled_at).toLocaleDateString())})` : ''}.</p>
                <button type="button" class="btn btn-secondary" id="security-totp-disable-btn" style="margin-top:12px;">Disable authenticator</button>`
-            : `<p style="margin:0 0 12px;font-size:13px;color:#5f6368;line-height:1.45;">Use Google Authenticator, Authy, or 1Password for sign-in codes. Preferred when both methods are enabled.</p>
+            : `<p class="fd-muted" style="margin:0 0 12px;">Use Google Authenticator, Authy, or 1Password for sign-in codes. Preferred when both methods are enabled.</p>
                <button type="button" class="btn btn-primary" id="security-totp-setup-btn">Set up authenticator</button>
                <div id="security-totp-setup-panel" class="hidden" style="margin-top:14px;"></div>`;
 
         const emailCanDisable = !(required && !totpEnabled);
         const emailBody = emailEnabled
-            ? `<p style="margin:0;font-size:13px;color:#137333;line-height:1.45;">Email verification codes are enabled for ${esc(profile.email || 'your email')}.</p>
+            ? `<p class="fd-muted" style="margin:0;color:#137333;">Email verification codes are enabled for ${esc(profile.email || 'your email')}.</p>
                <button type="button" class="btn btn-secondary" id="security-email-2fa-disable-btn" style="margin-top:12px;" ${emailCanDisable ? '' : 'disabled'}>Disable email codes</button>
-               ${emailCanDisable ? '' : '<p style="margin:8px 0 0;font-size:12px;color:#174ea6;line-height:1.45;">Required by your administrator until an authenticator app is set up.</p>'}`
-            : `<p style="margin:0 0 12px;font-size:13px;color:#5f6368;line-height:1.45;">Protect your account with a 6-digit code sent to ${esc(profile.email || 'your email')} each time you sign in.</p>
+               ${emailCanDisable ? '' : '<p class="fd-hint" style="margin:8px 0 0;color:#174ea6;">Required by your administrator until an authenticator app is set up.</p>'}`
+            : `<p class="fd-muted" style="margin:0 0 12px;">Protect your account with a 6-digit code sent to ${esc(profile.email || 'your email')} each time you sign in.</p>
                <button type="button" class="btn btn-primary" id="security-email-2fa-enable-btn">Enable email codes</button>
                ${requiredNote}`;
 
         const phoneTrustedNote = phoneStatus.has_trusted_mobile
-            ? '<p style="margin:8px 0 0;font-size:12px;color:#137333;line-height:1.45;">Trusted FreeDrive mobile app detected.</p>'
-            : '<p style="margin:8px 0 0;font-size:12px;color:#b06000;line-height:1.45;">No trusted mobile app signed in yet. Install FreeDrive on your phone and stay signed in.</p>';
+            ? '<p class="fd-hint" style="margin:8px 0 0;color:#137333;">Trusted FreeDrive mobile app detected.</p>'
+            : '<p class="fd-hint" style="margin:8px 0 0;color:#b06000;">No trusted mobile app signed in yet. Install FreeDrive on your phone and stay signed in.</p>';
         const phoneBody = phoneEnabled
-            ? `<p style="margin:0;font-size:13px;color:#137333;line-height:1.45;">Phone sign-in prompts are enabled.</p>
+            ? `<p class="fd-muted" style="margin:0;color:#137333;">Phone sign-in prompts are enabled.</p>
                ${phoneTrustedNote}
                <button type="button" class="btn btn-secondary" id="security-phone-approval-disable-btn" style="margin-top:12px;">Disable phone prompts</button>`
-            : `<p style="margin:0 0 12px;font-size:13px;color:#5f6368;line-height:1.45;">When you sign in on a new computer or browser, FreeDrive can ask your phone to approve instead of an authenticator code. Requires the FreeDrive mobile app signed in.</p>
+            : `<p class="fd-muted" style="margin:0 0 12px;">When you sign in on a new computer or browser, FreeDrive can ask your phone to approve instead of an authenticator code. Requires the FreeDrive mobile app signed in.</p>
                <button type="button" class="btn btn-primary" id="security-phone-approval-enable-btn">Enable phone prompts</button>
                ${phoneTrustedNote}`;
 
@@ -735,51 +745,51 @@ const App = (() => {
         if (!pane) return;
         pane.innerHTML = `
             <div class="drive-settings-modal" style="padding:8px 0;display:flex;flex-direction:column;gap:16px;">
-                <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
-                    <div style="font-size:15px;font-weight:600;color:#202124;margin-bottom:4px;">Authenticator app</div>
-                    <div style="font-size:13px;color:#5f6368;line-height:1.45;margin-bottom:12px;">Protect your account with a time-based code from an authenticator app.</div>
+                <div class="fd-card">
+                    <div class="fd-card-title">Authenticator app</div>
+                    <div class="fd-card-desc">Protect your account with a time-based code from an authenticator app.</div>
                     ${totpBody}
                 </div>
-                <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
-                    <div style="font-size:15px;font-weight:600;color:#202124;margin-bottom:4px;">Email two-factor authentication</div>
-                    <div style="font-size:13px;color:#5f6368;line-height:1.45;margin-bottom:12px;">Protect your account with a verification code sent by email.</div>
+                <div class="fd-card">
+                    <div class="fd-card-title">Email two-factor authentication</div>
+                    <div class="fd-card-desc">Protect your account with a verification code sent by email.</div>
                     ${emailBody}
                 </div>
-                <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
-                    <div style="font-size:15px;font-weight:600;color:#202124;margin-bottom:4px;">Phone sign-in prompts</div>
-                    <div style="font-size:13px;color:#5f6368;line-height:1.45;margin-bottom:12px;">Approve sign-ins from your phone, like Google Prompt.</div>
+                <div class="fd-card">
+                    <div class="fd-card-title">Phone sign-in prompts</div>
+                    <div class="fd-card-desc">Approve sign-ins from your phone, like Google Prompt.</div>
                     ${phoneBody}
                 </div>
-                <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
+                <div class="fd-card">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
-                        <div style="font-size:15px;font-weight:600;color:#202124;">Devices</div>
+                        <div class="fd-card-title" style="margin:0;">Devices</div>
                         <button type="button" class="btn btn-secondary" id="security-revoke-others-btn" style="font-size:12px;height:32px;">
                             Sign out other devices
                         </button>
                     </div>
-                    <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
+                    <p class="fd-hint" style="margin:0 0 12px;">
                         Devices currently signed in to your account. Signing out a device forces it to log in again.
                     </p>
                     <div id="security-sessions-list" style="display:flex;flex-direction:column;gap:8px;">
-                        <div style="font-size:13px;color:#5f6368;">Loading devices…</div>
+                        <div class="fd-muted">Loading devices…</div>
                     </div>
                 </div>
-                <div style="border:1px solid #e8eaed;border-radius:12px;padding:16px 18px;background:#fff;">
-                    <div style="font-size:15px;font-weight:600;color:#202124;margin-bottom:8px;">Encryption</div>
+                <div class="fd-card">
+                    <div class="fd-card-title" style="margin-bottom:8px;">Encryption</div>
                     ${recoveryBanner}
-                    <p style="margin:0 0 8px;font-size:12px;color:#5f6368;line-height:1.45;">
+                    <p class="fd-hint" style="margin:0 0 8px;">
                         Status: <strong id="security-crypto-status">${window.CryptoSync?.isUnlocked?.() ? 'Active' : 'Inactive'}</strong>
                         — encryption unlocks automatically when you sign in. Keys sync across your devices.
                     </p>
                     ${recoverySection}
-                    <details style="font-size:13px;color:#5f6368;margin-bottom:12px;">
+                    <details class="fd-muted" style="margin-bottom:12px;">
                         <summary style="cursor:pointer;">Advanced: rotate encryption key</summary>
                         <button type="button" class="btn btn-secondary" id="security-crypto-rotate-btn" style="margin-top:8px;">
                             Rotate encryption key
                         </button>
                     </details>
-                    <div style="font-size:13px;font-weight:500;color:#5f6368;margin-bottom:6px;">Manual backup (optional)</div>
-                    <p style="margin:0 0 12px;font-size:12px;color:#5f6368;line-height:1.45;">
+                    <div class="fd-label">Manual backup (optional)</div>
+                    <p class="fd-hint" style="margin:0 0 12px;">
                         Export/import below only if you need to move keys manually between browsers.
                     </p>
                     <div style="display:flex;flex-wrap:wrap;gap:8px;">
@@ -823,9 +833,9 @@ const App = (() => {
         document.getElementById('security-phone-approval-disable-btn')?.addEventListener('click', () => setPhoneApproval(false));
 
         const showBackupCodes = (codes) => {
-            const list = (codes || []).map((c) => `<code style="display:inline-block;margin:2px 6px 2px 0;padding:4px 8px;background:#f1f3f4;border-radius:6px;">${esc(c)}</code>`).join('');
+            const list = (codes || []).map((c) => `<code class="fd-code-block" style="display:inline-block;margin:2px 6px 2px 0;padding:4px 8px;">${esc(c)}</code>`).join('');
             Components.showModal('Backup codes', `
-                <p style="margin:0 0 12px;font-size:13px;color:#5f6368;line-height:1.45;">
+                <p class="fd-muted" style="margin:0 0 12px;">
                     Save these one-time backup codes somewhere safe. Each code can be used once if you lose access to your authenticator.
                 </p>
                 <div style="line-height:1.8;">${list || 'No codes returned.'}</div>
@@ -842,12 +852,11 @@ const App = (() => {
                 panel.classList.remove('hidden');
                 panel.innerHTML = `
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;">
-                        <img src="${esc(setup.qr)}" alt="Authenticator QR code" width="160" height="160" style="border:1px solid #e8eaed;border-radius:8px;">
+                        <img src="${esc(setup.qr)}" alt="Authenticator QR code" width="160" height="160" style="border:1px solid var(--fd-border);border-radius:8px;">
                         <div style="flex:1;min-width:180px;">
-                            <p style="margin:0 0 8px;font-size:13px;color:#5f6368;line-height:1.45;">Scan this QR code, or enter the secret manually:</p>
-                            <code style="display:block;word-break:break-all;padding:8px 10px;background:#f1f3f4;border-radius:8px;font-size:12px;">${esc(setup.secret)}</code>
-                            <input id="security-totp-confirm-code" type="text" inputmode="numeric" maxlength="8" placeholder="6-digit code"
-                                style="width:100%;height:40px;margin-top:12px;border-radius:8px;border:1px solid #dadce0;padding:0 12px;">
+                            <p class="fd-muted" style="margin:0 0 8px;">Scan this QR code, or enter the secret manually:</p>
+                            <code class="fd-code-block" style="display:block;">${esc(setup.secret)}</code>
+                            <input id="security-totp-confirm-code" class="fd-input" type="text" inputmode="numeric" maxlength="8" placeholder="6-digit code" style="height:40px;margin-top:12px;">
                             <button type="button" class="btn btn-primary" id="security-totp-confirm-btn" style="margin-top:8px;">Confirm</button>
                         </div>
                     </div>`;
@@ -912,12 +921,12 @@ const App = (() => {
 
         const renderSessions = async () => {
             if (!sessionsListEl) return;
-            sessionsListEl.innerHTML = '<div style="font-size:13px;color:#5f6368;">Loading devices…</div>';
+            sessionsListEl.innerHTML = '<div class="fd-muted">Loading devices…</div>';
             try {
                 const data = await API.auth.getSessions();
                 const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
                 if (!sessions.length) {
-                    sessionsListEl.innerHTML = '<div style="font-size:13px;color:#5f6368;">No active devices.</div>';
+                    sessionsListEl.innerHTML = '<div class="fd-muted">No active devices.</div>';
                     return;
                 }
                 sessionsListEl.innerHTML = sessions.map((s) => {
@@ -939,12 +948,12 @@ const App = (() => {
                     const revokeBtn = s.current
                         ? ''
                         : `<button type="button" class="btn btn-secondary security-revoke-session-btn" data-session-id="${esc(s.id)}" style="font-size:12px;height:30px;">Sign out</button>`;
-                    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #e8eaed;border-radius:10px;background:#fff;">
+                    return `<div class="fd-device-row">
                         <div style="display:flex;align-items:flex-start;gap:12px;min-width:0;">
-                            <div style="color:#5f6368;margin-top:2px;">${icon}</div>
+                            <div class="fd-muted" style="margin-top:2px;">${icon}</div>
                             <div style="min-width:0;">
-                                <div style="font-size:14px;font-weight:500;color:#202124;">${esc(s.device_name || 'Unknown device')}${badge}</div>
-                                <div style="font-size:12px;color:#5f6368;margin-top:2px;">${esc(s.ip_address || '—')} · Last active ${esc(formatSessionTime(s.last_seen_at))}</div>
+                                <div style="font-size:14px;font-weight:500;color:var(--fd-text);">${esc(s.device_name || 'Unknown device')}${badge}</div>
+                                <div class="fd-hint" style="margin-top:2px;">${esc(s.ip_address || '—')} · Last active ${esc(formatSessionTime(s.last_seen_at))}</div>
                             </div>
                         </div>
                         ${revokeBtn}
@@ -968,7 +977,7 @@ const App = (() => {
                     });
                 });
             } catch (err) {
-                sessionsListEl.innerHTML = `<div style="font-size:13px;color:#c5221f;">${esc(err?.message || 'Failed to load devices')}</div>`;
+                sessionsListEl.innerHTML = `<div class="fd-muted" style="color:var(--fd-red);">${esc(err?.message || 'Failed to load devices')}</div>`;
             }
         };
 
@@ -1071,6 +1080,9 @@ const App = (() => {
     }
 
     async function init() {
+        applyUserPrefs();
+        bindThemeMediaListener();
+
         if (window.CryptoModule?.migrateUnscopedFileKeys) {
             try { await CryptoModule.migrateUnscopedFileKeys(); } catch { /* ignore */ }
         }
@@ -1585,9 +1597,7 @@ const App = (() => {
         if (!window.location.hash && prefs.startPage) {
             window.location.hash = prefs.startPage;
         }
-        window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', () => {
-            if ((getUserPrefs().theme || 'system') === 'system') applyUserPrefs();
-        });
+        bindThemeMediaListener();
 
         SidebarTree.init();
         if (window.CryptoSync?.ensureUnlockedOnAppLoad) {

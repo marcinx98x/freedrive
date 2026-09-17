@@ -62,7 +62,7 @@ const Components = (() => {
         return new Promise((resolve) => {
             showModal(
                 title,
-                `<input id="prompt-input" style="width:100%;height:52px;padding:0 15px;border-radius:4px;border:1px solid #dadce0;background:#fff;color:#202124;font-size:16px;font-family:'Google Sans','Roboto',sans-serif;outline:none;box-sizing:border-box;transition:border-color .15s;" value="${escapeHtml(defaultValue)}" placeholder="${escapeHtml(placeholder)}" onfocus="this.style.borderColor='#1a73e8';this.style.borderWidth='2px'" onblur="this.style.borderColor='#dadce0';this.style.borderWidth='1px'">`,
+                `<input id="prompt-input" class="fd-input" value="${escapeHtml(defaultValue)}" placeholder="${escapeHtml(placeholder)}">`,
                 [
                     { text: 'Cancel', action: () => resolve(null) },
                     { text: 'OK', class: 'btn-primary', action: () => resolve(document.getElementById('prompt-input').value) },

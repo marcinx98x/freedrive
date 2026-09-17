@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FreeDrive</title>
     <meta name="description" content="Self-hosted cloud storage. Your files, your server.">
+    <script>
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem('fd_user_prefs') || '{}') || {};
+          var t = prefs.theme || 'system';
+          var dark = t === 'dark' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark-mode', dark);
+          if (dark) document.documentElement.style.colorScheme = 'dark';
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
@@ -18,6 +29,7 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 87.3 78' fill='none'><path d='M6.6 66.85L3.3 61.35 29.1 17 35.7 17 10 61.35z' fill='%230066DA'/><path d='M43.65 25L29.1 0 58.2 0 72.8 25z' fill='%2300AC47'/><path d='M72.8 25L87.3 50 58.2 78 43.7 53z' fill='%23EA4335'/><path d='M43.65 25L29.1 50 0 50 14.5 25z' fill='%232684FC'/><path d='M43.65 25L58.2 50 29.1 50z' fill='%2300832D'/><path d='M72.8 25L87.3 50 58.2 50z' fill='%23FFBA00'/></svg>">
 </head>
 <body>
+    <script>if(document.documentElement.classList.contains('dark-mode'))document.body.classList.add('dark-mode');</script>
     <div id="auth-screen" class="auth-screen">
         <div class="auth-container">
             <div class="auth-logo">
