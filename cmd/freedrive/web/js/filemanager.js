@@ -4522,8 +4522,8 @@ const FileManager = (() => {
                 }
                 html += `
                     <div style="padding:16px;">
-                        <textarea id="detail-comment-input" placeholder="Add a comment..." style="width:100%;min-height:64px;border-radius:8px;border:1px solid var(--fd-border);padding:8px;font-family:inherit;"></textarea>
-                        <input id="detail-comment-assignee" type="email" placeholder="Assign to (email, optional)" style="width:100%;margin-top:8px;border-radius:8px;border:1px solid var(--fd-border);padding:8px;font-family:inherit;" autocomplete="off">
+                        <textarea id="detail-comment-input" class="details-comment-input" placeholder="Add a comment..." style="min-height:64px;"></textarea>
+                        <input id="detail-comment-assignee" class="details-comment-input" type="email" placeholder="Assign to (email, optional)" style="margin-top:8px;" autocomplete="off">
                         <button class="btn btn-primary btn-sm" id="detail-comment-submit" style="margin-top:8px;">Comment</button>
                     </div>`;
             } catch {

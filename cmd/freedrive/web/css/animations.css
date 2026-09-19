@@ -496,7 +496,7 @@
   box-shadow:
     0 1px 3px 0   rgba(60,64,67,.30),
     0 4px 8px 3px rgba(60,64,67,.15) !important;
-  background: #fff !important;
+  background: var(--fd-bg-elev) !important;
 }
 
 /* =====================================================
@@ -567,9 +567,9 @@
 .skeleton {
   background: linear-gradient(
     90deg,
-    #f1f3f4 25%,
-    #e8eaed 50%,
-    #f1f3f4 75%
+    var(--fd-bg-elev-2) 25%,
+    var(--fd-bg-soft) 50%,
+    var(--fd-bg-elev-2) 75%
   ) !important;
   background-size: 200% 100% !important;
   animation: fd-shimmer 1.4s ease-in-out infinite !important;
@@ -585,8 +585,8 @@
 }
 
 .spinner {
-  border: 3px solid #dadce0;
-  border-top-color: #1a73e8;
+  border: 3px solid var(--fd-border);
+  border-top-color: var(--blue);
   border-radius: 50%;
   width: 36px;
   height: 36px;
