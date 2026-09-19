@@ -4965,11 +4965,55 @@ const FileManager = (() => {
             if (group === 'video') return await openVideoPlayer(file);
             if (group === 'audio') return await openAudioPlayer(file);
             if (group === 'sheet') return await openSheetViewer(file);
-            return downloadFile(file);
+            return showNoPreviewDialog(file);
         } catch (err) {
             console.error('Failed to open file:', err);
             Components.toast('Failed to open file: ' + err.message, 'error');
         }
+    }
+
+    function showNoPreviewDialog(file) {
+        document.querySelector('.no-preview-overlay')?.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay no-preview-overlay';
+        overlay.innerHTML = `
+            <div class="modal no-preview-modal" role="dialog" aria-modal="true" aria-labelledby="no-preview-title">
+                <div class="modal-header">
+                    <div>
+                        <h3 id="no-preview-title">No preview available</h3>
+                        <p class="no-preview-filename">${esc(file.name || 'File')}</p>
+                    </div>
+                    <button type="button" class="btn-icon no-preview-close" aria-label="Close"><span class="material-icons-outlined">close</span></button>
+                </div>
+                <div class="modal-body no-preview-body">
+                    <button type="button" class="btn btn-primary no-preview-download">
+                        <span class="material-icons-outlined">download</span>
+                        Download
+                    </button>
+                </div>
+            </div>
+        `;
+
+        const close = () => {
+            document.removeEventListener('keydown', onKeyDown);
+            overlay.remove();
+        };
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') close();
+        };
+
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) close();
+        });
+        overlay.querySelector('.no-preview-close').addEventListener('click', close);
+        overlay.querySelector('.no-preview-download').addEventListener('click', async () => {
+            close();
+            await downloadFile(file);
+        });
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(overlay);
+        overlay.querySelector('.no-preview-download')?.focus();
     }
 
     function getOpenWithApps(file) {

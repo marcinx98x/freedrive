@@ -122,6 +122,7 @@ FreeDrive is ideal for:
 - **Sheets** — Google Sheets-style grid for `.xlsx`, `.xls`, and `.csv` (formula bar, sheet tabs, search); saves only changed cells so untouched formulas and formatting stay intact
 - **PDF / audio / JSON** — dedicated viewers and players
 - **Open with…** — context-menu flyout lists FreeDrive apps for the file type (same list as the Open with dialog; unsupported types offer download)
+- **No preview available** — opening a file with no in-browser viewer (e.g. `.exe`, archives, presentations) shows a Drive-style modal with the file name and a primary **Download** button instead of starting a silent download; toolbar / context **Download** still downloads immediately
 
 ### 5. Versioning Support
 

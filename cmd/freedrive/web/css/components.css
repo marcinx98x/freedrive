@@ -608,6 +608,50 @@ body.dark-mode .fd-banner-danger {
     text-overflow: ellipsis;
 }
 
+.no-preview-modal {
+    width: min(420px, 100%);
+    background: var(--fd-bg-elev);
+    border: 1px solid var(--fd-border);
+    color: var(--fd-text);
+}
+
+.no-preview-modal .modal-header {
+    align-items: flex-start;
+}
+
+.no-preview-filename {
+    max-width: 320px;
+    margin: 5px 0 0;
+    color: var(--fd-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.no-preview-body {
+    display: flex;
+    justify-content: center;
+    padding: 8px 24px 28px;
+}
+
+.no-preview-download {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 140px;
+    height: 40px;
+    padding: 0 20px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.no-preview-download .material-icons-outlined {
+    font-size: 20px;
+}
+
 .open-with-apps {
     display: grid;
     gap: 8px;
@@ -2278,7 +2322,9 @@ body.sidebar-collapsed #sidebar-resizer {
         display: none;
     }
     .open-with-modal .modal-header,
-    .open-with-apps {
+    .open-with-apps,
+    .no-preview-modal .modal-header,
+    .no-preview-body {
         padding-left: 16px;
         padding-right: 16px;
     }
