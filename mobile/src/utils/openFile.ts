@@ -4,19 +4,31 @@ import * as Sharing from "expo-sharing";
 import { Alert, NativeModules, PermissionsAndroid, Platform } from "react-native";
 import { api } from "../api/client";
 import type { FileItem } from "../api/types";
+import { getUser } from "../auth/storage";
 import {
   contentHashHex,
   decryptDownloadedFile,
   encryptFileBytes,
   ensureFileKey,
+  isUnlocked,
   rawKeyToStandardBase64,
 } from "../crypto";
+import { ensureUnlockedOrPrompt } from "../crypto/ensureUnlocked";
 import type { RootStackParamList } from "../navigation/types";
 import { isSpreadsheetFile } from "./sheetCodec";
 import { assertTransferAllowed } from "../settings/wifiGate";
 
 const STORAGE_FULL_MESSAGE =
   "Brak miejsca w aplikacji na telefonie. Wyczyść cache FreeDrive albo zwolnij miejsce na urządzeniu.";
+
+async function requireCryptoUnlockedForOpen(): Promise<void> {
+  if (isUnlocked()) return;
+  const user = await getUser();
+  if (!user?.id) {
+    throw new Error("Sign out and sign in again with your password to restore file access.");
+  }
+  await ensureUnlockedOrPrompt(user.id, "open");
+}
 
 export function openFileErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
@@ -267,6 +279,7 @@ export async function downloadAndDecrypt(
   bytes: Uint8Array;
 }> {
   await assertTransferAllowed();
+  await requireCryptoUnlockedForOpen();
   const needBytes = opts?.needBytes === true;
   const size = fileSizeHint(file);
   const nativeOk = hasNativeDecrypt();
@@ -306,6 +319,7 @@ export async function saveEncryptedContent(opts: {
   plaintext: Uint8Array;
 }): Promise<FileItem> {
   await assertTransferAllowed();
+  await requireCryptoUnlockedForOpen();
   const key = await ensureFileKey(opts.fileId);
   const { ciphertext, ivB64 } = await encryptFileBytes(opts.plaintext, key);
   const dir = FileSystem.cacheDirectory;

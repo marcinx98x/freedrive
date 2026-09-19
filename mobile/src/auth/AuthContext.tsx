@@ -11,23 +11,37 @@ import {
   setTokens,
   setUser,
 } from "../auth/storage";
-import { lockAndClearDevice, tryRestoreUnlock, unlockWithPassword } from "../crypto";
+import {
+  isUnlocked,
+  lockAndClearDevice,
+  tryRestoreUnlock,
+  unlockWithPassword,
+} from "../crypto";
+import { ensureUnlockedOrPrompt } from "../crypto/ensureUnlocked";
 
 interface AuthContextValue {
   booting: boolean;
   user: User | null;
   serverUrl: string | null;
   signedIn: boolean;
+  cryptoUnlocked: boolean;
+  cryptoUnlockHint: string | null;
   login: (serverUrl: string, email: string, password: string) => Promise<LoginResult>;
   verify2FA: (challengeId: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  markCryptoUnlocked: () => void;
+  clearCryptoUnlockHint: () => void;
+  ensureCryptoUnlocked: (reason?: "upload" | "open" | "generic") => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 /** Held only until 2FA completes so we can unlock crypto with the same password. */
 let pendingLoginPassword: string | null = null;
+
+const UNLOCK_HINT =
+  "Encryption is locked. Enter your password to upload or open encrypted files.";
 
 async function cacheUser(user: User): Promise<void> {
   try {
@@ -37,18 +51,44 @@ async function cacheUser(user: User): Promise<void> {
   }
 }
 
-async function unlockCryptoSafe(password: string, userId: string): Promise<void> {
-  try {
-    await unlockWithPassword(password, userId);
-  } catch (err) {
-    console.warn("Crypto unlock failed:", err);
-  }
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [booting, setBooting] = useState(true);
   const [user, setUserState] = useState<User | null>(null);
   const [serverUrl, setServerUrlState] = useState<string | null>(null);
+  const [cryptoUnlocked, setCryptoUnlocked] = useState(false);
+  const [cryptoUnlockHint, setCryptoUnlockHint] = useState<string | null>(null);
+
+  const syncCryptoState = useCallback(() => {
+    setCryptoUnlocked(isUnlocked());
+  }, []);
+
+  const markCryptoUnlocked = useCallback(() => {
+    setCryptoUnlocked(true);
+    setCryptoUnlockHint(null);
+  }, []);
+
+  const clearCryptoUnlockHint = useCallback(() => {
+    setCryptoUnlockHint(null);
+  }, []);
+
+  const unlockCryptoSafe = useCallback(async (password: string, userId: string): Promise<boolean> => {
+    try {
+      await unlockWithPassword(password, userId);
+      const ok = isUnlocked();
+      setCryptoUnlocked(ok);
+      if (ok) {
+        setCryptoUnlockHint(null);
+      } else {
+        setCryptoUnlockHint(UNLOCK_HINT);
+      }
+      return ok;
+    } catch (err) {
+      console.warn("Crypto unlock failed:", err);
+      setCryptoUnlocked(false);
+      setCryptoUnlockHint(UNLOCK_HINT);
+      return false;
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     const uid = user?.id ?? null;
@@ -67,11 +107,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     pendingLoginPassword = null;
     await clearSession();
     setUserState(null);
+    setCryptoUnlocked(false);
+    setCryptoUnlockHint(null);
   }, [user?.id]);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setUserState(null);
+      setCryptoUnlocked(false);
+      setCryptoUnlockHint(null);
     });
     return () => setUnauthorizedHandler(null);
   }, []);
@@ -85,7 +129,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const cached = await getUser();
           if (cached) {
             setUserState(cached);
-            void tryRestoreUnlock(cached.id);
+            await tryRestoreUnlock(cached.id);
+            syncCryptoState();
           }
         }
       } finally {
@@ -97,45 +142,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const me = await api.me();
           setUserState(me);
           await cacheUser(me);
-          if (!pendingLoginPassword) {
-            void tryRestoreUnlock(me.id);
+          if (!pendingLoginPassword && !isUnlocked()) {
+            await tryRestoreUnlock(me.id);
+          }
+          syncCryptoState();
+          if (!isUnlocked()) {
+            setCryptoUnlockHint(UNLOCK_HINT);
           }
         } catch {
           // Network/timeout: keep cached session. 401 is handled by request()
         }
       }
     })();
-  }, []);
+  }, [syncCryptoState]);
 
-  const login = useCallback(async (url: string, email: string, password: string) => {
-    await setServerUrl(url);
-    setServerUrlState(url.replace(/\/$/, ""));
-    const result = await api.login(email.trim().toLowerCase(), password);
-    if (is2FAChallenge(result)) {
-      pendingLoginPassword = password;
-      return result;
-    }
-    pendingLoginPassword = null;
-    await setTokens(result.tokens);
-    setUserState(result.user);
-    await cacheUser(result.user);
-    await unlockCryptoSafe(password, result.user.id);
-    return result;
-  }, []);
-
-  const verify2FA = useCallback(async (challengeId: string, code: string) => {
-    const result = await api.verify2FA(challengeId, code);
-    await setTokens(result.tokens);
-    setUserState(result.user);
-    await cacheUser(result.user);
-    const password = pendingLoginPassword;
-    pendingLoginPassword = null;
-    if (password) {
+  const login = useCallback(
+    async (url: string, email: string, password: string) => {
+      await setServerUrl(url);
+      setServerUrlState(url.replace(/\/$/, ""));
+      const result = await api.login(email.trim().toLowerCase(), password);
+      if (is2FAChallenge(result)) {
+        pendingLoginPassword = password;
+        return result;
+      }
+      pendingLoginPassword = null;
+      await setTokens(result.tokens);
+      setUserState(result.user);
+      await cacheUser(result.user);
       await unlockCryptoSafe(password, result.user.id);
-    } else {
-      await tryRestoreUnlock(result.user.id);
-    }
-  }, []);
+      return result;
+    },
+    [unlockCryptoSafe],
+  );
+
+  const verify2FA = useCallback(
+    async (challengeId: string, code: string) => {
+      const result = await api.verify2FA(challengeId, code);
+      await setTokens(result.tokens);
+      setUserState(result.user);
+      await cacheUser(result.user);
+      const password = pendingLoginPassword;
+      pendingLoginPassword = null;
+      if (password) {
+        await unlockCryptoSafe(password, result.user.id);
+      } else {
+        await tryRestoreUnlock(result.user.id);
+        syncCryptoState();
+        if (!isUnlocked()) {
+          setCryptoUnlockHint(UNLOCK_HINT);
+        }
+      }
+    },
+    [unlockCryptoSafe, syncCryptoState],
+  );
 
   const refreshProfile = useCallback(async () => {
     const me = await api.me();
@@ -143,18 +202,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await cacheUser(me);
   }, []);
 
+  const ensureCryptoUnlocked = useCallback(
+    async (reason: "upload" | "open" | "generic" = "generic") => {
+      if (!user?.id) {
+        throw new Error("Sign out and sign in again with your password to unlock encryption.");
+      }
+      await ensureUnlockedOrPrompt(user.id, reason);
+      markCryptoUnlocked();
+    },
+    [user?.id, markCryptoUnlocked],
+  );
+
   const value = useMemo(
     () => ({
       booting,
       user,
       serverUrl,
       signedIn: Boolean(user),
+      cryptoUnlocked,
+      cryptoUnlockHint,
       login,
       verify2FA,
       logout,
       refreshProfile,
+      markCryptoUnlocked,
+      clearCryptoUnlockHint,
+      ensureCryptoUnlocked,
     }),
-    [booting, user, serverUrl, login, verify2FA, logout, refreshProfile],
+    [
+      booting,
+      user,
+      serverUrl,
+      cryptoUnlocked,
+      cryptoUnlockHint,
+      login,
+      verify2FA,
+      logout,
+      refreshProfile,
+      markCryptoUnlocked,
+      clearCryptoUnlockHint,
+      ensureCryptoUnlocked,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

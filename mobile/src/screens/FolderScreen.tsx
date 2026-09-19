@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   RefreshControl,
@@ -268,6 +269,7 @@ export function FolderScreen({ route, navigation }: Props) {
       await openFile(created, navigation, { gallery: [created] });
     } catch (err) {
       console.error("create document failed:", err);
+      Alert.alert("Could not create document", err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
       setUploadLabel("");
@@ -288,6 +290,7 @@ export function FolderScreen({ route, navigation }: Props) {
       await openFile(created, navigation, { gallery: [created] });
     } catch (err) {
       console.error("create spreadsheet failed:", err);
+      Alert.alert("Could not create spreadsheet", err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
       setUploadLabel("");

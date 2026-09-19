@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "./src/auth/AuthContext";
+import { UnlockEncryptionHost } from "./src/components/UnlockEncryptionHost";
 import { RootNavigator } from "./src/navigation/RootNavigator";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 
@@ -12,6 +13,7 @@ function ThemedApp() {
     <>
       <StatusBar style={resolved === "light" ? "dark" : "light"} />
       <RootNavigator />
+      <UnlockEncryptionHost />
     </>
   );
 }

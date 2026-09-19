@@ -3,6 +3,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { api } from "../api/client";
 import type { FileItem } from "../api/types";
+import { getUser } from "../auth/storage";
 import {
   cacheFileKey,
   contentHashHex,
@@ -10,6 +11,7 @@ import {
   prepareNewFileKey,
   rawKeyToStandardBase64,
 } from "../crypto";
+import { ensureUnlockedOrPrompt } from "../crypto/ensureUnlocked";
 import { assertTransferAllowed } from "../settings/wifiGate";
 
 /** Above this, in-memory JS encrypt (plain + cipher + base64) OOMs on typical phones. */
@@ -59,6 +61,14 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function requireCryptoUnlockedForUpload(): Promise<void> {
+  const user = await getUser();
+  if (!user?.id) {
+    throw new Error("Sign out and sign in again with your password to upload encrypted files.");
+  }
+  await ensureUnlockedOrPrompt(user.id, "upload");
 }
 
 async function uploadOneJs(
@@ -177,6 +187,14 @@ export async function pickAndUploadFiles(
     return [];
   }
 
+  try {
+    await requireCryptoUnlockedForUpload();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    Alert.alert("Encryption locked", msg);
+    return [];
+  }
+
   const result = await DocumentPicker.getDocumentAsync({
     multiple: true,
     copyToCacheDirectory: true,
@@ -234,6 +252,7 @@ export async function createEncryptedBinaryFile(opts: {
   folderId: string | null;
 }): Promise<FileItem> {
   await assertTransferAllowed();
+  await requireCryptoUnlockedForUpload();
   const plaintext = opts.bytes;
   const prepared = await prepareNewEncryptedFile(plaintext);
   const dir = FileSystem.cacheDirectory;
