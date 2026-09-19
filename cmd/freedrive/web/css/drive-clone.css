@@ -1296,7 +1296,7 @@ body {
   gap: 2px;
   padding: 4px;
   border-radius: 999px;
-  background: #f1f3f4;
+  background: var(--fd-bg-elev-2);
   height: 40px;
 }
 
@@ -2576,16 +2576,16 @@ body {
 }
 
 .app:not(.admin-mode) .gd-suggested-card {
-  border: 1px solid #dadce0;
+  border: 1px solid var(--fd-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--fd-bg-elev);
   cursor: pointer;
   transition: background 0.12s, box-shadow 0.12s;
 }
 
 .app:not(.admin-mode) .gd-suggested-card:hover {
-  background: #f8fafd;
-  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.18);
+  background: var(--hover-row);
+  box-shadow: var(--fd-shadow-sm);
 }
 
 .app:not(.admin-mode) .gd-suggested-card .gd-card-top {
@@ -2607,7 +2607,7 @@ body {
 
 .app:not(.admin-mode) .gd-suggested-card .gd-card-name {
   font-size: 14px;
-  color: #202124;
+  color: var(--fd-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2615,7 +2615,7 @@ body {
 
 .app:not(.admin-mode) .gd-suggested-card .gd-card-action {
   font-size: 12px;
-  color: #5f6368;
+  color: var(--fd-text-muted);
   margin-top: 2px;
 }
 
@@ -2764,7 +2764,7 @@ body {
   grid-column: 1 / -1;
   font-size: 14px;
   font-weight: 500;
-  color: #5f6368;
+  color: var(--fd-text-muted);
   margin: 6px 0 2px;
 }
 
@@ -2785,7 +2785,7 @@ body {
   height: 48px;
   padding: 0 8px 0 14px !important;
   gap: 12px;
-  background: #f0f4f9 !important;
+  background: var(--fd-bg-elev-2) !important;
   border: 1px solid transparent !important;
   border-radius: 10px !important;
 }
@@ -2804,7 +2804,7 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 14px;
-  color: #202124;
+  color: var(--fd-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2875,7 +2875,7 @@ body {
   justify-content: center;
   border-radius: 50%;
   background: transparent;
-  color: #444746;
+  color: var(--fd-text-muted);
 }
 
 .app:not(.admin-mode) .file-card .card-more-btn:hover {
@@ -3226,6 +3226,8 @@ body.dark-mode .app:not(.admin-mode) .breadcrumb-item,
 body.dark-mode .app:not(.admin-mode) .search-state-title,
 body.dark-mode .app:not(.admin-mode) .empty-state h3,
 body.dark-mode .app:not(.admin-mode) .file-card .card-name,
+body.dark-mode .app:not(.admin-mode) .folder-card .folder-chip-name,
+body.dark-mode .app:not(.admin-mode) .gd-suggested-card .gd-card-name,
 body.dark-mode .app:not(.admin-mode) .gd-sr-name {
   color: #e8eaed !important;
 }
@@ -3237,6 +3239,9 @@ body.dark-mode .app:not(.admin-mode) .cell-date,
 body.dark-mode .app:not(.admin-mode) .cell-size,
 body.dark-mode .app:not(.admin-mode) .owner-name,
 body.dark-mode .app:not(.admin-mode) .file-card .card-sub,
+body.dark-mode .app:not(.admin-mode) .file-card .card-more-btn,
+body.dark-mode .app:not(.admin-mode) .fd-grid-section-title,
+body.dark-mode .app:not(.admin-mode) .gd-suggested-card .gd-card-action,
 body.dark-mode .app:not(.admin-mode) .empty-state p,
 body.dark-mode .app:not(.admin-mode) .breadcrumb-sep,
 body.dark-mode .app:not(.admin-mode) .gd-home-list-header .col-name,
@@ -3279,10 +3284,16 @@ body.dark-mode .app:not(.admin-mode) .gd-home-list-header {
 
 body.dark-mode .app:not(.admin-mode) .file-grid:not(.grid-view) .file-row,
 body.dark-mode .app:not(.admin-mode) .file-grid.grid-view .file-card,
+body.dark-mode .app:not(.admin-mode) .file-grid.grid-view .file-card.folder-card,
+body.dark-mode .app:not(.admin-mode) .gd-suggested-card,
 body.dark-mode .app:not(.admin-mode) .gd-home-recent-list .file-row {
   background: #292a2d !important;
   color: #e8eaed !important;
   border-color: #5f6368 !important;
+}
+
+body.dark-mode .app:not(.admin-mode) .gd-suggested-card:hover {
+  background: #3c4043 !important;
 }
 
 body.dark-mode .app:not(.admin-mode) .file-card .card-thumb {
