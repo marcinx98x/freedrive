@@ -88,17 +88,15 @@ const App = (() => {
 
     function syncAdminBtnVisibility() {
         const app = document.getElementById('app');
-        const btn = document.getElementById('admin-btn');
-        if (!app || !btn) return;
+        const item = document.getElementById('settings-menu-admin');
+        if (!app || !item) return;
 
         const user = API.getUser();
         const inDriveMode = !app.classList.contains('admin-mode');
         const show = inDriveMode && isAdminUser(user);
 
-        app.classList.toggle('admin-drive-access', show);
-        btn.classList.toggle('hidden', !show);
-        btn.disabled = !show;
-        btn.setAttribute('aria-hidden', show ? 'false' : 'true');
+        item.classList.toggle('hidden', !show);
+        item.setAttribute('aria-hidden', show ? 'false' : 'true');
     }
 
     function profileDisplayName(user) {
@@ -1254,6 +1252,13 @@ const App = (() => {
         });
         settingsMenu?.addEventListener('click', (e) => {
             e.stopPropagation();
+            const adminItem = e.target.closest('[data-admin-panel]');
+            if (adminItem) {
+                closeTransientPanels();
+                history.pushState(null, '', '/admin/dashboard');
+                handleRoute();
+                return;
+            }
             const item = e.target.closest('[data-section]');
             if (!item) return;
             closeTransientPanels();
@@ -1511,12 +1516,6 @@ const App = (() => {
             switchToAccount(id);
         });
 
-        document.getElementById('admin-btn')?.addEventListener('click', (e) => {
-            e.preventDefault();
-            history.pushState(null, '', '/admin/dashboard');
-            handleRoute();
-        });
-
         document.querySelectorAll('.admin-nav-item[href^="/admin"]').forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -1567,8 +1566,9 @@ const App = (() => {
 
     function showAuth() {
         const app = document.getElementById('app');
-        app?.classList.remove('admin-mode', 'admin-drive-access');
-        document.getElementById('admin-btn')?.classList.add('hidden');
+        app?.classList.remove('admin-mode');
+        document.getElementById('settings-menu-admin')?.classList.add('hidden');
+        document.getElementById('settings-menu-admin')?.setAttribute('aria-hidden', 'true');
         document.getElementById('auth-screen').classList.remove('hidden');
         app?.classList.add('hidden');
         Auth.syncAddingAccountUi?.();

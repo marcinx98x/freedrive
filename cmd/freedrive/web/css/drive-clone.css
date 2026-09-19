@@ -1290,15 +1290,6 @@ body {
   font-size: 20px !important;
 }
 
-.app:not(.admin-mode):not(.admin-drive-access) #admin-btn,
-.app:not(.admin-mode) #admin-btn.hidden {
-  display: none !important;
-}
-
-.app:not(.admin-mode).admin-drive-access #admin-btn:not(.hidden) {
-  display: inline-flex !important;
-}
-
 .app:not(.admin-mode) .topbar-view-toggle {
   display: flex;
   align-items: center;
@@ -1400,7 +1391,7 @@ body {
     gap: 8px !important;
   }
 
-  .app:not(.admin-mode) .topbar-actions .btn-icon:not(#admin-btn),
+  .app:not(.admin-mode) .topbar-actions .btn-icon,
   .app:not(.admin-mode) #profile-avatar-btn {
     display: inline-flex !important;
   }
