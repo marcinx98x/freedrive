@@ -508,13 +508,7 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		QuotaBytes int64  `json:"quota_bytes"`
 		Email      string `json:"email"`
 		Message    string `json:"message"`
-		SMTPServer string `json:"smtp_server"`
-		SMTPPort   int    `json:"smtp_port"`
-		SMTPUser   string `json:"smtp_user"`
-		SMTPPass   string `json:"smtp_pass"`
-		FromAddr   string `json:"from_address"`
-		FromName   string `json:"from_name"`
-		TLS        bool   `json:"tls"`
+		smtpOverride
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -549,38 +543,8 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recipient := inviteEmail
-	adminSettingsMu.RLock()
-	emailCfg, _ := adminSettings["email"].(map[string]interface{})
-	generalCfg, _ := adminSettings["general"].(map[string]interface{})
-	smtpServer := asString(emailCfg["smtp_server"])
-	smtpPort := asInt(emailCfg["smtp_port"], 0)
-	smtpUser := asString(emailCfg["smtp_user"])
-	smtpPass := asString(emailCfg["smtp_pass"])
-	fromAddress := asString(emailCfg["from_address"])
-	fromName := asString(emailCfg["from_name"])
-	useTLS := asBool(emailCfg["tls"], false)
-	siteURL := strings.TrimSpace(asString(generalCfg["site_url"]))
-	adminSettingsMu.RUnlock()
-
-	if strings.TrimSpace(req.SMTPServer) != "" {
-		smtpServer = strings.TrimSpace(req.SMTPServer)
-	}
-	if req.SMTPPort > 0 {
-		smtpPort = req.SMTPPort
-	}
-	if req.SMTPUser != "" || req.SMTPPass != "" {
-		smtpUser = req.SMTPUser
-		smtpPass = req.SMTPPass
-	}
-	if strings.TrimSpace(req.FromAddr) != "" {
-		fromAddress = strings.TrimSpace(req.FromAddr)
-	}
-	if strings.TrimSpace(req.FromName) != "" {
-		fromName = strings.TrimSpace(req.FromName)
-	}
-	useTLS = req.TLS
-
-	siteURL = siteBaseURL(siteURL, r)
+	cfg := resolveSMTP(req.smtpOverride)
+	siteURL := siteBaseURL(siteURLSetting(), r)
 	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(invite.Code))
 	if inviteEmail != "" {
 		inviteURL = fmt.Sprintf("%s&email=%s", inviteURL, url.QueryEscape(inviteEmail))
@@ -589,8 +553,9 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	emailSent := false
 	emailError := ""
 	if recipient != "" {
-		if smtpServer == "" || smtpPort == 0 || fromAddress == "" {
-			emailError = "smtp settings are incomplete: set server, port and from address in admin settings"
+		if smtpIncomplete(cfg) {
+			emailError = smtpIncompleteMsg
+			log.Printf("invite email to %s not sent: %s", recipient, emailError)
 		} else {
 			displayName := chooseDisplayName("", recipient)
 			subject := "You're invited to FreeDrive"
@@ -609,13 +574,13 @@ func (h *AdminHandler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 			}
 			body += "\nUse the email address above when creating your account and when signing in.\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
-			emailSent = true // Assume success for fast response
-			go func() {
-				cfg := smtpConfig(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, useTLS)
-				if err := email.Send(cfg, recipient, subject, body); err != nil {
-					fmt.Fprintf(os.Stderr, "failed to send invite email to %s: %v\n", recipient, err)
-				}
-			}()
+			if err := email.Send(cfg, recipient, subject, body); err != nil {
+				emailError = err.Error()
+				log.Printf("failed to send invite email to %s via %s:%d: %v", recipient, cfg.Server, cfg.Port, err)
+			} else {
+				emailSent = true
+				log.Printf("invite email sent to %s", recipient)
+			}
 		}
 	}
 
@@ -644,13 +609,7 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		Role       string `json:"role"`
 		QuotaBytes int64  `json:"quota_bytes"`
 		Message    string `json:"message"`
-		SMTPServer string `json:"smtp_server"`
-		SMTPPort   int    `json:"smtp_port"`
-		SMTPUser   string `json:"smtp_user"`
-		SMTPPass   string `json:"smtp_pass"`
-		FromAddr   string `json:"from_address"`
-		FromName   string `json:"from_name"`
-		TLS        bool   `json:"tls"`
+		smtpOverride
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid request body", http.StatusBadRequest)
@@ -664,43 +623,13 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adminSettingsMu.RLock()
-	emailCfg, _ := adminSettings["email"].(map[string]interface{})
-	generalCfg, _ := adminSettings["general"].(map[string]interface{})
-	smtpServer := asString(emailCfg["smtp_server"])
-	smtpPort := asInt(emailCfg["smtp_port"], 0)
-	smtpUser := asString(emailCfg["smtp_user"])
-	smtpPass := asString(emailCfg["smtp_pass"])
-	fromAddress := asString(emailCfg["from_address"])
-	fromName := asString(emailCfg["from_name"])
-	useTLS := asBool(emailCfg["tls"], false)
-	siteURL := strings.TrimSpace(asString(generalCfg["site_url"]))
-	adminSettingsMu.RUnlock()
-
-	if strings.TrimSpace(req.SMTPServer) != "" {
-		smtpServer = strings.TrimSpace(req.SMTPServer)
-	}
-	if req.SMTPPort > 0 {
-		smtpPort = req.SMTPPort
-	}
-	if req.SMTPUser != "" || req.SMTPPass != "" {
-		smtpUser = req.SMTPUser
-		smtpPass = req.SMTPPass
-	}
-	if strings.TrimSpace(req.FromAddr) != "" {
-		fromAddress = strings.TrimSpace(req.FromAddr)
-	}
-	if strings.TrimSpace(req.FromName) != "" {
-		fromName = strings.TrimSpace(req.FromName)
-	}
-	useTLS = req.TLS
-
-	if smtpServer == "" || smtpPort == 0 || fromAddress == "" {
-		writeError(w, "smtp settings are incomplete: set server, port and from address in admin settings", http.StatusBadRequest)
+	cfg := resolveSMTP(req.smtpOverride)
+	if smtpIncomplete(cfg) {
+		writeError(w, smtpIncompleteMsg, http.StatusBadRequest)
 		return
 	}
 
-	siteURL = siteBaseURL(siteURL, r)
+	siteURL := siteBaseURL(siteURLSetting(), r)
 
 	inviteURL := fmt.Sprintf("%s?invite=%s", siteURL, url.QueryEscape(code))
 	recipientEmail := strings.ToLower(recipient)
@@ -729,14 +658,14 @@ func (h *AdminHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	body += "\nUse the email address above when creating your account and when signing in.\nIf the link does not open automatically, copy and paste it into your browser.\n"
 
-	go func() {
-		cfg := smtpConfig(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, useTLS)
-		if err := email.Send(cfg, recipient, subject, body); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to resend invite email to %s: %v\n", recipient, err)
-		}
-	}()
+	if err := email.Send(cfg, recipient, subject, body); err != nil {
+		log.Printf("failed to resend invite email to %s via %s:%d: %v", recipient, cfg.Server, cfg.Port, err)
+		writeError(w, "failed to send email: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	log.Printf("invite email resent to %s", recipient)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Invite email resent in background"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Invite email resent"})
 }
 
 // ListInvites handles GET /api/v1/admin/invites
@@ -850,25 +779,13 @@ func (h *AdminHandler) SendPasswordReset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	adminSettingsMu.RLock()
-	emailCfg, _ := adminSettings["email"].(map[string]interface{})
-	generalCfg, _ := adminSettings["general"].(map[string]interface{})
-	smtpServer := asString(emailCfg["smtp_server"])
-	smtpPort := asInt(emailCfg["smtp_port"], 0)
-	smtpUser := asString(emailCfg["smtp_user"])
-	smtpPass := asString(emailCfg["smtp_pass"])
-	fromAddress := asString(emailCfg["from_address"])
-	fromName := asString(emailCfg["from_name"])
-	useTLS := asBool(emailCfg["tls"], false)
-	siteURL := strings.TrimSpace(asString(generalCfg["site_url"]))
-	adminSettingsMu.RUnlock()
-
-	if smtpServer == "" || smtpPort == 0 || fromAddress == "" {
-		writeError(w, "smtp settings are incomplete: set server, port and from address in admin settings", http.StatusBadRequest)
+	cfg := resolveSMTP(smtpOverride{})
+	if smtpIncomplete(cfg) {
+		writeError(w, smtpIncompleteMsg, http.StatusBadRequest)
 		return
 	}
 
-	siteURL = siteBaseURL(siteURL, r)
+	siteURL := siteBaseURL(siteURLSetting(), r)
 
 	token, err := h.passwordResetService.CreateResetLink(r.Context(), user.Email)
 	if err != nil {
@@ -883,14 +800,13 @@ func (h *AdminHandler) SendPasswordReset(w http.ResponseWriter, r *http.Request)
 		resetURL,
 	)
 
-	go func() {
-		cfg := smtpConfig(smtpServer, smtpPort, smtpUser, smtpPass, fromAddress, fromName, useTLS)
-		if err := email.Send(cfg, user.Email, subject, body); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to send reset email to %s: %v\n", user.Email, err)
-		}
-	}()
+	if err := email.Send(cfg, user.Email, subject, body); err != nil {
+		log.Printf("failed to send reset email to %s via %s:%d: %v", user.Email, cfg.Server, cfg.Port, err)
+		writeError(w, "failed to send email: "+err.Error(), http.StatusBadGateway)
+		return
+	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Password reset email sent in background"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Password reset email sent"})
 }
 
 // TestEmail handles POST /api/v1/admin/test-email
@@ -928,6 +844,67 @@ func (h *AdminHandler) TestEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "success", "message": "Email sent successfully"})
+}
+
+// smtpOverride carries optional per-request SMTP fields; empty values fall back to saved settings.
+type smtpOverride struct {
+	SMTPServer string `json:"smtp_server"`
+	SMTPPort   int    `json:"smtp_port"`
+	SMTPUser   string `json:"smtp_user"`
+	SMTPPass   string `json:"smtp_pass"`
+	FromAddr   string `json:"from_address"`
+	FromName   string `json:"from_name"`
+	TLS        *bool  `json:"tls"`
+}
+
+// resolveSMTP returns the saved SMTP settings with any explicitly provided overrides applied.
+func resolveSMTP(o smtpOverride) adminsettings.SMTPConfig {
+	adminSettingsMu.RLock()
+	emailCfg, _ := adminSettings["email"].(map[string]interface{})
+	cfg := smtpConfig(
+		strings.TrimSpace(asString(emailCfg["smtp_server"])),
+		asInt(emailCfg["smtp_port"], 0),
+		asString(emailCfg["smtp_user"]),
+		asString(emailCfg["smtp_pass"]),
+		strings.TrimSpace(asString(emailCfg["from_address"])),
+		strings.TrimSpace(asString(emailCfg["from_name"])),
+		asBool(emailCfg["tls"], false),
+	)
+	adminSettingsMu.RUnlock()
+
+	if s := strings.TrimSpace(o.SMTPServer); s != "" {
+		cfg.Server = s
+	}
+	if o.SMTPPort > 0 {
+		cfg.Port = o.SMTPPort
+	}
+	if o.SMTPUser != "" || o.SMTPPass != "" {
+		cfg.User = o.SMTPUser
+		cfg.Pass = o.SMTPPass
+	}
+	if s := strings.TrimSpace(o.FromAddr); s != "" {
+		cfg.FromAddress = s
+	}
+	if s := strings.TrimSpace(o.FromName); s != "" {
+		cfg.FromName = s
+	}
+	if o.TLS != nil {
+		cfg.TLS = *o.TLS
+	}
+	return cfg
+}
+
+func smtpIncomplete(cfg adminsettings.SMTPConfig) bool {
+	return cfg.Server == "" || cfg.Port == 0 || cfg.FromAddress == ""
+}
+
+const smtpIncompleteMsg = "smtp settings are incomplete: set server, port and from address in admin settings"
+
+func siteURLSetting() string {
+	adminSettingsMu.RLock()
+	defer adminSettingsMu.RUnlock()
+	generalCfg, _ := adminSettings["general"].(map[string]interface{})
+	return strings.TrimSpace(asString(generalCfg["site_url"]))
 }
 
 func smtpConfig(server string, port int, user, pass, fromAddr, fromName string, useTLS bool) adminsettings.SMTPConfig {

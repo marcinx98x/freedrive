@@ -2177,23 +2177,15 @@ const AdminPanel = (() => {
                         .find((b) => b.textContent === 'Generate Link');
                     if (actionBtn) {
                         actionBtn.disabled = true;
-                        actionBtn.textContent = 'Generating...';
+                        actionBtn.textContent = 'Sending...';
                     }
                     try {
-                        const eCfg = state.settingsDraft?.email || {};
                         const invite = await API.admin.createInvite({
                             role,
                             max_uses: 1,
                             quota_bytes: quota * 1073741824,
                             email,
                             message,
-                            smtp_server: eCfg.smtp_server || '',
-                            smtp_port: parseInt(eCfg.smtp_port, 10) || 0,
-                            smtp_user: eCfg.smtp_user || '',
-                            smtp_pass: eCfg.smtp_pass || '',
-                            from_address: eCfg.from_address || '',
-                            from_name: eCfg.from_name || '',
-                            tls: Boolean(eCfg.tls),
                         });
                         const inviteCode = invite?.code || '';
                         if (!inviteCode) {
@@ -2253,7 +2245,7 @@ const AdminPanel = (() => {
                             // Hide the original action buttons except close
                             const footerBtns = document.querySelectorAll('.modal-footer .btn');
                             footerBtns.forEach(b => {
-                                if (b.textContent === 'Generating...' || b.textContent === 'Generate Link') b.style.display = 'none';
+                                if (b.textContent === 'Sending...' || b.textContent === 'Generate Link') b.style.display = 'none';
                                 if (b.textContent === 'Close') { b.classList.add('btn-primary'); b.classList.remove('btn-secondary'); b.textContent = 'Done'; }
                             });
                         }
@@ -2291,24 +2283,22 @@ const AdminPanel = (() => {
                         return;
                     }
                     if (inviteAction === 'resend') {
-                        const eCfg = state.settingsDraft?.email || {};
+                        const prevLabel = btn.textContent;
+                        btn.disabled = true;
+                        btn.textContent = 'Sending...';
                         API.admin.resendInvite({
                             email: row.email,
                             code: row.code,
                             role: row.role || 'user',
                             quota_bytes: (Number(row.quota || 10) * 1073741824),
                             message: row.message || '',
-                            smtp_server: eCfg.smtp_server || '',
-                            smtp_port: parseInt(eCfg.smtp_port, 10) || 0,
-                            smtp_user: eCfg.smtp_user || '',
-                            smtp_pass: eCfg.smtp_pass || '',
-                            from_address: eCfg.from_address || '',
-                            from_name: eCfg.from_name || '',
-                            tls: Boolean(eCfg.tls),
                         }).then(() => {
                             Components.toast(`Invite resent to ${row.email}`, 'success');
                         }).catch((err) => {
                             Components.toast(err?.message || 'Failed to resend invite', 'error');
+                        }).finally(() => {
+                            btn.disabled = false;
+                            btn.textContent = prevLabel;
                         });
                     } else if (inviteAction === 'cancel') {
                         if (!row.id) {
